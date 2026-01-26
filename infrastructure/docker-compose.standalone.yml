@@ -1,0 +1,32 @@
+# ===========================================
+# Multi-Agent - Standalone Infrastructure
+# ===========================================
+# Redis only (no bridge, no dashboard build)
+# Simplest setup for local development
+#
+# Usage:
+#   docker compose -f docker-compose.standalone.yml up -d
+
+version: '3.8'
+
+services:
+  # ===========================================
+  # REDIS - 127.0.0.1 ONLY
+  # ===========================================
+  redis:
+    image: redis:7-alpine
+    container_name: ma-redis
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  redis_data:

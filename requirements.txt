@@ -1,0 +1,14 @@
+# Multi-Agent System - Python Dependencies
+
+# Redis client
+redis>=4.5.0
+
+# For dashboard (optional)
+flask>=2.3.0
+flask-socketio>=5.3.0
+
+# For bridge (optional)
+paramiko>=3.0.0
+
+# Utilities
+python-dotenv>=1.0.0
