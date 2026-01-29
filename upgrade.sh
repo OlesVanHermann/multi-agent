@@ -174,13 +174,16 @@ echo ""
 
 log_info "Dossiers mis à jour:"
 for dir in "${FRAMEWORK_DIRS[@]}"; do
-    if [ -d "$TEMP_DIR/$dir" ]; then
+    # Enlever le / final pour avoir le nom du dossier
+    dir_name="${dir%/}"
+    if [ -d "$TEMP_DIR/$dir_name" ]; then
         if [ "$DRY_RUN" = false ]; then
-            $RSYNC_CMD -av --delete "$TEMP_DIR/$dir" "./" | grep -v "/$" | head -5 || true
-            remaining=$($RSYNC_CMD -av --delete "$TEMP_DIR/$dir" "./" 2>/dev/null | grep -v "/$" | wc -l || echo "0")
-            [ "$remaining" -gt 5 ] && echo "  ... et $((remaining-5)) autres fichiers"
+            # Créer le dossier destination s'il n'existe pas
+            mkdir -p "./$dir_name"
+            # Sync DANS le dossier (avec trailing slash) pour ne supprimer que le contenu du dossier
+            $RSYNC_CMD -av --delete "$TEMP_DIR/$dir_name/" "./$dir_name/" 2>&1 | grep -v "/$" | head -5 || true
         fi
-        log_ok "$dir"
+        log_ok "$dir_name/"
     fi
 done
 
