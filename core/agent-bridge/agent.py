@@ -447,13 +447,31 @@ EXECUTE MAINTENANT.
             time.sleep(HEARTBEAT_INTERVAL)
 
     def send_to_agent(self, to_agent, prompt):
-        """Envoyer un message à un autre agent"""
-        self.redis.xadd(f"ma:agent:{to_agent}:inbox", {
-            'prompt': prompt,
-            'from_agent': self.agent_id,
-            'timestamp': int(time.time())
-        })
-        self._log(f"-> Sent to agent {to_agent}: {prompt[:60]}...")
+        """Envoyer un message à un autre agent (ou 'all' pour broadcast)"""
+        if to_agent == 'all':
+            # Broadcast to all known agents
+            agent_keys = self.redis.keys('ma:agent:*:inbox')
+            sent_count = 0
+            for key in agent_keys:
+                # Extract agent ID from key (ma:agent:300:inbox -> 300)
+                parts = key.split(':')
+                if len(parts) >= 3:
+                    target_id = parts[2]
+                    if target_id != self.agent_id:  # Don't send to self
+                        self.redis.xadd(key, {
+                            'prompt': prompt,
+                            'from_agent': self.agent_id,
+                            'timestamp': int(time.time())
+                        })
+                        sent_count += 1
+            self._log(f"-> Broadcast to {sent_count} agents: {prompt[:60]}...")
+        else:
+            self.redis.xadd(f"ma:agent:{to_agent}:inbox", {
+                'prompt': prompt,
+                'from_agent': self.agent_id,
+                'timestamp': int(time.time())
+            })
+            self._log(f"-> Sent to agent {to_agent}: {prompt[:60]}...")
 
     def manual_input(self, prompt):
         """Input manuel (stdin)"""
