@@ -192,7 +192,7 @@ class Agent:
             pass
 
     def _run_claude(self, prompt: str) -> str:
-        """Execute Claude with subprocess and --print"""
+        """Execute Claude with subprocess and stream output in real-time"""
         # Use CLAUDE_CMD env var if set, otherwise default to claude
         claude_cmd = os.environ.get("CLAUDE_CMD", "claude")
         cmd = [claude_cmd, "--dangerously-skip-permissions", "--print"]
@@ -206,17 +206,34 @@ class Agent:
         cmd.append(prompt)
 
         try:
-            result = subprocess.run(
+            # Use Popen for real-time streaming
+            process = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=CLAUDE_TIMEOUT
+                bufsize=1  # Line buffered
             )
 
-            output = result.stdout.strip()
+            output_lines = []
+            print(f"\n{'─'*60}")
+            print(f"📤 CLAUDE OUTPUT (streaming):")
+            print(f"{'─'*60}")
 
-            if result.returncode != 0:
-                error = result.stderr.strip()
+            # Stream stdout in real-time
+            for line in process.stdout:
+                print(line, end='', flush=True)
+                output_lines.append(line)
+
+            # Wait for process to complete
+            process.wait(timeout=CLAUDE_TIMEOUT)
+
+            print(f"{'─'*60}\n")
+
+            output = ''.join(output_lines).strip()
+
+            if process.returncode != 0:
+                error = process.stderr.read().strip()
                 self._log(f"Claude error: {error[:100]}")
                 if not output:
                     output = f"Error: {error}"
@@ -224,6 +241,7 @@ class Agent:
             return output
 
         except subprocess.TimeoutExpired:
+            process.kill()
             self._log("Claude timeout")
             return "Error: Timeout"
         except Exception as e:
@@ -356,14 +374,6 @@ EXECUTE MAINTENANT.
                 pass
 
         self._log(f"Response sent ({len(response)} chars)")
-
-        # Print response to terminal (visible in tmux)
-        print(f"\n{'─'*60}")
-        print(f"📤 RESPONSE ({len(response)} chars):")
-        print(f"{'─'*60}")
-        print(response)
-        print(f"{'─'*60}\n")
-
         self.tasks_completed += 1
         self.tasks_in_session += 1
 
