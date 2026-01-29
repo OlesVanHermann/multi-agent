@@ -356,6 +356,14 @@ EXECUTE MAINTENANT.
                 pass
 
         self._log(f"Response sent ({len(response)} chars)")
+
+        # Print response to terminal (visible in tmux)
+        print(f"\n{'─'*60}")
+        print(f"📤 RESPONSE ({len(response)} chars):")
+        print(f"{'─'*60}")
+        print(response)
+        print(f"{'─'*60}\n")
+
         self.tasks_completed += 1
         self.tasks_in_session += 1
 
