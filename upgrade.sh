@@ -132,7 +132,7 @@ TEMP_DIR=$(mktemp -d)
 log_info "Téléchargement dans $TEMP_DIR..."
 
 if [ "$DRY_RUN" = false ]; then
-    git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$TEMP_DIR" 2>&1 | grep -v "^Cloning"
+    git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$TEMP_DIR"
     log_ok "Téléchargement terminé"
 else
     log_warn "[DRY-RUN] git clone --depth 1 --branch $BRANCH $REPO_URL"
