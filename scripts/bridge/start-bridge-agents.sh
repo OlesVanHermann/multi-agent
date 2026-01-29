@@ -97,14 +97,26 @@ ensure_redis() {
 
 start_single_agent() {
     local agent_id=$1
+    SESSION_NAME="agent-$agent_id"
 
-    log_info "Starting agent $agent_id..."
+    # Check if session exists
+    if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+        log_warn "Session $SESSION_NAME already exists, skipping"
+        return
+    fi
+
+    log_info "Starting agent $agent_id in tmux..."
 
     mkdir -p "$LOG_DIR/$agent_id"
 
-    export CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR"
-    export CLAUDE_PROFILES_DIR="$CLAUDE_PROFILES_DIR"
-    python3 "$AGENT_SCRIPT" "$agent_id" 2>&1 | tee -a "$LOG_DIR/$agent_id/bridge.log"
+    # Start in tmux INTERACTIVE (no --headless)
+    tmux new-session -d -s "$SESSION_NAME" \
+        "export CLAUDE_CONFIG_DIR='$CLAUDE_CONFIG_DIR'; \
+         export CLAUDE_PROFILES_DIR='$CLAUDE_PROFILES_DIR'; \
+         python3 '$AGENT_SCRIPT' $agent_id 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'; \
+         echo 'Agent stopped. Press Enter to close.'; read"
+
+    log_ok "Agent $agent_id started in tmux: $SESSION_NAME"
 }
 
 start_range() {
