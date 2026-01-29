@@ -135,7 +135,7 @@
 
 ### Masters (1XX)
 ```
-100 - master-mcp-onlyoffice
+100 - master-your-project
 101 - master-api-backend
 102 - master-frontend
 103 - master-mobile
@@ -256,40 +256,26 @@ prompts-v2/
 
 ---
 
-## Mapping Agents → Profiles Claude
+## Mapping Agents → Profiles Claude (optionnel)
 
-Les agents sont exécutés via différents abonnements Claude (profiles).
+Les agents peuvent être exécutés via différents abonnements Claude (profiles) pour distribuer la charge.
 
-**Profiles disponibles :**
-- `octave1`, `octave2` - forts/faibles
-- `miro1`, `miro2` - forts/faibles
-- `stef1`, `stef2` - forts/faibles
-- `shadow1`, `shadow2` - forts/faibles
+**Exemple de configuration** (à définir dans `scripts/bridge/start-bridge-agents.sh`) :
 
-**Configuration actuelle** (définie dans `/Users/claude/projet-new/start-agents.sh`) :
+| Agent | Type | Description |
+|-------|------|-------------|
+| 000 | fort | Super-Master |
+| 100 | fort | Master - Coordination |
+| 200 | fort | Explorer - SPEC creation |
+| 300-303 | faible | Developers |
+| 400 | fort | Merge - Git fusion |
+| 500 | fort | Test - Validation |
+| 600 | faible | Release - Publication |
 
-| Agent | Profile | Type | Description |
-|-------|---------|------|-------------|
-| 000 | shadow1 | fort | Super-Master |
-| 100 | shadow1 | fort | Master - Coordination |
-| 200 | stef1 | fort | Explorer - SPEC creation |
-| 201 | octave2 | faible | Doc Generator - PR-DOC |
-| 300 | octave2 | faible | Dev Excel |
-| 301 | miro2 | faible | Dev Word |
-| 302 | miro2 | faible | Dev PPTX |
-| 303 | octave2 | faible | Dev PDF |
-| 400 | stef1 | fort | Merge - Git fusion |
-| 500 | miro1 | fort | Test - Validation |
-| 501 | shadow1 | fort | Test Creator - Scripts |
-| 502 | stef1 | fort | Test Mapper |
-| 600 | octave2 | faible | Release - Publication |
-
-**Règles d'attribution :**
-- **Profiles forts (X1)** : Agents de coordination, décision, création complexe
-- **Profiles faibles (X2)** : Agents d'exécution répétitive, templates
-
-**Fichier source :** `/Users/claude/projet-new/start-agents.sh`
+**Règles d'attribution suggérées :**
+- **Profiles forts** : Agents de coordination, décision, création complexe
+- **Profiles faibles** : Agents d'exécution répétitive, templates
 
 ---
 
-*Convention v2.0 - Janvier 2026*
+*Convention v2.1 - 2026*

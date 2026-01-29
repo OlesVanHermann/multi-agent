@@ -57,7 +57,7 @@ $BASE/
 ### 1. Vérifier si projet déjà configuré
 
 ```bash
-BASE="/Users/claude/multi-agent"  # Adapter selon déploiement
+BASE="$(cd "$(dirname "$0")/../.." && pwd)"  # Auto-detect from script location
 
 if [ -f "$BASE/project-config.md" ]; then
     echo "=== PROJET CONFIGURÉ ==="

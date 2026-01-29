@@ -1,18 +1,18 @@
-# Multi-Agent System
+# Multi-Agent System v2.1
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Claude](https://img.shields.io/badge/Powered%20by-Claude-blueviolet)](https://claude.ai)
 
-Système d'orchestration multi-agents pour projets de développement complexes avec Claude.
+Système d'orchestration multi-agents pour projets de développement complexes avec Claude Code.
 
 ## Caractéristiques
 
 - **Jusqu'à 1000 agents** en parallèle
-- **Pipeline structurée** : agents spécialisés avec rôles définis
-- **Isolation Git** : chaque développeur travaille dans son propre clone/branche
-- **Communication Redis** : coordination temps réel
+- **Communication Redis Streams** : coordination temps réel avec historique
+- **Sessions Claude** : prompt caching pour ~90% d'économie de tokens
 - **Hiérarchie claire** : Architect → Super-Master → Master → Workers
-- **Templates réutilisables** : adaptez facilement à votre projet
+- **Mode headless** : agents en daemon dans tmux
+- **Intervention manuelle** : commandes interactives pendant l'exécution
 
 ## Architecture
 
@@ -29,25 +29,15 @@ Système d'orchestration multi-agents pour projets de développement complexes a
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Résultats
-
-Ce système a été utilisé pour développer le projet **MCP OnlyOffice** :
-
-| Métrique | Valeur |
-|----------|--------|
-| Outils MCP créés | 197+ |
-| Formats supportés | 4 (Excel, Word, PPTX, PDF) |
-| Tests passés | 78/78 |
-| Agents en parallèle | 12 |
-
 ## Prérequis
 
-- **Docker Desktop** (pour Redis)
-- **Python 3.11+**
-- **Claude CLI** ([claude-code](https://github.com/anthropics/claude-code))
+- **Python 3.8+** avec pip
+- **Redis** (local ou Docker)
+- **Claude Code CLI** installé et authentifié
+- **tmux** (pour le mode headless)
 - **Git**
 
-## Installation
+## Installation rapide
 
 ### 1. Cloner le repository
 
@@ -56,169 +46,205 @@ git clone https://github.com/OlesVanHermann/multi-agent.git
 cd multi-agent
 ```
 
-### 2. Setup infrastructure
+### 2. Installer les dépendances
 
 ```bash
-cd infrastructure
-./setup.sh
+# Python
+pip install -r requirements.txt
+
+# Redis (Ubuntu/Debian)
+sudo apt-get install redis-server redis-tools tmux
+
+# Ou via Docker
+docker run -d --name redis -p 127.0.0.1:6379:6379 redis:7-alpine
 ```
 
-Cela démarre Redis via Docker.
-
-### 3. Configurer votre projet
-
-Lancer l'Architect (900) qui va configurer le système :
+### 3. Vérifier Claude Code
 
 ```bash
-cd multi-agent
-claude
+# Tester que Claude fonctionne
+claude --version
+echo "test" | claude --print -
 ```
-
-Puis dans Claude :
-```
-Lis prompts/900-architect.md
-```
-
-L'Architect va :
-1. Te demander le nom et type de projet
-2. Lire les exemples dans `examples/`
-3. Créer les agents dev (3XX) adaptés à ton projet
-4. Créer les inventaires
-5. Générer `project-config.md`
 
 ### 4. Lancer les agents
 
 ```bash
-./scripts/start-agents.sh
+# Tous les agents préconfigurés
+./scripts/bridge/start-bridge-agents.sh all
+
+# Ou un agent spécifique (interactif)
+./scripts/bridge/start-bridge-agents.sh 300
 ```
 
-## Structure
+## Configuration
+
+### Variables d'environnement
+
+| Variable | Description | Défaut |
+|----------|-------------|--------|
+| `CLAUDE_CONFIG_DIR` | Dossier config Claude | `~/.claude` |
+| `CLAUDE_CMD` | Commande Claude | `claude` |
+| `REDIS_HOST` | Hôte Redis | `localhost` |
+| `REDIS_PORT` | Port Redis | `6379` |
+
+### Profils Claude personnalisés
+
+Si vous utilisez plusieurs profils Claude :
+
+```bash
+export CLAUDE_CONFIG_DIR=~/.claude-profiles/mon-profil
+./scripts/bridge/start-bridge-agents.sh all
+```
+
+## Utilisation
+
+### Commandes de base
+
+```bash
+# Envoyer un message à un agent
+./scripts/bridge/send.sh 300 "Analyse le fichier README.md"
+
+# Voir les réponses
+./scripts/bridge/watch.sh 300
+
+# Healthcheck tous les agents
+python3 core/agent-bridge/healthcheck.py
+
+# Monitor temps réel
+./scripts/bridge/monitor.sh
+
+# Arrêter tous les agents
+./scripts/bridge/stop-bridge-agents.sh
+```
+
+### Commandes interactives (mode non-headless)
+
+```
+/status      - État actuel
+/queue       - Taille de la queue
+/flush       - Vider la queue
+/session     - Info session Claude
+/send <id> <msg> - Envoyer à un autre agent
+/help        - Aide
+```
+
+## Structure du projet
 
 ```
 multi-agent/
-├── CLAUDE.md              # Documentation principale
-├── README.md              # Ce fichier
+├── core/
+│   ├── agent-bridge/        # Bridge Redis Streams + Claude
+│   │   ├── agent.py         # Agent principal
+│   │   ├── orchestrator.py  # Workflows multi-agents
+│   │   └── healthcheck.py   # Monitoring
+│   └── agent-runner/        # Legacy runner (subprocess)
 │
-├── prompts/               # Prompts des agents
-│   ├── CONVENTIONS.md     # Convention de numérotation
-│   ├── PATHS.md           # Variables de chemins
-│   ├── 000-*.md           # Super-Masters
-│   ├── 100-*.md           # Masters
-│   ├── 200-*.md           # Explorers
-│   ├── 400-*.md           # Merge
-│   ├── 5XX-*.md           # Testers
-│   ├── 600-*.md           # Release
-│   └── 900-architect.md   # Point d'entrée
+├── scripts/
+│   └── bridge/              # Scripts pour le bridge
+│       ├── start-bridge-agents.sh
+│       ├── stop-bridge-agents.sh
+│       ├── send.sh
+│       ├── watch.sh
+│       └── monitor.sh
 │
-├── examples/              # Exemples MCP OnlyOffice
-│   ├── prompts/           # Prompts dev spécialisés
-│   ├── knowledge/         # Inventaires
-│   └── pool-requests/     # Exemples de PR
+├── prompts/                 # Prompts système des agents
+├── examples/                # Exemples de configuration
+├── templates/               # Templates pour nouveaux projets
+├── docs/                    # Documentation détaillée
 │
-├── templates/             # Templates à copier
-│   ├── prompts/           # Template agent dev
-│   ├── knowledge/         # Template inventaire
-│   └── pool-requests/     # Templates PR
-│
-├── scripts/               # Scripts d'orchestration
-├── core/agent-runner/     # Runners Python
-├── infrastructure/        # Docker, setup
-│
-├── pool-requests/         # Queue de travail
-│   ├── pending/           # À traiter
-│   ├── assigned/          # En cours
-│   ├── done/              # Terminés
-│   ├── specs/             # Spécifications
-│   ├── tests/             # Manifests tests
-│   └── knowledge/         # Inventaires
-│
-├── project/               # Votre code ici
-├── sessions/              # Sessions agents
-└── logs/                  # Logs
-```
-
-## Agents
-
-| ID | Type | Rôle |
-|----|------|------|
-| 000 | Super-Master | Coordination multi-projets |
-| 100 | Master | Coordination projet, dispatch |
-| 200 | Explorer | Analyse API, création SPEC |
-| 201 | Doc Generator | Sync documentation |
-| 3XX | Developer | Implémentation code |
-| 400 | Merge | Fusion Git (cherry-pick) |
-| 500 | Test | Validation dev → main |
-| 501 | Test Creator | Création scripts de test |
-| 600 | Release | Publication GitHub |
-| **900** | **Architect** | **Configuration système** |
-
-## Commandes utiles
-
-```bash
-# Démarrer l'infrastructure
-cd infrastructure
-./multi-agent.sh start standalone
-
-# Lancer un agent
-./multi-agent.sh agent --role master
-./multi-agent.sh agent --role slave --id 300
-
-# Communication avec les agents
-./multi-agent.sh RW 100 "go"          # Envoyer commande
-./multi-agent.sh RO 300               # Observer
-
-# Monitoring
-./multi-agent.sh status               # État infrastructure
-./multi-agent.sh list                 # Agents connectés
-./multi-agent.sh stats                # Statistiques globales
-./multi-agent.sh logs 300 100         # Derniers 100 messages
-
-# Scripts pipeline
-./scripts/pipeline-status.sh
-./scripts/monitor-pipeline.sh
-```
-
-Voir [docs/CLI.md](docs/CLI.md) pour la documentation complète du CLI.
-
-## Workflow
-
-```
-1. 900 Architect configure le projet
-2. 200 Explorer analyse → crée SPEC
-3. 100 Master dispatch aux 3XX
-4. 300-303 Developers codent en parallèle
-5. 400 Merge cherry-pick vers dev
-6. 500 Test valide
-7. 600 Release publie
+├── pool-requests/           # Queue de travail (fichiers)
+├── logs/                    # Logs des agents
+└── project/                 # Votre code ici
 ```
 
 ## Personnalisation
 
-### Ajouter un agent dev
+### Créer un nouveau type d'agent
 
-1. Copier `templates/prompts/3XX-developer.md.template`
-2. Remplacer les variables (`{AGENT_ID}`, `{DOMAIN_NAME}`, etc.)
-3. Sauvegarder dans `prompts/3XX-dev-{domain}.md`
-4. Créer l'inventaire correspondant dans `pool-requests/knowledge/`
+1. Copier un prompt existant dans `prompts/`
+2. Modifier l'ID et les instructions
+3. Ajouter au tableau `AGENTS` dans `start-bridge-agents.sh`
 
-### Adapter à votre projet
+### Configurer pour votre projet
 
-L'Architect (900) s'en charge automatiquement. Il lit les exemples dans `examples/` et crée les prompts adaptés à votre projet.
+1. Placer votre code dans `project/`
+2. Modifier les prompts des agents pour votre domaine
+3. Créer des inventaires dans `pool-requests/knowledge/`
+4. Adapter les chemins dans les prompts (voir `prompts/PATHS.md`)
+
+> **Note** : Les prompts dans `prompts/` contiennent des exemples basés sur un projet OnlyOffice.
+> Consultez `examples/` pour voir un cas d'usage concret, puis adaptez les prompts à votre projet.
 
 ## Documentation
 
 | Fichier | Description |
 |---------|-------------|
-| `CLAUDE.md` | Documentation principale du système |
-| `docs/CLI.md` | **Référence complète du CLI multi-agent.sh** |
-| `infrastructure/INFRASTRUCTURE.md` | Architecture et setup multi-VM |
-| `prompts/CONVENTIONS.md` | Convention de numérotation (0XX-9XX) |
-| `prompts/PATHS.md` | Variables de chemins ($BASE, $POOL, etc.) |
-| `examples/README.md` | Guide des exemples MCP OnlyOffice |
+| [CLAUDE.md](CLAUDE.md) | Documentation principale |
+| [docs/BRIDGE.md](docs/BRIDGE.md) | Documentation technique du bridge |
+| [docs/CLI.md](docs/CLI.md) | Référence CLI |
+| [prompts/CONVENTIONS.md](prompts/CONVENTIONS.md) | Convention de numérotation |
+
+## Workflows
+
+### Séquentiel
+
+```bash
+python3 core/agent-bridge/orchestrator.py seq
+```
+
+Explorer → Developer → Tester
+
+### Parallèle
+
+```bash
+python3 core/agent-bridge/orchestrator.py par
+```
+
+Plusieurs workers simultanément
+
+### Code Review
+
+```bash
+python3 core/agent-bridge/orchestrator.py review
+```
+
+Developer → Reviewer → Developer (amélioration)
+
+## Troubleshooting
+
+### Agent ne répond pas
+
+```bash
+# Vérifier Redis
+redis-cli ping
+
+# Vérifier les sessions tmux
+tmux ls | grep agent
+
+# Vérifier les logs
+tail -f logs/300/bridge.log
+```
+
+### Erreur "Invalid API key"
+
+```bash
+# Vérifier que Claude fonctionne
+claude --print "test"
+
+# Si vous utilisez un profil personnalisé
+export CLAUDE_CONFIG_DIR=~/.claude-profiles/votre-profil
+```
+
+### Redémarrer proprement
+
+```bash
+./scripts/bridge/stop-bridge-agents.sh
+redis-cli FLUSHDB
+./scripts/bridge/start-bridge-agents.sh all
+```
 
 ## Contribuer
-
-Les contributions sont les bienvenues !
 
 1. Fork le projet
 2. Créer une branche (`git checkout -b feature/amazing-feature`)
@@ -230,10 +256,6 @@ Les contributions sont les bienvenues !
 
 MIT - voir [LICENSE](LICENSE)
 
-## Auteur
-
-**OlesVanHermann**
-
 ---
 
-*Multi-Agent System v2.0 - Janvier 2026*
+*Multi-Agent System v2.1 - 2026*

@@ -18,14 +18,15 @@ Tu fonctionnes en **session persistante avec UUID**:
 ## CHEMINS
 
 ```
-DEV_REPO=/Users/claude/projet/mcp-onlyoffice
-RELEASE_REPO=/Users/claude/projet/mcp-onlyoffice-release
+# À configurer selon votre projet
+DEV_REPO=$PROJECT_DIR
+RELEASE_REPO=$PROJECT_DIR
 ```
 
 | Repo | Branche | GitHub |
 |------|---------|--------|
-| DEV_REPO | main, dev | ❌ local only |
-| RELEASE_REPO | main | ✅ origin → OlesVanHermann/mcp-onlyoffice |
+| DEV_REPO | main, dev | Votre repo de développement |
+| RELEASE_REPO | main | Votre repo GitHub public |
 
 ---
 
@@ -39,33 +40,27 @@ Noter la fonction comme prête. Attendre un batch ou une demande explicite.
 
 ### 1. Sync DEV_REPO main avec dev
 ```bash
-cd /Users/claude/projet/mcp-onlyoffice
+cd $DEV_REPO
 git checkout main
 git merge dev --no-ff -m "Merge dev: X nouvelles fonctions testées"
 ```
 
-### 2. Copier les fichiers vers RELEASE_REPO
+### 2. Copier les fichiers vers RELEASE_REPO (si séparé)
 ```bash
-cd /Users/claude/projet/mcp-onlyoffice-release
+cd $RELEASE_REPO
 
-# Copier server_multiformat.py
-cp /Users/claude/projet/mcp-onlyoffice/server_multiformat.py .
-
-# Copier templates (blank.xlsx, blank.docx, blank.pptx, blank.pdf)
-cp -r /Users/claude/projet/mcp-onlyoffice/templates/ ./templates/
-
-# Copier requirements si modifié
-cp /Users/claude/projet/mcp-onlyoffice/requirements.txt . 2>/dev/null || true
+# Copier vos fichiers de code source
+# Adapter selon votre structure de projet
 
 # NE PAS COPIER:
-# - tests/           → reste en interne (pas sur GitHub)
+# - tests/           → reste en interne (optionnel)
 # - __pycache__/     → pas de cache
 # - .pytest_cache/   → pas de cache pytest
 ```
 
 ### 3. Bump version
 ```bash
-cd /Users/claude/projet/mcp-onlyoffice-release
+cd $RELEASE_REPO
 # Lire version actuelle et incrémenter patch
 CURRENT=$(grep '"version"' package.json | cut -d'"' -f4)
 # Ou utiliser npm si disponible
@@ -77,7 +72,7 @@ Ajouter les nouvelles fonctions au CHANGELOG.md
 
 ### 5. Commit et tag
 ```bash
-cd /Users/claude/projet/mcp-onlyoffice-release
+cd $RELEASE_REPO
 VERSION=$(grep '"version"' package.json | cut -d'"' -f4)
 git add -A
 git commit -m "feat: release v$VERSION - X nouvelles fonctions"
@@ -86,7 +81,7 @@ git tag "v$VERSION"
 
 ### 6. Push to GitHub
 ```bash
-cd /Users/claude/projet/mcp-onlyoffice-release
+cd $RELEASE_REPO
 git push origin main --tags
 ```
 
@@ -110,7 +105,7 @@ Release (600) - PUBLISHED
 
 Version: vX.Y.Z
 Tag: vX.Y.Z
-GitHub: https://github.com/OlesVanHermann/mcp-onlyoffice
+GitHub: https://github.com/OlesVanHermann/YOUR_PROJECT
 Nouvelles fonctions: X
 
 → Master (100) notifié
@@ -121,7 +116,7 @@ Nouvelles fonctions: X
 ## FICHIER DE LOG
 
 ```bash
-RELEASE_LOG=/Users/claude/projet-new/logs/600/release.log
+RELEASE_LOG=$BASE_DIR/logs/600/release.log
 ```
 
 Toutes les opérations sont loggées :
@@ -131,7 +126,7 @@ echo "[$(date)] Action: description" >> $RELEASE_LOG
 
 Suivi temps réel :
 ```bash
-tail -f /Users/claude/projet-new/logs/600/release.log
+tail -f logs/600/release.log
 ```
 
 ---

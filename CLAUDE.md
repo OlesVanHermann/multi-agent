@@ -132,7 +132,17 @@ multi-agent/
 │   └── pool-requests/
 │
 ├── scripts/                     # Scripts d'orchestration
-├── core/agent-runner/           # Python runners
+│   └── bridge/                  # Scripts pour le nouveau bridge
+│
+├── core/
+│   ├── agent-runner/            # Legacy Python runner
+│   ├── agent-bridge/            # NOUVEAU: Bridge PTY + Redis Streams
+│   ├── bridge/                  # SSH tunnel Mac↔VM
+│   └── dashboard/               # Web dashboard
+│
+├── docs/                        # Documentation
+│   └── BRIDGE.md                # Doc technique du bridge
+│
 ├── infrastructure/              # Docker, setup
 │
 ├── pool-requests/               # Queue de travail
@@ -201,16 +211,25 @@ multi-agent/
 
 ## Communication
 
-### Redis Streams
+### Deux modes disponibles
 
+#### Mode Legacy (agent_runner.py)
 ```bash
-# Envoyer message à un agent
+# Redis Lists
 redis-cli RPUSH "ma:inject:{AGENT_ID}" "message"
-
-# Exemple
 redis-cli RPUSH "ma:inject:300" "go"
-redis-cli RPUSH "ma:inject:100" "status"
 ```
+
+#### Mode Bridge (agent.py) - RECOMMANDÉ
+```bash
+# Redis Streams (plus robuste)
+./scripts/bridge/send.sh 300 "Analyse le README"
+
+# Ou directement
+redis-cli XADD "ma:agent:300:inbox" '*' prompt "message" from_agent "cli" timestamp "$(date +%s)"
+```
+
+Voir `docs/BRIDGE.md` pour la documentation complète du bridge.
 
 ### Pool Requests (Git)
 

@@ -1,13 +1,16 @@
 # Multi-Agent System - Python Dependencies
 
-# Redis client
+# Redis client with Streams support
 redis>=4.5.0
+
+# PTY for Claude Code interaction (agent-bridge)
+pexpect>=4.8.0
 
 # For dashboard (optional)
 flask>=2.3.0
 flask-socketio>=5.3.0
 
-# For bridge (optional)
+# For bridge SSH tunnel (optional)
 paramiko>=3.0.0
 
 # Utilities
