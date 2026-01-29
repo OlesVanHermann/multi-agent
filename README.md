@@ -181,7 +181,8 @@ multi-agent/
 | Fichier | Description |
 |---------|-------------|
 | [CLAUDE.md](CLAUDE.md) | Documentation principale |
-| [UPGRADE.md](UPGRADE.md) | **Guide de mise à jour** (v2.0 → v2.1, etc.) |
+| [UPGRADE.md](UPGRADE.md) | Guide de mise à jour (processus général) |
+| [upgrades/](upgrades/) | **Guides par version** (2.0→2.1, etc.) |
 | [docs/BRIDGE.md](docs/BRIDGE.md) | Documentation technique du bridge |
 | [docs/CLI.md](docs/CLI.md) | Référence CLI |
 | [prompts/CONVENTIONS.md](prompts/CONVENTIONS.md) | Convention de numérotation |
