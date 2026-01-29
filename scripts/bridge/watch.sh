@@ -1,50 +1,39 @@
 #!/bin/bash
-# watch.sh - Écoute les réponses d'un agent en temps réel via Redis Streams
-# Usage: ./watch.sh <agent_id> [--history]
-#        ./watch.sh 300          # Nouvelles réponses seulement
-#        ./watch.sh 300 --history # Voir aussi l'historique
-
-set -e
+# watch.sh - Écoute les réponses d'un agent via Redis Streams
+# Usage: ./watch.sh <agent_id>
 
 AGENT_ID=${1:-300}
 STREAM="ma:agent:${AGENT_ID}:outbox"
 
-# --history = commencer depuis le début, sinon depuis maintenant
-if [ "$2" = "--history" ]; then
-    LAST_ID="0-0"
-    echo "Watching agent $AGENT_ID (with history)..."
-else
-    LAST_ID='$'
-    echo "Watching agent $AGENT_ID (new messages only)..."
-fi
-
+echo "Watching agent $AGENT_ID responses..."
 echo "Stream: $STREAM"
 echo "Press Ctrl+C to quit"
 echo "---"
 
+# Commencer après le dernier message existant
+LAST_ID=$(redis-cli XINFO STREAM "$STREAM" 2>/dev/null | grep -A1 "last-generated-id" | tail -1 || echo "0-0")
+if [ -z "$LAST_ID" ] || [ "$LAST_ID" = "0-0" ]; then
+    LAST_ID='$'
+fi
+
 while true; do
-    # XREAD avec timeout de 5 secondes
-    result=$(redis-cli XREAD BLOCK 5000 STREAMS "$STREAM" "$LAST_ID" 2>/dev/null) || true
+    # Lire UN message à la fois, bloquer 5 secondes max
+    RESULT=$(redis-cli XREAD BLOCK 5000 COUNT 1 STREAMS "$STREAM" "$LAST_ID" 2>/dev/null)
 
-    if [ -n "$result" ]; then
-        # Extraire tous les message IDs et prendre le dernier
-        new_id=$(echo "$result" | grep -oE '[0-9]{13,}-[0-9]+' | tail -1)
+    if [ -n "$RESULT" ]; then
+        # Extraire l'ID du message (format: 1234567890123-0)
+        NEW_ID=$(echo "$RESULT" | tr ' ' '\n' | grep -E '^[0-9]+-[0-9]+$' | head -1)
 
-        if [ -n "$new_id" ]; then
-            LAST_ID="$new_id"
+        if [ -n "$NEW_ID" ] && [ "$NEW_ID" != "$LAST_ID" ]; then
+            LAST_ID="$NEW_ID"
 
-            # Afficher le message formaté
+            # Extraire la réponse
+            RESPONSE=$(echo "$RESULT" | tr ')' '\n' | grep -A1 "response" | tail -1 | tr -d ' "')
+
             echo ""
             echo "=== $(date '+%H:%M:%S') ==="
-
-            # Extraire la réponse du message Redis
-            response=$(echo "$result" | sed -n '/response/{n;p;}' | sed 's/^[0-9]*) //' | tr -d '"')
-
-            if [ -n "$response" ]; then
-                echo "$response"
-            else
-                # Fallback: afficher tout le résultat
-                echo "$result" | tail -5
+            if [ -n "$RESPONSE" ]; then
+                echo "$RESPONSE"
             fi
         fi
     fi
