@@ -75,21 +75,25 @@ echo "Backup: $BACKUP_DIR"
 tmux kill-server 2>/dev/null || true
 ```
 
-### Étape 4: Télécharger la nouvelle version
-
-**Option A: Via Git**
+### Étape 4: Télécharger et lancer le script de mise à jour
 
 ```bash
-git fetch origin
-git stash
-git pull origin main
-git stash pop
+# Télécharger le script depuis GitHub
+curl -O https://raw.githubusercontent.com/OlesVanHermann/multi-agent/main/upgrade.sh
+chmod +x upgrade.sh
+
+# Simuler d'abord (aucune modification)
+./upgrade.sh --dry-run
+
+# Appliquer la mise à jour
+./upgrade.sh
 ```
 
-**Option B: Via script automatique**
-
+Ou avec wget :
 ```bash
-./upgrade.sh main
+wget https://raw.githubusercontent.com/OlesVanHermann/multi-agent/main/upgrade.sh
+chmod +x upgrade.sh
+./upgrade.sh
 ```
 
 ### Étape 5: Lire le guide de migration spécifique
