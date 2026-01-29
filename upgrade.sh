@@ -29,6 +29,32 @@ log_ok() { printf "%s[OK]%s %s\n" "$GREEN" "$NC" "$1"; }
 log_warn() { printf "%s[WARN]%s %s\n" "$YELLOW" "$NC" "$1"; }
 log_error() { printf "%s[ERROR]%s %s\n" "$RED" "$NC" "$1"; }
 
+# ============================================================
+# Détection automatique des commandes
+# ============================================================
+find_cmd() {
+    local cmd_name="$1"
+    shift
+    for cmd in "$@"; do
+        # Gérer les commandes multi-mots comme "python3 -m pip"
+        local first_word="${cmd%% *}"
+        if command -v "$first_word" &>/dev/null; then
+            echo "$cmd"
+            return 0
+        fi
+    done
+    log_error "Commande '$cmd_name' non trouvée. Essayé: $*"
+    exit 1
+}
+
+# Détecter les commandes disponibles
+GIT_CMD=$(find_cmd "git" git)
+PIP_CMD=$(find_cmd "pip" pip3 pip "python3 -m pip" "python -m pip")
+PYTHON_CMD=$(find_cmd "python" python3 python)
+RSYNC_CMD=$(find_cmd "rsync" rsync)
+FIND_CMD=$(find_cmd "find" gfind find)
+DU_CMD=$(find_cmd "du" gdu du)
+
 echo ""
 echo "╔════════════════════════════════════════════╗"
 echo "║       Multi-Agent Framework Upgrade        ║"
@@ -83,7 +109,7 @@ if [ "$DRY_RUN" = false ]; then
 
     # Backup complet (exclure les gros fichiers temporaires)
     mkdir -p "$BACKUP_DIR"
-    rsync -a --exclude='.git' \
+    $RSYNC_CMD -a --exclude='.git' \
              --exclude='logs/*.log' \
              --exclude='sessions/*' \
              --exclude='__pycache__' \
@@ -91,8 +117,8 @@ if [ "$DRY_RUN" = false ]; then
              ./ "$BACKUP_DIR/"
 
     # Compter les fichiers
-    FILE_COUNT=$(find "$BACKUP_DIR" -type f | wc -l | tr -d ' ')
-    DIR_SIZE=$(du -sh "$BACKUP_DIR" | cut -f1)
+    FILE_COUNT=$($FIND_CMD "$BACKUP_DIR" -type f | wc -l | tr -d ' ')
+    DIR_SIZE=$($DU_CMD -sh "$BACKUP_DIR" | cut -f1)
 
     echo ""
     log_ok "Backup complet créé:"
@@ -132,10 +158,10 @@ TEMP_DIR=$(mktemp -d)
 log_info "Téléchargement dans $TEMP_DIR..."
 
 if [ "$DRY_RUN" = false ]; then
-    git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$TEMP_DIR"
+    $GIT_CMD clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$TEMP_DIR"
     log_ok "Téléchargement terminé"
 else
-    log_warn "[DRY-RUN] git clone --depth 1 --branch $BRANCH $REPO_URL"
+    log_warn "[DRY-RUN] $GIT_CMD clone --depth 1 --branch $BRANCH $REPO_URL"
 fi
 
 # ============================================================
@@ -150,8 +176,8 @@ log_info "Dossiers mis à jour:"
 for dir in "${FRAMEWORK_DIRS[@]}"; do
     if [ -d "$TEMP_DIR/$dir" ]; then
         if [ "$DRY_RUN" = false ]; then
-            rsync -av --delete "$TEMP_DIR/$dir" "./" | grep -v "/$" | head -5
-            remaining=$(rsync -av --delete "$TEMP_DIR/$dir" "./" 2>/dev/null | grep -v "/$" | wc -l)
+            $RSYNC_CMD -av --delete "$TEMP_DIR/$dir" "./" | grep -v "/$" | head -5 || true
+            remaining=$($RSYNC_CMD -av --delete "$TEMP_DIR/$dir" "./" 2>/dev/null | grep -v "/$" | wc -l || echo "0")
             [ "$remaining" -gt 5 ] && echo "  ... et $((remaining-5)) autres fichiers"
         fi
         log_ok "$dir"
@@ -178,16 +204,10 @@ log_info "Étape 5/5: Installation des dépendances"
 echo ""
 
 if [ "$DRY_RUN" = false ]; then
-    if command -v pip3 &>/dev/null; then
-        pip3 install -q -r requirements.txt
-    elif command -v pip &>/dev/null; then
-        pip install -q -r requirements.txt
-    else
-        python3 -m pip install -q -r requirements.txt
-    fi
+    $PIP_CMD install -q -r requirements.txt
     log_ok "Dépendances installées"
 else
-    log_warn "[DRY-RUN] pip install -r requirements.txt"
+    log_warn "[DRY-RUN] $PIP_CMD install -r requirements.txt"
 fi
 
 # ============================================================
