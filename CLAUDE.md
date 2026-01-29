@@ -1,4 +1,4 @@
-# Multi-Agent System v2.0
+# Multi-Agent System v2.1
 
 Système d'orchestration multi-agents pour projets de développement complexes.
 
@@ -10,7 +10,8 @@ Ce système permet de faire tourner jusqu'à **1000 agents** en parallèle avec 
 
 - **Pipeline structurée** : agents spécialisés avec rôles définis
 - **Isolation Git** : chaque dev travaille dans son propre clone/branche
-- **Communication Redis** : coordination temps réel
+- **Communication Redis Streams** : coordination temps réel avec historique
+- **Sessions Claude** : prompt caching pour ~90% d'économie de tokens
 - **Hiérarchie claire** : Architect → Super-Master → Master → Workers
 
 ---
@@ -271,4 +272,4 @@ pending/  →  assigned/  →  done/
 
 ---
 
-*Multi-Agent System v2.0 - Janvier 2026*
+*Multi-Agent System v2.1 - Janvier 2026*

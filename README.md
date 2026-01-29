@@ -77,6 +77,31 @@ echo "test" | claude --print -
 ./scripts/bridge/start-bridge-agents.sh 300
 ```
 
+## Mise à jour (Upgrade)
+
+Si vous avez déjà une installation (ex: v2.0) et voulez mettre à jour :
+
+```bash
+cd /chemin/vers/multi-agent
+
+# 1. Télécharger le script de mise à jour
+curl -O https://raw.githubusercontent.com/OlesVanHermann/multi-agent/main/upgrade.sh
+chmod +x upgrade.sh
+
+# 2. Simuler (optionnel, aucune modification)
+./upgrade.sh --dry-run
+
+# 3. Appliquer la mise à jour
+./upgrade.sh
+```
+
+Le script :
+- Crée un **backup complet** avant toute modification
+- Met à jour **uniquement** les fichiers framework (`core/`, `scripts/`, `docs/`)
+- **Préserve** vos fichiers projet (`prompts/`, `pool-requests/`, `project/`)
+
+Voir [UPGRADE.md](UPGRADE.md) et [upgrades/](upgrades/) pour les détails par version.
+
 ## Configuration
 
 ### Variables d'environnement
