@@ -17,17 +17,17 @@ if [ "$1" = "--dry-run" ]; then
     BRANCH="${2:-main}"
 fi
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+# Colors (compatible bash/zsh)
+RED=$'\033[0;31m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[1;33m'
+BLUE=$'\033[0;34m'
+NC=$'\033[0m'
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_ok() { echo -e "${GREEN}[OK]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_info() { printf "%s[INFO]%s %s\n" "$BLUE" "$NC" "$1"; }
+log_ok() { printf "%s[OK]%s %s\n" "$GREEN" "$NC" "$1"; }
+log_warn() { printf "%s[WARN]%s %s\n" "$YELLOW" "$NC" "$1"; }
+log_error() { printf "%s[ERROR]%s %s\n" "$RED" "$NC" "$1"; }
 
 echo ""
 echo "╔════════════════════════════════════════════╗"
