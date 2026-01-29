@@ -449,16 +449,19 @@ EXECUTE MAINTENANT.
     def send_to_agent(self, to_agent, prompt):
         """Envoyer un message à un autre agent (ou 'all' pour broadcast)"""
         if to_agent == 'all':
-            # Broadcast to all known agents
-            agent_keys = self.redis.keys('ma:agent:*:inbox')
+            # Broadcast to all registered agents (using status keys ma:agent:XXX)
+            # These are created when agents start via _set_redis_status()
+            agent_keys = self.redis.keys('ma:agent:*')
             sent_count = 0
             for key in agent_keys:
-                # Extract agent ID from key (ma:agent:300:inbox -> 300)
+                # Extract agent ID from key (ma:agent:300 -> 300)
+                # Skip inbox/outbox keys (ma:agent:300:inbox)
                 parts = key.split(':')
-                if len(parts) >= 3:
+                if len(parts) == 3 and parts[2].isdigit():
                     target_id = parts[2]
                     if target_id != self.agent_id:  # Don't send to self
-                        self.redis.xadd(key, {
+                        # Send to agent's inbox stream
+                        self.redis.xadd(f"ma:agent:{target_id}:inbox", {
                             'prompt': prompt,
                             'from_agent': self.agent_id,
                             'timestamp': int(time.time())
