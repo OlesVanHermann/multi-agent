@@ -110,9 +110,11 @@ start_single_agent() {
     mkdir -p "$LOG_DIR/$agent_id"
 
     # Start in tmux INTERACTIVE (no --headless)
+    # PYTHONUNBUFFERED=1 forces real-time output through tee
     tmux new-session -d -s "$SESSION_NAME" \
         "export CLAUDE_CONFIG_DIR='$CLAUDE_CONFIG_DIR'; \
          export CLAUDE_PROFILES_DIR='$CLAUDE_PROFILES_DIR'; \
+         export PYTHONUNBUFFERED=1; \
          python3 '$AGENT_SCRIPT' $agent_id 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'; \
          echo 'Agent stopped. Press Enter to close.'; read"
 
