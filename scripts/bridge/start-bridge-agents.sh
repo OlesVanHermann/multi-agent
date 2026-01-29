@@ -15,19 +15,62 @@ LOG_DIR="$BASE_DIR/logs"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
 
-# Default agents configuration
-AGENTS=(
-    "000:Super-Master"
-    "100:Master"
-    "200:Explorer"
-    "300:Developer-Excel"
-    "301:Developer-Word"
-    "302:Developer-PPTX"
-    "303:Developer-PDF"
-    "400:Merge"
-    "500:Test"
-    "600:Release"
-)
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_ok() { echo -e "${GREEN}[OK]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+# Agents configuration
+# Option 1: Use agents.conf if exists
+# Option 2: Auto-detect from prompts/ directory
+# Option 3: Fallback to defaults
+
+PROMPTS_DIR="$BASE_DIR/prompts"
+AGENTS_CONF="$BASE_DIR/agents.conf"
+
+load_agents() {
+    AGENTS=()
+
+    # Option 1: Read from agents.conf if exists
+    if [ -f "$AGENTS_CONF" ]; then
+        while IFS=: read -r id desc || [ -n "$id" ]; do
+            [[ "$id" =~ ^#.*$ ]] && continue  # Skip comments
+            [[ -z "$id" ]] && continue         # Skip empty lines
+            AGENTS+=("$id:$desc")
+        done < "$AGENTS_CONF"
+        log_info "Loaded ${#AGENTS[@]} agents from agents.conf"
+        return
+    fi
+
+    # Option 2: Auto-detect from prompts/ directory
+    if [ -d "$PROMPTS_DIR" ]; then
+        for prompt_file in "$PROMPTS_DIR"/[0-9][0-9][0-9]-*.md; do
+            [ -f "$prompt_file" ] || continue
+            filename=$(basename "$prompt_file" .md)
+            id="${filename%%-*}"
+            desc="${filename#*-}"
+            AGENTS+=("$id:$desc")
+        done
+        if [ ${#AGENTS[@]} -gt 0 ]; then
+            log_info "Auto-detected ${#AGENTS[@]} agents from prompts/"
+            return
+        fi
+    fi
+
+    # Option 3: Fallback defaults
+    AGENTS=(
+        "000:Super-Master"
+        "100:Master"
+        "200:Explorer"
+        "300:Developer"
+        "400:Merge"
+        "500:Test"
+        "600:Release"
+    )
+    log_warn "Using default agents (no agents.conf or prompts found)"
+}
+
+load_agents
 
 mkdir -p "$LOG_DIR"
 
@@ -37,11 +80,6 @@ mkdir -p "$LOG_DIR"
 # Option 2: Use default ~/.claude (standard Claude Code installation)
 CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 CLAUDE_PROFILES_DIR="${CLAUDE_PROFILES_DIR:-}"
-
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_ok() { echo -e "${GREEN}[OK]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 ensure_redis() {
     if ! redis-cli ping &>/dev/null; then
