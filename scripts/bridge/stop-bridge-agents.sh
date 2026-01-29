@@ -11,8 +11,15 @@ log_ok() { echo -e "${GREEN}[OK]${NC} $1"; }
 log_info() { echo -e "[INFO] $1"; }
 
 if [ $# -eq 0 ]; then
-    log_info "Stopping all agent-* tmux sessions..."
+    log_info "Stopping all agent-* tmux sessions (except 9XX Architects)..."
     tmux ls 2>/dev/null | grep "^agent-" | cut -d: -f1 | while read session; do
+        # Extract agent ID from session name (agent-300 -> 300)
+        agent_id="${session#agent-}"
+        # Skip 9XX agents (Architects)
+        if [[ "$agent_id" =~ ^9[0-9][0-9]$ ]]; then
+            echo "  - Skipping $session (Architect)"
+            continue
+        fi
         tmux kill-session -t "$session" 2>/dev/null && log_ok "Killed $session"
     done
 else

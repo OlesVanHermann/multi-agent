@@ -105,20 +105,41 @@ start_single_agent() {
         return
     fi
 
-    log_info "Starting agent $agent_id in tmux..."
-
     mkdir -p "$LOG_DIR/$agent_id"
 
-    # Start in tmux INTERACTIVE (no --headless)
-    # PYTHONUNBUFFERED=1 forces real-time output through tee
-    tmux new-session -d -s "$SESSION_NAME" \
-        "export CLAUDE_CONFIG_DIR='$CLAUDE_CONFIG_DIR'; \
-         export CLAUDE_PROFILES_DIR='$CLAUDE_PROFILES_DIR'; \
-         export PYTHONUNBUFFERED=1; \
-         python3 '$AGENT_SCRIPT' $agent_id 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'; \
-         echo 'Agent stopped. Press Enter to close.'; read"
+    # 9XX Architects: run claude directly (not via agent.py)
+    if [[ "$agent_id" =~ ^9[0-9][0-9]$ ]]; then
+        log_info "Starting Architect $agent_id in tmux (direct claude)..."
 
-    log_ok "Agent $agent_id started in tmux: $SESSION_NAME"
+        # Find prompt file for this architect
+        PROMPT_FILE=$(ls "$PROMPTS_DIR"/${agent_id}-*.md 2>/dev/null | head -1)
+
+        tmux new-session -d -s "$SESSION_NAME" \
+            "cd '$BASE_DIR'; \
+             export CLAUDE_CONFIG_DIR='$CLAUDE_CONFIG_DIR'; \
+             export CLAUDE_PROFILES_DIR='$CLAUDE_PROFILES_DIR'; \
+             echo '=== Architect $agent_id ==='; \
+             echo 'Prompt: $PROMPT_FILE'; \
+             echo 'Type: lis $PROMPT_FILE'; \
+             echo ''; \
+             claude; \
+             echo 'Session ended. Press Enter to close.'; read"
+
+        log_ok "Architect $agent_id started in tmux: $SESSION_NAME (direct claude)"
+    else
+        # Regular agents: run via agent.py bridge
+        log_info "Starting agent $agent_id in tmux..."
+
+        # PYTHONUNBUFFERED=1 forces real-time output through tee
+        tmux new-session -d -s "$SESSION_NAME" \
+            "export CLAUDE_CONFIG_DIR='$CLAUDE_CONFIG_DIR'; \
+             export CLAUDE_PROFILES_DIR='$CLAUDE_PROFILES_DIR'; \
+             export PYTHONUNBUFFERED=1; \
+             python3 '$AGENT_SCRIPT' $agent_id 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'; \
+             echo 'Agent stopped. Press Enter to close.'; read"
+
+        log_ok "Agent $agent_id started in tmux: $SESSION_NAME"
+    fi
 }
 
 start_range() {
