@@ -97,53 +97,26 @@ ensure_redis() {
 
 start_single_agent() {
     local agent_id=$1
-    local mode=${2:-interactive}
 
-    log_info "Starting agent $agent_id ($mode mode)..."
+    log_info "Starting agent $agent_id..."
 
-    if [ "$mode" = "headless" ]; then
-        SESSION_NAME="agent-$agent_id"
+    mkdir -p "$LOG_DIR/$agent_id"
 
-        # Check if session exists
-        if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-            log_warn "Session $SESSION_NAME already exists, skipping"
-            return
-        fi
-
-        # Start in tmux with Claude environment
-        mkdir -p "$LOG_DIR/$agent_id"
-        tmux new-session -d -s "$SESSION_NAME" \
-            "export CLAUDE_CONFIG_DIR='$CLAUDE_CONFIG_DIR'; \
-             export CLAUDE_PROFILES_DIR='$CLAUDE_PROFILES_DIR'; \
-             python3 '$AGENT_SCRIPT' $agent_id --headless 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'"
-
-        log_ok "Agent $agent_id started in tmux session: $SESSION_NAME"
-    else
-        # Interactive mode with Claude environment
-        export CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR"
-        export CLAUDE_PROFILES_DIR="$CLAUDE_PROFILES_DIR"
-        python3 "$AGENT_SCRIPT" "$agent_id"
-    fi
+    export CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR"
+    export CLAUDE_PROFILES_DIR="$CLAUDE_PROFILES_DIR"
+    python3 "$AGENT_SCRIPT" "$agent_id" 2>&1 | tee -a "$LOG_DIR/$agent_id/bridge.log"
 }
 
 start_range() {
     local start_id=$1
     local end_id=$2
 
-    log_info "Starting agents $start_id to $((end_id - 1)) in headless mode..."
+    log_info "Starting agents $start_id to $((end_id - 1))..."
     echo ""
 
     for ((i=start_id; i<end_id; i++)); do
-        start_single_agent "$i" "headless"
+        start_single_agent "$i"
     done
-
-    echo ""
-    log_ok "All agents started"
-    echo ""
-    echo "Commands:"
-    echo "  tmux attach -t agent-$start_id    # Attach to agent"
-    echo "  tmux ls                           # List sessions"
-    echo "  ./stop-bridge-agents.sh           # Stop all"
 }
 
 start_all() {
@@ -152,22 +125,18 @@ start_all() {
 
     for agent in "${AGENTS[@]}"; do
         IFS=':' read -r id desc <<< "$agent"
-        start_single_agent "$id" "headless"
+        start_single_agent "$id"
     done
-
-    echo ""
-    log_ok "All agents started"
 }
 
 show_help() {
-    echo "Usage: $0 <agent_id|start_id end_id|all>"
+    echo "Usage: $0 <agent_id|all>"
     echo ""
     echo "Examples:"
-    echo "  $0 300           # Start agent 300 (interactive)"
-    echo "  $0 300 310       # Start agents 300-309 (headless in tmux)"
+    echo "  $0 300           # Start agent 300"
     echo "  $0 all           # Start all configured agents"
     echo ""
-    echo "Configured agents:"
+    echo "Configured agents (${#AGENTS[@]}):"
     for agent in "${AGENTS[@]}"; do
         IFS=':' read -r id desc <<< "$agent"
         echo "  $id - $desc"
@@ -186,12 +155,6 @@ case "$1" in
         start_all
         ;;
     *)
-        if [ -n "$2" ]; then
-            # Range mode
-            start_range "$1" "$2"
-        else
-            # Single agent (interactive)
-            start_single_agent "$1" "interactive"
-        fi
+        start_single_agent "$1"
         ;;
 esac
