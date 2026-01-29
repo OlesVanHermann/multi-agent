@@ -30,6 +30,10 @@ import select
 import argparse
 import uuid
 import subprocess
+import pty
+import fcntl
+import struct
+import termios
 from datetime import datetime
 from threading import Thread, Lock
 from queue import Queue, Empty
@@ -192,9 +196,10 @@ class Agent:
             pass
 
     def _run_claude(self, prompt: str) -> str:
-        """Execute Claude with subprocess and stream output in real-time"""
-        # Use CLAUDE_CMD env var if set, otherwise default to claude
+        """Execute Claude with PTY for real-time streaming output"""
         claude_cmd = os.environ.get("CLAUDE_CMD", "claude")
+
+        # Build command - use --print for cleaner output capture
         cmd = [claude_cmd, "--dangerously-skip-permissions", "--print"]
 
         if not self.session_initialized:
@@ -202,48 +207,91 @@ class Agent:
         else:
             cmd.extend(["--resume", self.session_id])
 
-        # Pass prompt as argument (more reliable than stdin)
         cmd.append(prompt)
 
         try:
-            # Use Popen for real-time streaming
+            # Create PTY for real-time streaming
+            master_fd, slave_fd = pty.openpty()
+
+            # Set terminal size
+            winsize = struct.pack('HHHH', 50, 120, 0, 0)
+            fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, winsize)
+
+            # Start process with PTY
             process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1  # Line buffered
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                close_fds=True
             )
+            os.close(slave_fd)
 
-            output_lines = []
-            print(f"\n{'─'*60}")
-            print(f"📤 CLAUDE OUTPUT (streaming):")
-            print(f"{'─'*60}")
+            # Make master non-blocking
+            flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+            fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
-            # Stream stdout in real-time
-            for line in process.stdout:
-                print(line, end='', flush=True)
-                output_lines.append(line)
+            output_chunks = []
+            print(f"\n{'─'*60}", flush=True)
+            print(f"📤 CLAUDE (streaming):", flush=True)
+            print(f"{'─'*60}", flush=True)
 
-            # Wait for process to complete
-            process.wait(timeout=CLAUDE_TIMEOUT)
+            start_time = time.time()
 
-            print(f"{'─'*60}\n")
+            while True:
+                # Check timeout
+                if time.time() - start_time > CLAUDE_TIMEOUT:
+                    process.kill()
+                    self._log("Claude timeout")
+                    return "Error: Timeout"
 
-            output = ''.join(output_lines).strip()
+                # Check if process finished
+                ret = process.poll()
 
-            if process.returncode != 0:
-                error = process.stderr.read().strip()
-                self._log(f"Claude error: {error[:100]}")
-                if not output:
-                    output = f"Error: {error}"
+                # Read available output
+                try:
+                    chunk = os.read(master_fd, 4096)
+                    if chunk:
+                        text = chunk.decode('utf-8', errors='replace')
+                        # Strip ANSI escape codes for cleaner output
+                        import re
+                        clean_text = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', text)
+                        clean_text = re.sub(r'\x1b\][^\x07]*\x07', '', clean_text)
+                        print(clean_text, end='', flush=True)
+                        output_chunks.append(clean_text)
+                except (OSError, BlockingIOError):
+                    pass
+
+                if ret is not None:
+                    # Process finished, drain remaining output
+                    time.sleep(0.1)
+                    try:
+                        while True:
+                            chunk = os.read(master_fd, 4096)
+                            if not chunk:
+                                break
+                            text = chunk.decode('utf-8', errors='replace')
+                            import re
+                            clean_text = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', text)
+                            clean_text = re.sub(r'\x1b\][^\x07]*\x07', '', clean_text)
+                            print(clean_text, end='', flush=True)
+                            output_chunks.append(clean_text)
+                    except (OSError, BlockingIOError):
+                        pass
+                    break
+
+                time.sleep(0.01)  # Small delay to avoid busy loop
+
+            os.close(master_fd)
+            print(f"\n{'─'*60}\n", flush=True)
+
+            output = ''.join(output_chunks).strip()
+
+            if process.returncode != 0 and not output:
+                output = f"Error: Process exited with code {process.returncode}"
 
             return output
 
-        except subprocess.TimeoutExpired:
-            process.kill()
-            self._log("Claude timeout")
-            return "Error: Timeout"
         except Exception as e:
             self._log(f"Claude exception: {e}")
             return f"Error: {e}"
