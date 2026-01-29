@@ -178,7 +178,13 @@ log_info "Étape 5/5: Installation des dépendances"
 echo ""
 
 if [ "$DRY_RUN" = false ]; then
-    pip install -q -r requirements.txt
+    if command -v pip3 &>/dev/null; then
+        pip3 install -q -r requirements.txt
+    elif command -v pip &>/dev/null; then
+        pip install -q -r requirements.txt
+    else
+        python3 -m pip install -q -r requirements.txt
+    fi
     log_ok "Dépendances installées"
 else
     log_warn "[DRY-RUN] pip install -r requirements.txt"
