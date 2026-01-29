@@ -69,40 +69,40 @@ FRAMEWORK_FILES=(
 # sessions/          - Vos sessions
 
 # ============================================================
-# ÉTAPE 1: Backup des fichiers projet
+# ÉTAPE 1: Backup COMPLET du répertoire
 # ============================================================
 echo "─────────────────────────────────────────────"
-log_info "Étape 1/5: Backup des fichiers projet"
+log_info "Étape 1/5: Backup complet"
 echo ""
 
-BACKUP_DIR="../multi-agent-backup-$(date +%Y%m%d-%H%M%S)"
+CURRENT_DIR=$(basename "$(pwd)")
+BACKUP_DIR="../${CURRENT_DIR}-backup-$(date +%Y%m%d-%H%M%S)"
 
 if [ "$DRY_RUN" = false ]; then
+    log_info "Création du backup complet..."
+
+    # Backup complet (exclure les gros fichiers temporaires)
     mkdir -p "$BACKUP_DIR"
+    rsync -a --exclude='.git' \
+             --exclude='logs/*.log' \
+             --exclude='sessions/*' \
+             --exclude='__pycache__' \
+             --exclude='*.pyc' \
+             ./ "$BACKUP_DIR/"
 
-    # Backup prompts (vos personnalisations)
-    if [ -d "prompts/" ]; then
-        cp -r prompts/ "$BACKUP_DIR/"
-        log_ok "prompts/ → $BACKUP_DIR/prompts/"
-    fi
-
-    # Backup knowledge (vos inventaires)
-    if [ -d "pool-requests/knowledge/" ]; then
-        mkdir -p "$BACKUP_DIR/pool-requests/"
-        cp -r pool-requests/knowledge/ "$BACKUP_DIR/pool-requests/"
-        log_ok "pool-requests/knowledge/ → $BACKUP_DIR/"
-    fi
-
-    # Backup config
-    if [ -f "project-config.md" ]; then
-        cp project-config.md "$BACKUP_DIR/"
-        log_ok "project-config.md → $BACKUP_DIR/"
-    fi
+    # Compter les fichiers
+    FILE_COUNT=$(find "$BACKUP_DIR" -type f | wc -l | tr -d ' ')
+    DIR_SIZE=$(du -sh "$BACKUP_DIR" | cut -f1)
 
     echo ""
-    log_ok "Backup créé: $BACKUP_DIR"
+    log_ok "Backup complet créé:"
+    echo "    📁 $BACKUP_DIR"
+    echo "    📄 $FILE_COUNT fichiers"
+    echo "    💾 $DIR_SIZE"
+    echo ""
+    echo "    Pour restaurer: rm -rf ./* && cp -r $BACKUP_DIR/* ./"
 else
-    log_warn "[DRY-RUN] Backup serait créé dans $BACKUP_DIR"
+    log_warn "[DRY-RUN] Backup complet serait créé dans $BACKUP_DIR"
 fi
 
 # ============================================================
@@ -201,13 +201,22 @@ echo "╚═══════════════════════�
 echo ""
 
 if [ "$DRY_RUN" = false ]; then
-    echo "Fichiers PRÉSERVÉS (non modifiés):"
+    echo "Fichiers MIS À JOUR:"
+    echo "  ↻ core/                 (framework)"
+    echo "  ↻ scripts/              (framework)"
+    echo "  ↻ docs/                 (framework)"
+    echo "  ↻ requirements.txt      (dépendances)"
+    echo ""
+    echo "Fichiers PRÉSERVÉS:"
     echo "  ✓ prompts/              (vos prompts)"
     echo "  ✓ pool-requests/        (vos données)"
     echo "  ✓ project/              (votre code)"
     echo "  ✓ project-config.md     (votre config)"
     echo ""
-    echo "Backup: $BACKUP_DIR"
+    echo "Backup complet: $BACKUP_DIR"
+    echo ""
+    echo "⚠️  En cas de problème, restaurez avec:"
+    echo "    rm -rf ./* && cp -r $BACKUP_DIR/* ./"
     echo ""
     echo "Prochaines étapes:"
     echo "  1. Lire upgrades/ pour les actions spécifiques"
