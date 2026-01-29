@@ -126,37 +126,42 @@ class Agent:
         self._log(f"Listening: Redis={self.inbox}, stdin={'disabled' if headless else 'enabled'}")
         self._log(f"Session: {self.session_id[:8]}...")
 
+    def _find_prompt_file(self) -> str:
+        """Find the prompt file for this agent by pattern {agent_id}-*.md"""
+        prompts_dir = BASE_DIR / "prompts"
+        pattern = f"{self.agent_id}-*.md"
+        matches = list(prompts_dir.glob(pattern))
+        if matches:
+            return str(matches[0])
+        return None
+
+    def _auto_load_prompt(self):
+        """Auto-queue the initial prompt load at startup"""
+        prompt_file = self._find_prompt_file()
+        if prompt_file:
+            self._log(f"Auto-loading prompt: {prompt_file}")
+            # Queue the prompt read as the first task
+            self.prompt_queue.put({
+                'prompt': f"lis {prompt_file}",
+                'from_agent': 'auto_init',
+                'msg_id': f"init_{int(time.time())}",
+                'timestamp': int(time.time())
+            })
+        else:
+            self._log(f"No prompt file found for agent {self.agent_id}")
+
     def _load_system_prompt(self, prompt_file=None) -> str:
-        """Load the agent's system prompt"""
+        """Load the agent's system prompt (legacy - kept for compatibility)"""
         if prompt_file and Path(prompt_file).exists():
             content = Path(prompt_file).read_text()
             self._log(f"Loaded prompt: {prompt_file}")
             return content
 
-        prompts_dir = BASE_DIR / "prompts"
-        prompt_map = {
-            "000": "000-mini-super.md",
-            "100": "100-master.md",
-            "200": "200-explorer.md",
-            "201": "201-doc-generator.md",
-            "300": "300-dev-excel.md",
-            "301": "301-dev-word.md",
-            "302": "302-dev-pptx.md",
-            "303": "303-dev-pdf.md",
-            "400": "400-merge.md",
-            "500": "500-test.md",
-            "501": "501-test-creator.md",
-            "502": "502-test-mapper.md",
-            "600": "600-release.md",
-            "900": "900-architect.md",
-        }
-
-        filename = prompt_map.get(self.agent_id)
-        if filename:
-            path = prompts_dir / filename
-            if path.exists():
-                self._log(f"Loaded prompt: {filename}")
-                return path.read_text()
+        # Auto-detect from prompts/ directory
+        detected = self._find_prompt_file()
+        if detected:
+            self._log(f"Detected prompt: {detected}")
+            return Path(detected).read_text()
 
         return f"You are Agent {self.agent_id}. Execute tasks as instructed."
 
@@ -505,6 +510,8 @@ EXECUTE MAINTENANT.
 
     def run_interactive(self):
         """Boucle principale avec stdin"""
+        # Auto-load agent prompt at startup
+        self._auto_load_prompt()
         self._log("Ready. Type prompts or /help for commands.")
 
         try:
@@ -526,6 +533,8 @@ EXECUTE MAINTENANT.
 
     def run_headless(self):
         """Mode daemon sans stdin"""
+        # Auto-load agent prompt at startup
+        self._auto_load_prompt()
         self._log("Running in headless mode. Ctrl+C to quit.")
         try:
             while self.running:
