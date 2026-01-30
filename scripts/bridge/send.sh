@@ -1,33 +1,43 @@
 #!/bin/bash
 # send.sh - Envoie un message à un agent via Redis Streams
-# Usage: ./send.sh <from_agent> <to_agent> <message>
-#        ./send.sh 100 300 "go scaleway.com"
-#        FROM_AGENT=100 ./send.sh 300 "go scaleway.com"  (legacy)
+# Usage: ./send.sh <to_agent> <message>
+#        ./send.sh 300 "go scaleway.com"
+#
+# Auto-detects sender from tmux session name (agent-100 -> from_agent=100)
 
 set -e
 
-# Support both formats:
-# 1. send.sh <from> <to> <message>  (new)
-# 2. send.sh <to> <message>         (legacy, uses FROM_AGENT env var)
+TO_AGENT=$1
+shift 2>/dev/null || true
 
-if [ $# -ge 3 ] && [[ "$1" =~ ^[0-9]+$ ]] && [[ "$2" =~ ^[0-9]+$ ]]; then
-    # New format: send.sh 100 300 "message"
-    FROM_AGENT=$1
-    TO_AGENT=$2
-    shift 2
+if [ -z "$TO_AGENT" ]; then
+    echo "Usage: $0 <to_agent> <message>"
+    echo "       $0 300 'go scaleway.com'"
+    exit 1
+fi
+
+# Message from args or stdin
+if [ $# -gt 0 ]; then
     MESSAGE="$*"
 else
-    # Legacy format: send.sh 300 "message"
-    TO_AGENT=$1
-    shift 2>/dev/null || true
-    FROM_AGENT=${FROM_AGENT:-cli}
+    MESSAGE=$(cat)
+fi
 
-    if [ $# -gt 0 ]; then
-        MESSAGE="$*"
-    else
-        MESSAGE=$(cat)
+if [ -z "$MESSAGE" ]; then
+    echo "Error: No message provided"
+    exit 1
+fi
+
+# Auto-detect from_agent from tmux session name
+if [ -n "$TMUX" ]; then
+    SESSION_NAME=$(tmux display-message -p '#S' 2>/dev/null || echo "")
+    if [[ "$SESSION_NAME" =~ ^agent-([0-9]+)$ ]]; then
+        FROM_AGENT="${BASH_REMATCH[1]}"
     fi
 fi
+
+# Fallback to env var or "cli"
+FROM_AGENT=${FROM_AGENT:-cli}
 
 if [ -z "$TO_AGENT" ]; then
     echo "Usage: $0 <from_agent> <to_agent> <message>"
