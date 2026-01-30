@@ -96,10 +96,14 @@ class TmuxAgent:
         # Get initial pane content to know baseline
         self.last_output_lines = self._get_pane_line_count()
 
+        # Legacy inbox (ma:inject:{id} format used by prompts)
+        self.legacy_inbox = f"ma:inject:{agent_id}"
+
         # Threads
         self.running = True
         self.threads = [
             Thread(target=self._listen_redis, daemon=True, name="redis_listener"),
+            Thread(target=self._listen_legacy, daemon=True, name="legacy_listener"),
             Thread(target=self._heartbeat, daemon=True, name="heartbeat"),
             Thread(target=self._process_queue, daemon=True, name="queue_processor"),
         ]
@@ -107,7 +111,7 @@ class TmuxAgent:
             t.start()
 
         self._set_redis_status()
-        self._log(f"Listening: Redis={self.inbox}, tmux={self.session_name}")
+        self._log(f"Listening: Redis={self.inbox} + {self.legacy_inbox}, tmux={self.session_name}")
 
     def _log(self, msg):
         ts = datetime.now().strftime("%H:%M:%S")
@@ -263,7 +267,7 @@ class TmuxAgent:
             pass
 
     def _listen_redis(self):
-        """Thread: listen to Redis inbox"""
+        """Thread: listen to Redis inbox (Streams format)"""
         last_id = '$'
         while self.running:
             try:
@@ -289,6 +293,27 @@ class TmuxAgent:
                 time.sleep(2)
             except Exception as e:
                 self._log(f"Redis error: {e}")
+                time.sleep(1)
+
+    def _listen_legacy(self):
+        """Thread: listen to legacy Redis inbox (List format: ma:inject:{id})"""
+        while self.running:
+            try:
+                # BLPOP blocks until message available (timeout 2s)
+                result = self.redis.blpop(self.legacy_inbox, timeout=2)
+                if result:
+                    _, message = result
+                    self.prompt_queue.put({
+                        'prompt': message,
+                        'from_agent': 'legacy',
+                        'msg_id': f"legacy-{int(time.time())}",
+                        'source': 'legacy'
+                    })
+                    self._log(f"<- Queued from legacy: {message[:50]}...")
+            except redis.ConnectionError:
+                time.sleep(2)
+            except Exception as e:
+                self._log(f"Legacy Redis error: {e}")
                 time.sleep(1)
 
     def _process_queue(self):
