@@ -1,39 +1,23 @@
 #!/usr/bin/env python3
 """
-agent.py - Agent unifié Redis Streams + Claude Code + Sessions
-Usage: python agent.py <AGENT_ID> [--headless]
+agent-tmux.py - Agent bridge using tmux to communicate with interactive Claude
 
-Combine:
-- Redis Streams (XREAD/XADD) pour communication
-- Sessions Claude (--session-id/--resume) pour prompt caching
-- subprocess avec --print pour exécution fiable
+Instead of subprocess with --print, this uses:
+- tmux send-keys: send prompts to Claude
+- tmux capture-pane: read Claude's output
+- Claude runs in FULL INTERACTIVE MODE with MCP access!
 
-États: IDLE → BUSY → IDLE
-- IDLE: accepte nouveau prompt (Redis ou stdin)
-- BUSY: exécute le prompt, nouveaux prompts en queue
+Usage: python agent-tmux.py <AGENT_ID>
 
-Commandes interactives:
-  /status      - Affiche l'état actuel
-  /queue       - Taille de la queue
-  /flush       - Vide la queue
-  /send <id> <msg> - Envoie un message à un autre agent
-  /history     - Derniers échanges
-  /session     - Info session Claude
-  /newsession  - Force nouvelle session
-  Ctrl+C       - Quitter
+Requires: tmux session "agent-{id}" with Claude running interactively
 """
 
 import sys
 import os
 import time
-import select
-import argparse
-import uuid
 import subprocess
-import pty
-import fcntl
-import struct
-import termios
+import re
+import argparse
 from datetime import datetime
 from threading import Thread, Lock
 from queue import Queue, Empty
@@ -54,13 +38,13 @@ LOG_DIR = os.environ.get("LOG_DIR", str(BASE_DIR / "logs"))
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 
-# Timing
-HEARTBEAT_INTERVAL = 10   # secondes entre heartbeats
-MAX_HISTORY = 50          # nombre d'échanges gardés en mémoire
-CLAUDE_TIMEOUT = 300      # timeout pour Claude (5 min)
+HEARTBEAT_INTERVAL = 10
+MAX_HISTORY = 50
+RESPONSE_TIMEOUT = 300  # 5 min max wait for Claude response
+POLL_INTERVAL = 0.3     # How often to check for new output
 
-# Session management
-SESSION_TASK_LIMIT = 50   # Reset session après N tâches
+# Claude prompt markers (to detect end of response)
+PROMPT_MARKERS = ['❯', '>', '$', '%']
 
 
 class State(Enum):
@@ -68,49 +52,49 @@ class State(Enum):
     BUSY = "busy"
 
 
-class Agent:
-    def __init__(self, agent_id, headless=False, prompt_file=None):
+class TmuxAgent:
+    def __init__(self, agent_id):
         self.agent_id = str(agent_id)
-        self.headless = headless
+        self.session_name = f"agent-{agent_id}"
         self.state = State.IDLE
         self.state_lock = Lock()
 
-        # Session management
-        self.session_id = None
-        self.session_initialized = False
-        self.tasks_in_session = 0
-        self.sessions_created = 0
+        # Tracking
         self.tasks_completed = 0
+        self.last_output_lines = 0
 
-        # Queues et buffers
+        # Queue
         self.prompt_queue = Queue()
         self.current_task = None
         self.history = deque(maxlen=MAX_HISTORY)
 
-        # Setup log directory and file
+        # Logging
         self.log_dir = Path(LOG_DIR) / self.agent_id
         self.log_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.logfile = open(self.log_dir / f"agent_{ts}.log", "a", buffering=1)
-        self._log(f"=== Agent {agent_id} started (headless={headless}) ===")
+        self.logfile = open(self.log_dir / f"bridge_{ts}.log", "a", buffering=1)
 
-        # System prompt
-        self.system_prompt = self._load_system_prompt(prompt_file)
+        self._log(f"=== TmuxAgent {agent_id} started ===")
 
-        # Redis (Streams)
+        # Verify tmux session exists
+        if not self._tmux_session_exists():
+            self._log(f"ERROR: tmux session '{self.session_name}' not found!")
+            self._log("Start Claude first with: ./scripts/bridge/start-bridge-agents.sh " + agent_id)
+            sys.exit(1)
+
+        # Redis
         self.redis = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
         self.inbox = f"ma:agent:{agent_id}:inbox"
         self.outbox = f"ma:agent:{agent_id}:outbox"
 
-        # Test connexion Redis
         try:
             self.redis.ping()
         except redis.ConnectionError:
-            print(f"[ERROR] Cannot connect to Redis at {REDIS_HOST}:{REDIS_PORT}")
+            self._log(f"ERROR: Cannot connect to Redis at {REDIS_HOST}:{REDIS_PORT}")
             sys.exit(1)
 
-        # Create new session
-        self._new_session()
+        # Get initial pane content to know baseline
+        self.last_output_lines = self._get_pane_line_count()
 
         # Threads
         self.running = True
@@ -123,186 +107,163 @@ class Agent:
             t.start()
 
         self._set_redis_status()
-        self._log(f"Listening: Redis={self.inbox}, stdin={'disabled' if headless else 'enabled'}")
-        self._log(f"Session: {self.session_id[:8]}...")
-
-    def _find_prompt_file(self) -> str:
-        """Find the prompt file for this agent by pattern {agent_id}-*.md"""
-        prompts_dir = BASE_DIR / "prompts"
-        pattern = f"{self.agent_id}-*.md"
-        matches = list(prompts_dir.glob(pattern))
-        if matches:
-            return str(matches[0])
-        return None
-
-    def _auto_load_prompt(self):
-        """Auto-queue the initial prompt load at startup"""
-        prompt_file = self._find_prompt_file()
-        if prompt_file:
-            self._log(f"Auto-loading prompt: {prompt_file}")
-            # Queue the prompt read as the first task
-            self.prompt_queue.put({
-                'prompt': f"lis {prompt_file}",
-                'from_agent': 'auto_init',
-                'msg_id': f"init_{int(time.time())}",
-                'timestamp': int(time.time())
-            })
-        else:
-            self._log(f"No prompt file found for agent {self.agent_id}")
-
-    def _load_system_prompt(self, prompt_file=None) -> str:
-        """Load the agent's system prompt (legacy - kept for compatibility)"""
-        if prompt_file and Path(prompt_file).exists():
-            content = Path(prompt_file).read_text()
-            self._log(f"Loaded prompt: {prompt_file}")
-            return content
-
-        # Auto-detect from prompts/ directory
-        detected = self._find_prompt_file()
-        if detected:
-            self._log(f"Detected prompt: {detected}")
-            return Path(detected).read_text()
-
-        return f"You are Agent {self.agent_id}. Execute tasks as instructed."
-
-    def _new_session(self):
-        """Create a new Claude session"""
-        self.session_id = str(uuid.uuid4())
-        self.session_initialized = False
-        self.tasks_in_session = 0
-        self.sessions_created += 1
-        self._log(f"New session #{self.sessions_created}: {self.session_id[:8]}")
+        self._log(f"Listening: Redis={self.inbox}, tmux={self.session_name}")
 
     def _log(self, msg):
-        """Log avec timestamp"""
         ts = datetime.now().strftime("%H:%M:%S")
         line = f"[{ts}][{self.agent_id}] {msg}"
         print(line, flush=True)
         self.logfile.write(line + "\n")
 
+    def _tmux_session_exists(self):
+        """Check if tmux session exists"""
+        result = subprocess.run(
+            ["tmux", "has-session", "-t", self.session_name],
+            capture_output=True
+        )
+        return result.returncode == 0
+
+    def _get_pane_line_count(self):
+        """Get current number of lines in tmux pane 0"""
+        target = f"{self.session_name}.0"
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-t", target, "-p"],
+            capture_output=True, text=True
+        )
+        return len(result.stdout.split('\n'))
+
+    def _capture_pane(self, lines=100):
+        """Capture tmux pane 0 content (where Claude runs)"""
+        target = f"{self.session_name}.0"
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-t", target, "-p", "-S", f"-{lines}"],
+            capture_output=True, text=True
+        )
+        return result.stdout
+
+    def _send_keys(self, text):
+        """Send keys to tmux pane 0 (where Claude runs)"""
+        # Target pane 0 specifically (Claude is in pane 0, bridge is in pane 1)
+        target = f"{self.session_name}.0"
+
+        # Clear any existing input first
+        subprocess.run(["tmux", "send-keys", "-t", target, "C-c"], capture_output=True)
+        time.sleep(0.5)
+        subprocess.run(["tmux", "send-keys", "-t", target, "C-u"], capture_output=True)
+        time.sleep(0.5)
+
+        # Send text
+        subprocess.run(
+            ["tmux", "send-keys", "-t", target, "-l", text],
+            capture_output=True
+        )
+
+        # Wait 1 second for text to be received
+        time.sleep(1)
+
+        # Send Escape (exits multi-line mode if active)
+        subprocess.run(
+            ["tmux", "send-keys", "-t", target, "Escape"],
+            capture_output=True
+        )
+
+        # Wait 1 second for Escape to be processed
+        time.sleep(1)
+
+        # Send Enter to submit
+        subprocess.run(
+            ["tmux", "send-keys", "-t", target, "Enter"],
+            capture_output=True
+        )
+
+    def _wait_for_response(self, timeout=RESPONSE_TIMEOUT):
+        """Wait for Claude to finish responding and return the output"""
+        start_time = time.time()
+        baseline = self._capture_pane(200)
+        baseline_lines = len(baseline.strip().split('\n'))
+
+        last_content = ""
+        stable_count = 0
+        response_started = False
+
+        while time.time() - start_time < timeout:
+            time.sleep(POLL_INTERVAL)
+
+            current = self._capture_pane(200)
+            current_lines = current.strip().split('\n')
+
+            # Check if content changed
+            if current != last_content:
+                last_content = current
+                stable_count = 0
+                response_started = True
+
+                # Print new content in real-time
+                new_lines = current_lines[baseline_lines:]
+                if new_lines:
+                    for line in new_lines[-5:]:  # Show last 5 new lines
+                        if line.strip():
+                            print(f"  {line}", flush=True)
+            else:
+                stable_count += 1
+
+            # Check for prompt marker (Claude is done)
+            last_line = current_lines[-1].strip() if current_lines else ""
+            for marker in PROMPT_MARKERS:
+                if last_line.endswith(marker) or last_line == marker:
+                    if response_started and stable_count >= 2:
+                        # Extract response (everything between baseline and prompt)
+                        response_lines = current_lines[baseline_lines:-1]
+                        response = '\n'.join(response_lines).strip()
+                        return response
+
+            # If stable for a while and we got content, consider it done
+            if stable_count > 10 and response_started:
+                response_lines = current_lines[baseline_lines:]
+                response = '\n'.join(response_lines).strip()
+                # Remove trailing prompt line if present
+                for marker in PROMPT_MARKERS:
+                    if response.endswith(marker):
+                        response = response[:-len(marker)].strip()
+                return response
+
+        self._log("WARNING: Response timeout")
+        return self._capture_pane(100)
+
+    def _run_claude(self, prompt):
+        """Send prompt to Claude via tmux and capture response"""
+        self._log(f"Sending to Claude: {prompt[:60]}...")
+
+        # Capture baseline
+        print(f"\n{'─'*60}", flush=True)
+        print(f"📤 CLAUDE (tmux interactive):", flush=True)
+        print(f"{'─'*60}", flush=True)
+
+        # Send prompt
+        self._send_keys(prompt)
+
+        # Wait for response
+        response = self._wait_for_response()
+
+        print(f"{'─'*60}\n", flush=True)
+
+        return response
+
     def _set_redis_status(self):
-        """Publie l'état dans Redis"""
+        """Update status in Redis"""
         try:
-            pipe = self.redis.pipeline()
-            pipe.hset(f"ma:agent:{self.agent_id}", mapping={
+            self.redis.hset(f"ma:agent:{self.agent_id}", mapping={
                 "status": self.state.value,
                 "last_seen": int(time.time()),
                 "queue_size": self.prompt_queue.qsize(),
-                "current_task_from": str(self.current_task.get('from_agent', '')) if self.current_task else '',
-                "headless": str(self.headless),
-                "session_id": self.session_id[:8] if self.session_id else '',
                 "tasks_completed": self.tasks_completed,
-                "tasks_in_session": self.tasks_in_session,
-                "sessions_created": self.sessions_created,
+                "mode": "tmux-interactive"
             })
-            pipe.expire(f"ma:agent:{self.agent_id}", 60)
-            pipe.execute()
         except redis.ConnectionError:
             pass
 
-    def _run_claude(self, prompt: str) -> str:
-        """Execute Claude with PTY for real-time streaming output"""
-        claude_cmd = os.environ.get("CLAUDE_CMD", "claude")
-
-        # Build command - use --print for cleaner output capture
-        cmd = [claude_cmd, "--dangerously-skip-permissions", "--print"]
-
-        if not self.session_initialized:
-            cmd.extend(["--session-id", self.session_id])
-        else:
-            cmd.extend(["--resume", self.session_id])
-
-        cmd.append(prompt)
-
-        try:
-            # Create PTY for real-time streaming
-            master_fd, slave_fd = pty.openpty()
-
-            # Set terminal size
-            winsize = struct.pack('HHHH', 50, 120, 0, 0)
-            fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, winsize)
-
-            # Start process with PTY
-            process = subprocess.Popen(
-                cmd,
-                stdin=slave_fd,
-                stdout=slave_fd,
-                stderr=slave_fd,
-                close_fds=True
-            )
-            os.close(slave_fd)
-
-            # Make master non-blocking
-            flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
-            fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-
-            output_chunks = []
-            print(f"\n{'─'*60}", flush=True)
-            print(f"📤 CLAUDE (streaming):", flush=True)
-            print(f"{'─'*60}", flush=True)
-
-            start_time = time.time()
-
-            while True:
-                # Check timeout
-                if time.time() - start_time > CLAUDE_TIMEOUT:
-                    process.kill()
-                    self._log("Claude timeout")
-                    return "Error: Timeout"
-
-                # Check if process finished
-                ret = process.poll()
-
-                # Read available output
-                try:
-                    chunk = os.read(master_fd, 4096)
-                    if chunk:
-                        text = chunk.decode('utf-8', errors='replace')
-                        # Strip ANSI escape codes for cleaner output
-                        import re
-                        clean_text = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', text)
-                        clean_text = re.sub(r'\x1b\][^\x07]*\x07', '', clean_text)
-                        print(clean_text, end='', flush=True)
-                        output_chunks.append(clean_text)
-                except (OSError, BlockingIOError):
-                    pass
-
-                if ret is not None:
-                    # Process finished, drain remaining output
-                    time.sleep(0.1)
-                    try:
-                        while True:
-                            chunk = os.read(master_fd, 4096)
-                            if not chunk:
-                                break
-                            text = chunk.decode('utf-8', errors='replace')
-                            import re
-                            clean_text = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', text)
-                            clean_text = re.sub(r'\x1b\][^\x07]*\x07', '', clean_text)
-                            print(clean_text, end='', flush=True)
-                            output_chunks.append(clean_text)
-                    except (OSError, BlockingIOError):
-                        pass
-                    break
-
-                time.sleep(0.01)  # Small delay to avoid busy loop
-
-            os.close(master_fd)
-            print(f"\n{'─'*60}\n", flush=True)
-
-            output = ''.join(output_chunks).strip()
-
-            if process.returncode != 0 and not output:
-                output = f"Error: Process exited with code {process.returncode}"
-
-            return output
-
-        except Exception as e:
-            self._log(f"Claude exception: {e}")
-            return f"Error: {e}"
-
     def _listen_redis(self):
-        """Thread: écoute Redis inbox"""
+        """Thread: listen to Redis inbox"""
         last_id = '$'
         while self.running:
             try:
@@ -313,154 +274,98 @@ class Agent:
                         last_id = msg_id
                         msg_type = data.get('type', 'prompt')
 
-                        if msg_type == 'response':
-                            self._log(f"<- Response from {data.get('from_agent')}: {data.get('response', '')[:100]}...")
-                            self.history.append({
-                                'type': 'received_response',
-                                'from_agent': data.get('from_agent'),
-                                'response': data.get('response', ''),
-                                'timestamp': int(time.time())
+                        if msg_type == 'prompt' or 'prompt' in data:
+                            self.prompt_queue.put({
+                                'prompt': data.get('prompt', ''),
+                                'from_agent': data.get('from_agent', 'unknown'),
+                                'msg_id': msg_id,
+                                'source': 'redis'
                             })
-                        else:
-                            prompt = data.get('prompt', '').strip()
-                            if prompt:
-                                task = {
-                                    'prompt': prompt,
-                                    'from_agent': data.get('from_agent'),
-                                    'msg_id': msg_id,
-                                    'source': 'redis'
-                                }
-                                self.prompt_queue.put(task)
-                                self._log(f"<- Queued from {data.get('from_agent', '?')}: {prompt[:60]}...")
-
+                            self._log(f"<- Queued from {data.get('from_agent', '?')}: {data.get('prompt', '')[:50]}...")
+                        elif msg_type == 'response':
+                            self._log(f"<- Response from {data.get('from_agent')}: {data.get('response', '')[:50]}...")
             except redis.ConnectionError:
-                self._log("Redis connection lost, retrying...")
-                time.sleep(5)
+                self._log("Redis connection lost, reconnecting...")
+                time.sleep(2)
             except Exception as e:
-                self._log(f"Redis listener error: {e}")
+                self._log(f"Redis error: {e}")
                 time.sleep(1)
 
     def _process_queue(self):
-        """Thread: traite la queue de prompts"""
+        """Thread: process prompt queue"""
         while self.running:
             try:
-                if self.state != State.IDLE:
-                    time.sleep(0.5)
-                    continue
-
                 task = self.prompt_queue.get(timeout=1)
-                self._execute_prompt(task)
-
             except Empty:
                 continue
-            except Exception as e:
-                self._log(f"Queue processor error: {e}")
 
-    def _execute_prompt(self, task):
-        """Exécute un prompt via Claude"""
-        with self.state_lock:
-            if self.state != State.IDLE:
-                self.prompt_queue.put(task)
-                return
+            with self.state_lock:
+                self.state = State.BUSY
+                self.current_task = task
 
-            self.state = State.BUSY
-            self.current_task = task
+            self._set_redis_status()
+            src = f"[{task.get('from_agent', 'local')}]"
+            self._log(f"-> Executing {src}: {task['prompt'][:80]}...")
 
-        self._set_redis_status()
-        src = f"[{task.get('from_agent', 'local')}]" if task.get('source') == 'redis' else "[manual]"
-        self._log(f"-> Executing {src}: {task['prompt'][:80]}...")
+            # Run prompt
+            response = self._run_claude(task['prompt'])
 
-        # Build prompt
-        prompt = task['prompt']
-        if not self.session_initialized:
-            full_prompt = f"""{self.system_prompt}
+            # Save to history
+            self.history.append({
+                'prompt': task['prompt'],
+                'response': response,
+                'from_agent': task.get('from_agent'),
+                'timestamp': int(time.time())
+            })
 
----
+            # Publish to Redis
+            msg_data = {
+                'response': response,
+                'from_agent': self.agent_id,
+                'to_agent': task.get('from_agent', ''),
+                'timestamp': int(time.time()),
+                'chars': len(response)
+            }
+            self.redis.xadd(self.outbox, msg_data)
 
-## TACHE
-{prompt}
+            # Notify sender if it was another agent
+            from_agent = task.get('from_agent')
+            if from_agent and from_agent not in ['manual', 'cli', 'auto_init', 'unknown']:
+                try:
+                    self.redis.xadd(f"ma:agent:{from_agent}:inbox", {
+                        'response': response[:4000],
+                        'from_agent': self.agent_id,
+                        'type': 'response',
+                        'timestamp': int(time.time())
+                    })
+                except:
+                    pass
 
-EXECUTE MAINTENANT.
-"""
-        else:
-            full_prompt = prompt
+            self._log(f"Response sent ({len(response)} chars)")
+            self.tasks_completed += 1
 
-        # Execute
-        response = self._run_claude(full_prompt)
+            with self.state_lock:
+                self.current_task = None
+                self.state = State.IDLE
 
-        # Mark session as initialized
-        if not self.session_initialized:
-            self.session_initialized = True
-            self._log("Session initialized (prompt cached)")
-
-        # Save to history
-        self.history.append({
-            'type': 'exchange',
-            'prompt': task.get('prompt', ''),
-            'response': response,
-            'from_agent': task.get('from_agent'),
-            'timestamp': int(time.time())
-        })
-
-        # Publish response to Redis
-        msg_data = {
-            'response': response,
-            'from_agent': self.agent_id,
-            'to_agent': task.get('from_agent', ''),
-            'in_reply_to': task.get('msg_id', ''),
-            'timestamp': int(time.time()),
-            'chars': len(response)
-        }
-        self.redis.xadd(self.outbox, msg_data)
-
-        # Notify sender's inbox if it was another agent
-        from_agent = task.get('from_agent')
-        if from_agent and from_agent != 'manual' and from_agent != 'cli':
-            try:
-                self.redis.xadd(f"ma:agent:{from_agent}:inbox", {
-                    'response': response[:4000],
-                    'from_agent': self.agent_id,
-                    'type': 'response',
-                    'timestamp': int(time.time())
-                })
-            except:
-                pass
-
-        self._log(f"Response sent ({len(response)} chars)")
-        self.tasks_completed += 1
-        self.tasks_in_session += 1
-
-        # Check session limit
-        if self.tasks_in_session >= SESSION_TASK_LIMIT:
-            self._log(f"Session task limit reached ({SESSION_TASK_LIMIT}), creating new session")
-            self._new_session()
-
-        # Reset state
-        self.current_task = None
-        self.state = State.IDLE
-        self._set_redis_status()
+            self._set_redis_status()
 
     def _heartbeat(self):
-        """Thread: heartbeat Redis"""
+        """Thread: heartbeat"""
         while self.running:
             self._set_redis_status()
             time.sleep(HEARTBEAT_INTERVAL)
 
     def send_to_agent(self, to_agent, prompt):
-        """Envoyer un message à un autre agent (ou 'all' pour broadcast)"""
+        """Send message to another agent"""
         if to_agent == 'all':
-            # Broadcast to all registered agents (using status keys ma:agent:XXX)
-            # These are created when agents start via _set_redis_status()
             agent_keys = self.redis.keys('ma:agent:*')
             sent_count = 0
             for key in agent_keys:
-                # Extract agent ID from key (ma:agent:300 -> 300)
-                # Skip inbox/outbox keys (ma:agent:300:inbox)
                 parts = key.split(':')
                 if len(parts) == 3 and parts[2].isdigit():
                     target_id = parts[2]
-                    if target_id != self.agent_id:  # Don't send to self
-                        # Send to agent's inbox stream
+                    if target_id != self.agent_id:
                         self.redis.xadd(f"ma:agent:{target_id}:inbox", {
                             'prompt': prompt,
                             'from_agent': self.agent_id,
@@ -476,66 +381,22 @@ EXECUTE MAINTENANT.
             })
             self._log(f"-> Sent to agent {to_agent}: {prompt[:60]}...")
 
-    def manual_input(self, prompt):
-        """Input manuel (stdin)"""
-        task = {
-            'prompt': prompt,
-            'from_agent': 'manual',
-            'msg_id': f"manual-{int(time.time())}",
-            'source': 'manual'
-        }
+    def run(self):
+        """Main loop - also accepts stdin commands"""
+        self._log("Ready. Monitoring Redis and stdin...")
 
-        if self.state == State.IDLE:
-            self._execute_prompt(task)
-        else:
-            self.prompt_queue.put(task)
-            self._log(f"Queued (agent busy): {prompt[:60]}...")
-
-    def _handle_command(self, line):
-        """Gère les commandes slash"""
-        if line == '/status':
-            self._log(f"State: {self.state.value} | Queue: {self.prompt_queue.qsize()} | Tasks: {self.tasks_completed}")
-        elif line == '/queue':
-            self._log(f"Queue size: {self.prompt_queue.qsize()}")
-        elif line == '/flush':
-            count = 0
-            while not self.prompt_queue.empty():
-                self.prompt_queue.get()
-                count += 1
-            self._log(f"Queue flushed ({count} items)")
-        elif line == '/session':
-            self._log(f"Session: {self.session_id[:8]} | Initialized: {self.session_initialized} | Tasks: {self.tasks_in_session}/{SESSION_TASK_LIMIT}")
-        elif line == '/newsession':
-            self._log("Creating new session...")
-            self._new_session()
-            self._log(f"New session ready: {self.session_id[:8]}")
-        elif line == '/history':
-            self._log(f"Last {len(self.history)} exchanges:")
-            for h in list(self.history)[-5:]:
-                if h['type'] == 'exchange':
-                    self._log(f"  [{h.get('from_agent', 'manual')}] {h['prompt'][:50]}... -> {len(h['response'])} chars")
-                else:
-                    self._log(f"  <- Response from {h['from_agent']}: {h['response'][:50]}...")
-        elif line.startswith('/send '):
-            parts = line[6:].split(' ', 1)
-            if len(parts) == 2:
-                to_agent = parts[0]
-                msg = parts[1]
-                self.send_to_agent(to_agent, msg)
-            else:
-                self._log("Usage: /send <agent_id> <message>")
-        elif line == '/help':
-            self._log("Commands: /status /queue /flush /session /newsession /history /send <id> <msg> /help")
-        else:
-            self._log(f"Unknown command: {line}")
-
-    def run_interactive(self):
-        """Boucle principale avec stdin"""
-        # Auto-load agent prompt at startup
-        self._auto_load_prompt()
-        self._log("Ready. Type prompts or /help for commands.")
+        # Auto-load prompt
+        prompt_file = self._find_prompt_file()
+        if prompt_file:
+            self._log(f"Auto-loading: {prompt_file}")
+            self.prompt_queue.put({
+                'prompt': f"lis {prompt_file}",
+                'from_agent': 'auto_init',
+                'msg_id': f"init_{int(time.time())}",
+            })
 
         try:
+            import select
             while self.running:
                 if select.select([sys.stdin], [], [], 0.5)[0]:
                     line = sys.stdin.readline()
@@ -546,55 +407,52 @@ EXECUTE MAINTENANT.
                         if line.startswith('/'):
                             self._handle_command(line)
                         else:
-                            self.manual_input(line)
+                            self.prompt_queue.put({
+                                'prompt': line,
+                                'from_agent': 'manual',
+                                'msg_id': f"manual-{int(time.time())}",
+                            })
         except KeyboardInterrupt:
             self._log("Shutting down...")
         finally:
-            self.shutdown()
+            self.running = False
+            self.redis.hset(f"ma:agent:{self.agent_id}", "status", "stopped")
+            self.logfile.close()
 
-    def run_headless(self):
-        """Mode daemon sans stdin"""
-        # Auto-load agent prompt at startup
-        self._auto_load_prompt()
-        self._log("Running in headless mode. Ctrl+C to quit.")
-        try:
-            while self.running:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            self._log("Shutting down...")
-        finally:
-            self.shutdown()
+    def _find_prompt_file(self):
+        """Find prompt file for this agent"""
+        prompts_dir = BASE_DIR / "prompts"
+        pattern = f"{self.agent_id}-*.md"
+        matches = list(prompts_dir.glob(pattern))
+        if matches:
+            return str(matches[0])
+        return None
 
-    def shutdown(self):
-        """Arrêt propre"""
-        self.running = False
-        self.redis.hset(f"ma:agent:{self.agent_id}", "status", "stopped")
-        self.logfile.close()
-        self._log(f"Agent stopped. Total: {self.tasks_completed} tasks, {self.sessions_created} sessions")
+    def _handle_command(self, line):
+        """Handle slash commands"""
+        if line == '/status':
+            self._log(f"State: {self.state.value} | Queue: {self.prompt_queue.qsize()} | Tasks: {self.tasks_completed}")
+        elif line == '/queue':
+            self._log(f"Queue size: {self.prompt_queue.qsize()}")
+        elif line.startswith('/send '):
+            parts = line[6:].split(' ', 1)
+            if len(parts) == 2:
+                self.send_to_agent(parts[0], parts[1])
+            else:
+                self._log("Usage: /send <agent_id> <message>")
+        elif line == '/help':
+            self._log("Commands: /status /queue /send <id> <msg> /help")
+        else:
+            self._log(f"Unknown command: {line}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Multi-Agent Bridge for Claude Code')
+    parser = argparse.ArgumentParser(description='TmuxAgent - Bridge for interactive Claude in tmux')
     parser.add_argument('agent_id', help='Agent ID (e.g., 300)')
-    parser.add_argument('--headless', action='store_true', help='Run without stdin (daemon mode)')
-    parser.add_argument('--prompt-file', help='Path to custom system prompt file')
-    parser.add_argument('--redis-host', default=None, help='Redis host')
-    parser.add_argument('--redis-port', type=int, default=None, help='Redis port')
     args = parser.parse_args()
 
-    if args.redis_host:
-        global REDIS_HOST
-        REDIS_HOST = args.redis_host
-    if args.redis_port:
-        global REDIS_PORT
-        REDIS_PORT = args.redis_port
-
-    agent = Agent(args.agent_id, headless=args.headless, prompt_file=args.prompt_file)
-
-    if args.headless:
-        agent.run_headless()
-    else:
-        agent.run_interactive()
+    agent = TmuxAgent(args.agent_id)
+    agent.run()
 
 
 if __name__ == "__main__":
