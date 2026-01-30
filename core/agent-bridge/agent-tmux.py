@@ -158,8 +158,8 @@ class TmuxAgent:
             capture_output=True
         )
 
-        # Small delay to ensure Escape is processed
-        time.sleep(0.1)
+        # Wait 1 second for Escape to be processed by Claude Code
+        time.sleep(1)
 
         # Send Enter to submit
         subprocess.run(
