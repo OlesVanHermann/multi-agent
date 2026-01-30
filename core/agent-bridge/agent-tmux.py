@@ -152,13 +152,16 @@ class TmuxAgent:
             capture_output=True
         )
 
+        # Wait 1 second for text to be received
+        time.sleep(1)
+
         # Send Escape (exits multi-line mode if active)
         subprocess.run(
             ["tmux", "send-keys", "-t", target, "Escape"],
             capture_output=True
         )
 
-        # Wait 1 second for Escape to be processed by Claude Code
+        # Wait 1 second for Escape to be processed
         time.sleep(1)
 
         # Send Enter to submit
