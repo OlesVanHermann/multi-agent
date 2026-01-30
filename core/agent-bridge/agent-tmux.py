@@ -145,8 +145,15 @@ class TmuxAgent:
         """Send keys to tmux pane 0 (where Claude runs)"""
         # Target pane 0 specifically (Claude is in pane 0, bridge is in pane 1)
         target = f"{self.session_name}.0"
+
+        # Send text literally (with -l flag to handle special chars)
         subprocess.run(
-            ["tmux", "send-keys", "-t", target, text, "Enter"],
+            ["tmux", "send-keys", "-t", target, "-l", text],
+            capture_output=True
+        )
+        # Send Enter key separately
+        subprocess.run(
+            ["tmux", "send-keys", "-t", target, "Enter"],
             capture_output=True
         )
 
