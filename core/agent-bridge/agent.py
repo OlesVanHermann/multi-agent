@@ -296,20 +296,34 @@ class TmuxAgent:
                 time.sleep(1)
 
     def _listen_legacy(self):
-        """Thread: listen to legacy Redis inbox (List format: ma:inject:{id})"""
+        """Thread: listen to legacy Redis inbox (List format: ma:inject:{id})
+
+        Supports FROM:xxx| prefix to identify sender:
+          RPUSH ma:inject:300 "FROM:100|do something"
+        """
         while self.running:
             try:
                 # BLPOP blocks until message available (timeout 2s)
                 result = self.redis.blpop(self.legacy_inbox, timeout=2)
                 if result:
                     _, message = result
+
+                    # Parse FROM:xxx| prefix if present
+                    from_agent = 'legacy'
+                    prompt = message
+                    if message.startswith('FROM:'):
+                        parts = message.split('|', 1)
+                        if len(parts) == 2:
+                            from_agent = parts[0][5:]  # Remove "FROM:" prefix
+                            prompt = parts[1]
+
                     self.prompt_queue.put({
-                        'prompt': message,
-                        'from_agent': 'legacy',
+                        'prompt': prompt,
+                        'from_agent': from_agent,
                         'msg_id': f"legacy-{int(time.time())}",
                         'source': 'legacy'
                     })
-                    self._log(f"<- Queued from legacy: {message[:50]}...")
+                    self._log(f"<- Queued from {from_agent}: {prompt[:50]}...")
             except redis.ConnectionError:
                 time.sleep(2)
             except Exception as e:
