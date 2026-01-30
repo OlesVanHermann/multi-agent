@@ -124,26 +124,29 @@ class TmuxAgent:
         return result.returncode == 0
 
     def _get_pane_line_count(self):
-        """Get current number of lines in tmux pane"""
+        """Get current number of lines in tmux pane 0"""
+        target = f"{self.session_name}.0"
         result = subprocess.run(
-            ["tmux", "capture-pane", "-t", self.session_name, "-p"],
+            ["tmux", "capture-pane", "-t", target, "-p"],
             capture_output=True, text=True
         )
         return len(result.stdout.split('\n'))
 
     def _capture_pane(self, lines=100):
-        """Capture tmux pane content"""
+        """Capture tmux pane 0 content (where Claude runs)"""
+        target = f"{self.session_name}.0"
         result = subprocess.run(
-            ["tmux", "capture-pane", "-t", self.session_name, "-p", "-S", f"-{lines}"],
+            ["tmux", "capture-pane", "-t", target, "-p", "-S", f"-{lines}"],
             capture_output=True, text=True
         )
         return result.stdout
 
     def _send_keys(self, text):
-        """Send keys to tmux session"""
-        # Escape special characters
+        """Send keys to tmux pane 0 (where Claude runs)"""
+        # Target pane 0 specifically (Claude is in pane 0, bridge is in pane 1)
+        target = f"{self.session_name}.0"
         subprocess.run(
-            ["tmux", "send-keys", "-t", self.session_name, text, "Enter"],
+            ["tmux", "send-keys", "-t", target, text, "Enter"],
             capture_output=True
         )
 
