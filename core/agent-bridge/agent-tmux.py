@@ -146,6 +146,12 @@ class TmuxAgent:
         # Target pane 0 specifically (Claude is in pane 0, bridge is in pane 1)
         target = f"{self.session_name}.0"
 
+        # Clear any existing input first
+        subprocess.run(["tmux", "send-keys", "-t", target, "C-c"], capture_output=True)
+        time.sleep(0.5)
+        subprocess.run(["tmux", "send-keys", "-t", target, "C-u"], capture_output=True)
+        time.sleep(0.5)
+
         # Send text
         subprocess.run(
             ["tmux", "send-keys", "-t", target, "-l", text],
