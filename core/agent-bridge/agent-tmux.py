@@ -146,16 +146,14 @@ class TmuxAgent:
         # Target pane 0 specifically (Claude is in pane 0, bridge is in pane 1)
         target = f"{self.session_name}.0"
 
-        # Send text literally (with -l flag to handle special chars)
-        subprocess.run(
-            ["tmux", "send-keys", "-t", target, "-l", text],
-            capture_output=True
-        )
-        # Send Enter key separately
-        subprocess.run(
-            ["tmux", "send-keys", "-t", target, "Enter"],
-            capture_output=True
-        )
+        # Method: Use shell command with proper escaping
+        # This ensures the text and Enter are sent correctly
+        import shlex
+        escaped_text = shlex.quote(text)
+
+        # Send via shell to handle complex text
+        cmd = f"tmux send-keys -t {target} {escaped_text} C-m"
+        subprocess.run(cmd, shell=True, capture_output=True)
 
     def _wait_for_response(self, timeout=RESPONSE_TIMEOUT):
         """Wait for Claude to finish responding and return the output"""
