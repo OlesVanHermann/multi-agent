@@ -49,12 +49,9 @@ start_single_agent() {
         return
     fi
 
-    # Skip 9XX Architects (they run claude directly, no bridge needed)
+    # NEVER start 9XX Architects automatically - they must be started manually
     if [[ "$agent_id" =~ ^9[0-9][0-9]$ ]]; then
-        log_info "Starting Architect $agent_id (direct claude, no bridge)..."
-        tmux new-session -d -s "$SESSION_NAME" -x 200 -y 50 \
-            "cd '$BASE_DIR' && claude; echo 'Session ended. Press Enter.'; read"
-        log_ok "Architect $agent_id started: $SESSION_NAME"
+        log_warn "Skipping Architect $agent_id (start manually with: tmux new -s agent-$agent_id 'claude')"
         return
     fi
 

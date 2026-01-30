@@ -12,15 +12,9 @@ log_ok() { echo -e "${GREEN}[OK]${NC} $1"; }
 log_info() { echo -e "[INFO] $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 
-INCLUDE_ARCHITECTS=false
-
 case "$1" in
-    "all")
-        INCLUDE_ARCHITECTS=true
-        log_info "Stopping ALL agent sessions (including 9XX Architects)..."
-        ;;
-    "")
-        log_info "Stopping agent sessions (preserving 9XX Architects)..."
+    "all"|"")
+        log_info "Stopping agent sessions (9XX Architects are NEVER stopped)..."
         ;;
     *)
         # Stop specific agent
@@ -38,9 +32,9 @@ esac
 tmux ls 2>/dev/null | grep "^agent-" | cut -d: -f1 | while read session; do
     agent_id="${session#agent-}"
 
-    # Skip 9XX unless --all
-    if [[ "$agent_id" =~ ^9[0-9][0-9]$ ]] && [ "$INCLUDE_ARCHITECTS" = false ]; then
-        log_warn "Skipping $session (Architect)"
+    # NEVER kill 9XX Architects
+    if [[ "$agent_id" =~ ^9[0-9][0-9]$ ]]; then
+        log_warn "Skipping $session (Architect - NEVER killed)"
         continue
     fi
 
