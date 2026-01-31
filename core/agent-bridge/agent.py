@@ -287,7 +287,18 @@ class TmuxAgent:
                             })
                             self._log(f"<- Queued from {data.get('from_agent', '?')}: {data.get('prompt', '')[:50]}...")
                         elif msg_type == 'response':
-                            self._log(f"<- Response from {data.get('from_agent')}: {data.get('response', '')[:50]}...")
+                            from_id = data.get('from_agent', '?')
+                            response_text = data.get('response', '')
+                            self._log(f"<- Response from {from_id}: {response_text[:100]}...")
+
+                            # Forward response to Claude in tmux so Master can see it
+                            notification = f"[RESPONSE FROM {from_id}]: {response_text[:500]}"
+                            self.prompt_queue.put({
+                                'prompt': notification,
+                                'from_agent': f'response_{from_id}',
+                                'msg_id': f"response-{int(time.time())}",
+                                'source': 'response'
+                            })
             except redis.ConnectionError:
                 self._log("Redis connection lost, reconnecting...")
                 time.sleep(2)
@@ -369,6 +380,12 @@ class TmuxAgent:
 
             # Notify sender if it was another agent
             from_agent = task.get('from_agent')
+
+            # Route responses back to sender
+            # 'legacy' messages without FROM: prefix default to Master (100)
+            if from_agent == 'legacy':
+                from_agent = '100'
+
             if from_agent and from_agent not in ['manual', 'cli', 'auto_init', 'unknown']:
                 try:
                     self.redis.xadd(f"ma:agent:{from_agent}:inbox", {
@@ -377,8 +394,9 @@ class TmuxAgent:
                         'type': 'response',
                         'timestamp': int(time.time())
                     })
-                except:
-                    pass
+                    self._log(f"-> Response sent to {from_agent}")
+                except Exception as e:
+                    self._log(f"Failed to send response to {from_agent}: {e}")
 
             self._log(f"Response sent ({len(response)} chars)")
             self.tasks_completed += 1
