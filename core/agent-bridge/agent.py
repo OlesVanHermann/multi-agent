@@ -289,10 +289,17 @@ class TmuxAgent:
                         elif msg_type == 'response':
                             from_id = data.get('from_agent', '?')
                             response_text = data.get('response', '')
-                            self._log(f"<- Response from {from_id}: {response_text[:100]}...")
+                            chunk_info = data.get('chunk', '')
+                            is_complete = data.get('complete', 'true')
 
-                            # Forward response to Claude in tmux so Master can see it
-                            notification = f"[RESPONSE FROM {from_id}]: {response_text[:500]}"
+                            self._log(f"<- Response from {from_id} ({len(response_text)} chars){' ['+chunk_info+']' if chunk_info else ''}")
+
+                            # Forward FULL response to Claude in tmux so Master can see it
+                            header = f"[RESPONSE FROM AGENT {from_id}]"
+                            if chunk_info:
+                                header += f" [CHUNK {chunk_info}]"
+
+                            notification = f"{header}\n{response_text}\n[END RESPONSE FROM {from_id}]"
                             self.prompt_queue.put({
                                 'prompt': notification,
                                 'from_agent': f'response_{from_id}',
@@ -388,13 +395,32 @@ class TmuxAgent:
 
             if from_agent and from_agent not in ['manual', 'cli', 'auto_init', 'unknown']:
                 try:
-                    self.redis.xadd(f"ma:agent:{from_agent}:inbox", {
-                        'response': response[:4000],
-                        'from_agent': self.agent_id,
-                        'type': 'response',
-                        'timestamp': int(time.time())
-                    })
-                    self._log(f"-> Response sent to {from_agent}")
+                    # Send FULL response - no truncation
+                    # For very long responses, split into chunks
+                    MAX_CHUNK = 15000  # Redis can handle larger messages
+
+                    if len(response) <= MAX_CHUNK:
+                        self.redis.xadd(f"ma:agent:{from_agent}:inbox", {
+                            'response': response,
+                            'from_agent': self.agent_id,
+                            'type': 'response',
+                            'timestamp': int(time.time()),
+                            'complete': 'true'
+                        })
+                    else:
+                        # Split into chunks for very long responses
+                        chunks = [response[i:i+MAX_CHUNK] for i in range(0, len(response), MAX_CHUNK)]
+                        for i, chunk in enumerate(chunks):
+                            self.redis.xadd(f"ma:agent:{from_agent}:inbox", {
+                                'response': chunk,
+                                'from_agent': self.agent_id,
+                                'type': 'response',
+                                'timestamp': int(time.time()),
+                                'chunk': f"{i+1}/{len(chunks)}",
+                                'complete': 'true' if i == len(chunks)-1 else 'false'
+                            })
+
+                    self._log(f"-> Full response sent to {from_agent} ({len(response)} chars)")
                 except Exception as e:
                     self._log(f"Failed to send response to {from_agent}: {e}")
 
