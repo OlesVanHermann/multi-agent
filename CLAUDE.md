@@ -224,7 +224,7 @@ redis-cli RPUSH "ma:inject:300" "go"
 #### Mode Bridge (agent.py) - RECOMMANDÉ
 ```bash
 # Redis Streams (plus robuste)
-./scripts/bridge/send.sh 300 "Analyse le README"
+./scripts/send.sh 300 "Analyse le README"
 
 # Ou directement
 redis-cli XADD "ma:agent:300:inbox" '*' prompt "message" from_agent "cli" timestamp "$(date +%s)"
@@ -340,18 +340,18 @@ Pour les projets qui utilisent multi-agent et qui tournent déjà :
 # === SUR LA MACHINE DU PROJET ===
 
 # 1. Stopper les agents (jamais les 9XX)
-./scripts/bridge/stop-agents.sh
+./scripts/stop.sh
 
 # 2. Pull les dernières modifications
 cd /chemin/vers/multi-agent
 git pull origin main
 
 # 3. Redémarrer les agents
-./scripts/bridge/start-agents.sh all
+./scripts/start.sh all
 
 # 4. Vérifier
 tmux ls | grep agent
-python3 scripts/bridge/monitor.py
+python3 scripts/monitor.py
 ```
 
 **Mise à jour d'un fichier spécifique sans git pull :**
@@ -361,8 +361,8 @@ curl -o core/agent-bridge/agent.py \
   https://raw.githubusercontent.com/USER/multi-agent/main/core/agent-bridge/agent.py
 
 # Redémarrer les bridges concernés
-./scripts/bridge/stop-agents.sh
-./scripts/bridge/start-agents.sh all
+./scripts/stop.sh
+./scripts/start.sh all
 ```
 
 ---

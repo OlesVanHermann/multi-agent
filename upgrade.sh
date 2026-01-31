@@ -140,7 +140,7 @@ log_info "Étape 2/5: Arrêt des agents"
 echo ""
 
 if [ "$DRY_RUN" = false ]; then
-    ./scripts/bridge/stop-bridge-agents.sh 2>/dev/null && log_ok "Agents bridge arrêtés" || true
+    ./scripts/stop.sh 2>/dev/null && log_ok "Agents bridge arrêtés" || true
     pkill -f "agent.py" 2>/dev/null && log_ok "Processus agent.py arrêtés" || true
 else
     log_warn "[DRY-RUN] Les agents seraient arrêtés"
@@ -250,7 +250,7 @@ if [ "$DRY_RUN" = false ]; then
     echo ""
     echo "Prochaines étapes:"
     echo "  1. Lire upgrades/ pour les actions spécifiques"
-    echo "  2. Lancer: ./scripts/bridge/start-bridge-agents.sh all"
+    echo "  2. Lancer: ./scripts/start.sh all"
 else
     echo "[DRY-RUN] Aucune modification effectuée"
     echo "Relancez sans --dry-run pour appliquer"

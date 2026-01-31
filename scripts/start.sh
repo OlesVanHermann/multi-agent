@@ -102,7 +102,7 @@ start_all() {
     echo ""
     echo "  List sessions: tmux ls | grep agent"
     echo "  Attach: tmux attach -t agent-300"
-    echo "  Monitor: python3 scripts/bridge/monitor.py"
+    echo "  Monitor: python3 scripts/monitor.py"
 }
 
 show_help() {
@@ -138,6 +138,6 @@ case "$1" in
         done
         echo ""
         echo "  Attach: tmux attach -t agent-<id>"
-        echo "  Monitor: python3 scripts/bridge/monitor.py"
+        echo "  Monitor: python3 scripts/monitor.py"
         ;;
 esac

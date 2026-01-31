@@ -92,13 +92,13 @@ python core/agent-bridge/agent.py 300 --headless
 
 ```bash
 # Agents 300-309 en tmux
-./scripts/bridge/start-bridge-agents.sh 300 310
+./scripts/start.sh 300 310
 
 # Tous les agents configurés
-./scripts/bridge/start-bridge-agents.sh all
+./scripts/start.sh all
 
 # Arrêter
-./scripts/bridge/stop-bridge-agents.sh
+./scripts/stop.sh
 ```
 
 ## Communication Redis
@@ -139,7 +139,7 @@ ma:agent:{id}:outbox   # Stream - réponses sortantes
 
 ```bash
 # Via script
-./scripts/bridge/send.sh 300 "Analyse le README.md"
+./scripts/send.sh 300 "Analyse le README.md"
 
 # Via Redis directement
 redis-cli XADD "ma:agent:300:inbox" '*' \
@@ -152,10 +152,10 @@ redis-cli XADD "ma:agent:300:inbox" '*' \
 
 ```bash
 # Temps réel
-./scripts/bridge/watch.sh 300
+./scripts/watch.sh 300
 
 # Historique
-./scripts/bridge/outbox.sh 300
+./scripts/watch.sh 300
 ```
 
 ## Sessions Claude
@@ -189,7 +189,7 @@ python core/agent-bridge/healthcheck.py --streams
 ### Monitor temps réel
 
 ```bash
-./scripts/bridge/monitor.sh
+./python3 scripts/monitor.py
 ```
 
 ## Orchestration
@@ -280,7 +280,7 @@ Pour migrer progressivement :
 1. Vérifier Redis : `redis-cli ping`
 2. Vérifier le process : `tmux ls | grep agent-`
 3. Vérifier les logs : `tail -F logs/{id}/bridge.log`
-4. Vérifier le status : `./scripts/bridge/monitor.sh`
+4. Vérifier le status : `./python3 scripts/monitor.py`
 
 ### Messages perdus
 
@@ -298,8 +298,8 @@ Forcer une nouvelle session :
 /newsession
 
 # Ou redémarrer l'agent
-./scripts/bridge/stop-bridge-agents.sh 300 301
-./scripts/bridge/start-bridge-agents.sh 300
+./scripts/stop.sh 300 301
+./scripts/start.sh 300
 ```
 
 ---

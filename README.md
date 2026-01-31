@@ -71,10 +71,10 @@ echo "test" | claude --print -
 
 ```bash
 # Tous les agents préconfigurés
-./scripts/bridge/start-bridge-agents.sh all
+./scripts/start.sh all
 
 # Ou un agent spécifique (interactif)
-./scripts/bridge/start-bridge-agents.sh 300
+./scripts/start.sh 300
 ```
 
 ## Mise à jour (Upgrade)
@@ -119,7 +119,7 @@ Si vous utilisez plusieurs profils Claude :
 
 ```bash
 export CLAUDE_CONFIG_DIR=~/.claude-profiles/mon-profil
-./scripts/bridge/start-bridge-agents.sh all
+./scripts/start.sh all
 ```
 
 ## Utilisation
@@ -128,19 +128,19 @@ export CLAUDE_CONFIG_DIR=~/.claude-profiles/mon-profil
 
 ```bash
 # Envoyer un message à un agent
-./scripts/bridge/send.sh 300 "Analyse le fichier README.md"
+./scripts/send.sh 300 "Analyse le fichier README.md"
 
 # Voir les réponses
-./scripts/bridge/watch.sh 300
+./scripts/watch.sh 300
 
 # Healthcheck tous les agents
 python3 core/agent-bridge/healthcheck.py
 
 # Monitor temps réel
-./scripts/bridge/monitor.sh
+./python3 scripts/monitor.py
 
 # Arrêter tous les agents
-./scripts/bridge/stop-bridge-agents.sh
+./scripts/stop.sh
 ```
 
 ### Commandes interactives (mode non-headless)
@@ -266,9 +266,9 @@ export CLAUDE_CONFIG_DIR=~/.claude-profiles/votre-profil
 ### Redémarrer proprement
 
 ```bash
-./scripts/bridge/stop-bridge-agents.sh
+./scripts/stop.sh
 redis-cli FLUSHDB
-./scripts/bridge/start-bridge-agents.sh all
+./scripts/start.sh all
 ```
 
 ## Contribuer

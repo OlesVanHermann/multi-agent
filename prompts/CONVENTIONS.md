@@ -260,7 +260,7 @@ prompts-v2/
 
 Les agents peuvent être exécutés via différents abonnements Claude (profiles) pour distribuer la charge.
 
-**Exemple de configuration** (à définir dans `scripts/bridge/start-bridge-agents.sh`) :
+**Exemple de configuration** (à définir dans `scripts/start.sh`) :
 
 | Agent | Type | Description |
 |-------|------|-------------|
