@@ -1,4 +1,4 @@
-# Multi-Agent System v2.1
+# Multi-Agent System v2.2
 
 Système d'orchestration multi-agents pour projets de développement complexes.
 
@@ -272,4 +272,99 @@ pending/  →  assigned/  →  done/
 
 ---
 
-*Multi-Agent System v2.1 - Janvier 2026*
+## Développement du Multi-Agent System
+
+### Workflow de développement
+
+Ce système est amélioré en continu via les feedbacks utilisateur :
+
+1. **Feedback** → L'utilisateur signale un problème ou propose une amélioration
+2. **Test local** → Écrire/exécuter un test unitaire pour reproduire le problème
+3. **Fix** → Corriger le code
+4. **Vérifier** → Le test passe maintenant
+5. **Commit** → Commit avec message descriptif
+6. **Release** → Tag + push vers GitHub
+7. **Déploiement** → Commandes pour mettre à jour les projets en cours
+
+### Tests unitaires locaux
+
+Avant de corriger, **toujours écrire un test** pour reproduire le bug :
+
+```bash
+# Lancer tous les tests
+python -m pytest tests/ -v
+
+# Lancer un test spécifique
+python -m pytest tests/test_agent_bridge.py -v
+
+# Test avec couverture
+python -m pytest tests/ --cov=core --cov-report=term-missing
+```
+
+Structure des tests :
+```
+tests/
+├── __init__.py
+├── test_agent_bridge.py      # Tests du bridge tmux
+├── test_redis_comm.py        # Tests communication Redis
+├── test_heartbeat.py         # Tests heartbeat
+└── fixtures/                 # Données de test
+```
+
+### Préparer une release GitHub
+
+```bash
+# 1. Vérifier que tout est propre
+git status
+python -m pytest tests/ -v
+
+# 2. Mettre à jour la version dans CLAUDE.md
+# v2.X → v2.Y
+
+# 3. Commit final
+git add -A
+git commit -m "release: v2.X - Description"
+
+# 4. Tag
+git tag -a v2.X -m "Version 2.X - Description"
+
+# 5. Push
+git push origin main --tags
+```
+
+### Mettre à jour un projet en cours
+
+Pour les projets qui utilisent multi-agent et qui tournent déjà :
+
+```bash
+# === SUR LA MACHINE DU PROJET ===
+
+# 1. Stopper les agents (jamais les 9XX)
+./scripts/bridge/stop-agents.sh
+
+# 2. Pull les dernières modifications
+cd /chemin/vers/multi-agent
+git pull origin main
+
+# 3. Redémarrer les agents
+./scripts/bridge/start-agents.sh all
+
+# 4. Vérifier
+tmux ls | grep agent
+python3 scripts/bridge/monitor.py
+```
+
+**Mise à jour d'un fichier spécifique sans git pull :**
+```bash
+# Télécharger directement depuis GitHub
+curl -o core/agent-bridge/agent.py \
+  https://raw.githubusercontent.com/USER/multi-agent/main/core/agent-bridge/agent.py
+
+# Redémarrer les bridges concernés
+./scripts/bridge/stop-agents.sh
+./scripts/bridge/start-agents.sh all
+```
+
+---
+
+*Multi-Agent System v2.2 - Janvier 2026*
