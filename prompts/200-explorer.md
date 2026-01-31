@@ -6,6 +6,15 @@
 
 ---
 
+## ⚠️ RÈGLE DE SÉCURITÉ
+
+**JAMAIS `rm`. Toujours `mv` vers `$REMOVED/`**
+```bash
+mv "$fichier" "$REMOVED/$(date +%Y%m%d_%H%M%S)_$(basename $fichier)"
+```
+
+---
+
 ## MODE SESSION V3
 
 Tu fonctionnes en **session persistante avec UUID**:
