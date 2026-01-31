@@ -11,6 +11,19 @@ Tous les prompts utilisent ces variables. Elles sont définies dans `project-con
 | `$PROJECT` | Projet cible (code source) | `$BASE/project` |
 | `$LOGS` | Logs des agents | `$BASE/logs` |
 | `$PROMPTS` | Prompts des agents | `$BASE/prompts` |
+| `$REMOVED` | Fichiers supprimés (au lieu de rm) | `$BASE/removed` |
+
+---
+
+## RÈGLE DE SÉCURITÉ
+
+**JAMAIS de suppression. Toujours déplacer vers $REMOVED/**
+
+```bash
+# INTERDIT : rm, rm -rf, unlink
+# OBLIGATOIRE :
+mv "$fichier" "$REMOVED/$(date +%Y%m%d_%H%M%S)_$(basename $fichier)"
+```
 
 ---
 
@@ -55,6 +68,7 @@ Au démarrage, l'agent 900 (Architect) :
    export POOL="$BASE/pool-requests"
    export PROJECT="$BASE/project"
    export LOGS="$BASE/logs"
+   export REMOVED="$BASE/removed"
    ```
 3. Les agents héritent de ces variables via leur environnement
 
@@ -72,6 +86,7 @@ BASE=/Users/xxx/multi-agent
 POOL=$BASE/pool-requests
 PROJECT=$BASE/project
 LOGS=$BASE/logs
+REMOVED=$BASE/removed
 
 ## Projet
 PROJECT_NAME=mon-projet
