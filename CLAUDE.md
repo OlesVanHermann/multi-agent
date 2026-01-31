@@ -4,6 +4,22 @@ Système d'orchestration multi-agents pour projets de développement complexes.
 
 ---
 
+## ⚠️ RÈGLE DE SÉCURITÉ
+
+**JAMAIS `rm`. Toujours `mv` vers `$REMOVED/`**
+
+```bash
+# INTERDIT
+rm -rf fichier
+
+# OBLIGATOIRE
+mv "$fichier" "$REMOVED/$(date +%Y%m%d_%H%M%S)_$(basename $fichier)"
+```
+
+Variable : `$REMOVED = $BASE/removed`
+
+---
+
 ## Vue d'ensemble
 
 Ce système permet de faire tourner jusqu'à **1000 agents** en parallèle avec :
