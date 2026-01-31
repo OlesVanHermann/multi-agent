@@ -206,8 +206,12 @@ PR-DOC:
 Régénérer TOUS les PR-DOC (pas seulement les nouveaux/modifiés).
 
 ```bash
-# Supprimer tous les PR-DOC pending
-rm -f /Users/claude/projet-new/pool-requests/pending/PR-DOC-*.md
+# Déplacer tous les PR-DOC pending vers removed/
+mkdir -p /Users/claude/projet-new/removed
+TS=$(date +%s)
+for f in /Users/claude/projet-new/pool-requests/pending/PR-DOC-*.md; do
+    [ -f "$f" ] && mv "$f" "/Users/claude/projet-new/removed/$(basename "$f").$TS"
+done
 
 # Recréer depuis l'API doc complète
 # (même logique que étape 5 mais pour toutes les méthodes)

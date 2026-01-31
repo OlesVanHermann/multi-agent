@@ -126,7 +126,7 @@ if [ "$DRY_RUN" = false ]; then
     echo "    📄 $FILE_COUNT fichiers"
     echo "    💾 $DIR_SIZE"
     echo ""
-    echo "    Pour restaurer: rm -rf ./* && cp -r $BACKUP_DIR/* ./"
+    echo "    Pour restaurer: mv ./* ./removed/ && cp -r $BACKUP_DIR/* ./"
 else
     log_warn "[DRY-RUN] Backup complet serait créé dans $BACKUP_DIR"
 fi
@@ -217,7 +217,8 @@ fi
 # NETTOYAGE
 # ============================================================
 if [ "$DRY_RUN" = false ]; then
-    rm -rf "$TEMP_DIR"
+    mkdir -p ./removed
+    mv "$TEMP_DIR" "./removed/temp-upgrade-$(date +%s)" 2>/dev/null || true
 fi
 
 # ============================================================
@@ -245,7 +246,7 @@ if [ "$DRY_RUN" = false ]; then
     echo "Backup complet: $BACKUP_DIR"
     echo ""
     echo "⚠️  En cas de problème, restaurez avec:"
-    echo "    rm -rf ./* && cp -r $BACKUP_DIR/* ./"
+    echo "    mv ./* ./removed/ && cp -r $BACKUP_DIR/* ./"
     echo ""
     echo "Prochaines étapes:"
     echo "  1. Lire upgrades/ pour les actions spécifiques"

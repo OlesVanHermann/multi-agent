@@ -23,7 +23,7 @@ git init
 ### Option 3 : Lien symbolique
 
 ```bash
-rm -rf project
+mkdir -p removed && mv project removed/project-$(date +%s)
 ln -s /path/to/your/existing/project project
 ```
 

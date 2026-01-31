@@ -151,7 +151,7 @@ cp $TEMP_DIR/CLAUDE.md ./
 cp $TEMP_DIR/UPGRADE.md ./
 cp $TEMP_DIR/README.md ./
 
-rm -rf $TEMP_DIR
+mkdir -p ./removed && mv $TEMP_DIR ./removed/temp-upgrade-$(date +%s)
 
 # Install deps
 pip install -r requirements.txt

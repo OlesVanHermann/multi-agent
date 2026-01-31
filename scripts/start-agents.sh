@@ -98,7 +98,7 @@ stop_agent() {
             kill "$pid" 2>/dev/null
             log_ok "Agent $id stopped (PID: $pid)"
         fi
-        rm -f "$PIDS_DIR/$id.pid"
+        mv "$PIDS_DIR/$id.pid" "$BASE_DIR/removed/$id.pid.$(date +%s)" 2>/dev/null || true
     fi
 }
 
@@ -267,7 +267,7 @@ if lines and lines!=['']:
     done
 
     echo ""
-    rm -f /tmp/agent_states.txt
+    mv /tmp/agent_states.txt "$BASE_DIR/removed/agent_states.txt.$(date +%s)" 2>/dev/null || true
 }
 
 cmd_logs() {
@@ -448,7 +448,7 @@ cmd_orchestrator_stop() {
     if [ -f "$LOGS_DIR/orchestrator/pid" ]; then
         local pid=$(cat "$LOGS_DIR/orchestrator/pid")
         kill "$pid" 2>/dev/null && log_ok "Orchestrator stopped" || log_warn "Orchestrator not running"
-        rm -f "$LOGS_DIR/orchestrator/pid"
+        mv "$LOGS_DIR/orchestrator/pid" "$BASE_DIR/removed/orchestrator.pid.$(date +%s)" 2>/dev/null || true
     else
         log_warn "Orchestrator not running"
     fi
