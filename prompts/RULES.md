@@ -1,5 +1,20 @@
 # RÈGLES OBLIGATOIRES POUR TOUS LES AGENTS
 
+## 0. PRINCIPE FONDAMENTAL
+
+```
+1 AGENT = 1 TÂCHE = 1 LIVRABLE
+```
+
+Chaque agent :
+- Reçoit **une seule tâche** à la fois
+- Produit **exactement un fichier de sortie**
+- Place ce fichier dans le répertoire correspondant à son domaine
+
+Pas de multi-tâche. Pas de fichiers multiples dispersés. Un agent = un livrable clair.
+
+---
+
 ## 1. AUTONOMIE 24/7
 
 **Les agents travaillent en continu jusqu'à ce que le job soit TERMINÉ.**
