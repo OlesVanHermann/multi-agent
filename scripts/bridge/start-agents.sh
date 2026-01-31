@@ -132,9 +132,12 @@ case "$1" in
         show_help
         ;;
     *)
-        start_single_agent "$1"
+        # Start all agents listed as arguments
+        for agent_id in "$@"; do
+            start_single_agent "$agent_id"
+        done
         echo ""
-        echo "  Attach: tmux attach -t agent-$1"
+        echo "  Attach: tmux attach -t agent-<id>"
         echo "  Monitor: python3 scripts/bridge/monitor.py"
         ;;
 esac
