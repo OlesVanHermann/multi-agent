@@ -2,8 +2,10 @@ import React, { useState, useEffect, useRef } from 'react'
 import AgentGrid from './components/AgentGrid'
 import Terminal from './components/Terminal'
 import StatusBar from './components/StatusBar'
+import { useAuth } from './AuthProvider'
 
 function App() {
+  const { user, logout, isOperator } = useAuth()
   const [agents, setAgents] = useState([])
   const [selectedAgent, setSelectedAgent] = useState(null)
   const [controlPlane, setControlPlane] = useState('100') // Master by default
@@ -96,7 +98,8 @@ function App() {
       <header className="header">
         <h1>MULTI-AGENT DASHBOARD</h1>
         <div className="header-right">
-          <span className="user">octave</span>
+          <span className="user">{user?.username || 'guest'}</span>
+          <button onClick={logout} className="logout-btn">Logout</button>
         </div>
       </header>
 
