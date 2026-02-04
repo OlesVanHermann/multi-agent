@@ -38,7 +38,6 @@ LOG_DIR = os.environ.get("LOG_DIR", str(BASE_DIR / "logs"))
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 
-HEARTBEAT_INTERVAL = 10
 MAX_HISTORY = 50
 RESPONSE_TIMEOUT = 300  # 5 min max wait for Claude response
 POLL_INTERVAL = 0.3     # How often to check for new output
@@ -104,7 +103,6 @@ class TmuxAgent:
         self.threads = [
             Thread(target=self._listen_redis, daemon=True, name="redis_listener"),
             Thread(target=self._listen_legacy, daemon=True, name="legacy_listener"),
-            Thread(target=self._heartbeat, daemon=True, name="heartbeat"),
             Thread(target=self._process_queue, daemon=True, name="queue_processor"),
         ]
         for t in self.threads:
@@ -388,12 +386,7 @@ class TmuxAgent:
             # Notify sender if it was another agent
             from_agent = task.get('from_agent')
 
-            # Route responses back to sender
-            # 'legacy' messages without FROM: prefix default to Master (100)
-            if from_agent == 'legacy':
-                from_agent = '100'
-
-            if from_agent and from_agent not in ['manual', 'cli', 'auto_init', 'unknown']:
+            if from_agent and from_agent not in ['manual', 'cli', 'auto_init', 'unknown', 'legacy']:
                 try:
                     # Send FULL response - no truncation
                     # For very long responses, split into chunks
@@ -432,12 +425,6 @@ class TmuxAgent:
                 self.state = State.IDLE
 
             self._set_redis_status()
-
-    def _heartbeat(self):
-        """Thread: heartbeat"""
-        while self.running:
-            self._set_redis_status()
-            time.sleep(HEARTBEAT_INTERVAL)
 
     def send_to_agent(self, to_agent, prompt):
         """Send message to another agent"""
