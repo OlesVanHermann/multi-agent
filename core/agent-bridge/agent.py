@@ -43,11 +43,6 @@ MAX_HISTORY = 50
 RESPONSE_TIMEOUT = 300  # 5 min max wait for Claude response
 POLL_INTERVAL = 0.3     # How often to check for new output
 
-# Status heartbeat to Master
-STATUS_HEARTBEAT_INTERVAL = 120  # Send status every 2 minutes
-BLOCKED_THRESHOLD = 300  # Consider blocked if no activity for 5 min
-MASTER_AGENT = "100"  # Master agent ID to report to
-
 # Claude prompt markers (to detect end of response)
 PROMPT_MARKERS = ['❯', '>', '$', '%']
 
@@ -104,19 +99,12 @@ class TmuxAgent:
         # Legacy inbox (ma:inject:{id} format used by prompts)
         self.legacy_inbox = f"ma:inject:{agent_id}"
 
-        # Status tracking for heartbeat
-        self.last_pane_content = ""
-        self.last_activity_time = time.time()
-        self.current_status = "IDLE"
-        self.task_start_time = None
-
         # Threads
         self.running = True
         self.threads = [
             Thread(target=self._listen_redis, daemon=True, name="redis_listener"),
             Thread(target=self._listen_legacy, daemon=True, name="legacy_listener"),
             Thread(target=self._heartbeat, daemon=True, name="heartbeat"),
-            Thread(target=self._status_heartbeat, daemon=True, name="status_heartbeat"),
             Thread(target=self._process_queue, daemon=True, name="queue_processor"),
         ]
         for t in self.threads:
@@ -371,7 +359,6 @@ class TmuxAgent:
             with self.state_lock:
                 self.state = State.BUSY
                 self.current_task = task
-                self.task_start_time = time.time()
 
             self._set_redis_status()
             src = f"[{task.get('from_agent', 'local')}]"
@@ -443,7 +430,6 @@ class TmuxAgent:
             with self.state_lock:
                 self.current_task = None
                 self.state = State.IDLE
-                self.task_start_time = None
 
             self._set_redis_status()
 
@@ -452,78 +438,6 @@ class TmuxAgent:
         while self.running:
             self._set_redis_status()
             time.sleep(HEARTBEAT_INTERVAL)
-
-    def _status_heartbeat(self):
-        """Thread: Send status heartbeat to Master every X seconds"""
-        # Don't run for Master itself
-        if self.agent_id == MASTER_AGENT:
-            return
-
-        while self.running:
-            time.sleep(STATUS_HEARTBEAT_INTERVAL)
-
-            try:
-                # Capture current pane content
-                target = f"{self.session_name}.0"
-                result = subprocess.run(
-                    ["tmux", "capture-pane", "-t", target, "-p", "-S", "-50"],
-                    capture_output=True, text=True
-                )
-                current_content = result.stdout.strip()
-
-                # Detect activity by comparing with last snapshot
-                content_changed = current_content != self.last_pane_content
-                if content_changed:
-                    self.last_activity_time = time.time()
-                    self.last_pane_content = current_content
-
-                # Calculate time since last activity
-                idle_seconds = int(time.time() - self.last_activity_time)
-
-                # Determine status
-                if self.state == State.BUSY:
-                    if idle_seconds > BLOCKED_THRESHOLD:
-                        status = "POSSIBLY_BLOCKED"
-                    else:
-                        status = "WORKING"
-                else:
-                    status = "IDLE"
-
-                self.current_status = status
-
-                # Get last few lines as preview
-                lines = current_content.split('\n')
-                last_lines = lines[-5:] if len(lines) >= 5 else lines
-                preview = ' | '.join([l.strip()[:50] for l in last_lines if l.strip()])
-
-                # Task duration if working
-                task_duration = ""
-                if self.task_start_time:
-                    duration = int(time.time() - self.task_start_time)
-                    task_duration = f" | task_duration:{duration}s"
-
-                # Send heartbeat to Master
-                heartbeat_msg = (
-                    f"HEARTBEAT {self.agent_id} | "
-                    f"status:{status} | "
-                    f"idle:{idle_seconds}s{task_duration} | "
-                    f"queue:{self.prompt_queue.qsize()} | "
-                    f"preview: {preview[:200]}"
-                )
-
-                self.redis.xadd(f"ma:agent:{MASTER_AGENT}:inbox", {
-                    'heartbeat': heartbeat_msg,
-                    'from_agent': self.agent_id,
-                    'type': 'heartbeat',
-                    'status': status,
-                    'idle_seconds': idle_seconds,
-                    'timestamp': int(time.time())
-                })
-
-                self._log(f"♥ Heartbeat: {status} (idle {idle_seconds}s)")
-
-            except Exception as e:
-                self._log(f"Heartbeat error: {e}")
 
     def send_to_agent(self, to_agent, prompt):
         """Send message to another agent"""
