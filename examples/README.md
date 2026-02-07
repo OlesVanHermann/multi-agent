@@ -48,7 +48,7 @@ examples/
 
 ### 1. Agents Dev (300-303)
 
-Créés par l'Agent 900 (Architect) à partir du template `3XX-developer.md.template` :
+Créés par l'Agent 000 (Architect) à partir du template `3XX-developer.md.template` :
 
 ```
 Template + Variables = Prompt spécialisé
@@ -88,7 +88,7 @@ PR-DOC (201) → PR-SPEC (200) → PR-SPEC assigned (3XX) → PR-TEST (3XX) → 
 
 ---
 
-## Utilisation par Agent 900
+## Utilisation par Agent 000
 
 Quand tu configures un nouveau projet :
 

@@ -16,7 +16,6 @@ import os
 
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
-MA_PREFIX = os.environ.get("MA_PREFIX", "ma")
 
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 
@@ -25,11 +24,11 @@ def send_and_wait(to_agent, prompt, from_agent=0, timeout=120):
     """Envoie un prompt et attend la réponse"""
 
     # Marquer le dernier message avant d'envoyer
-    outbox = f"{MA_PREFIX}:agent:{to_agent}:outbox"
+    outbox = f"ma:agent:{to_agent}:outbox"
     last_id = '$'
 
     # Envoyer
-    r.xadd(f"{MA_PREFIX}:agent:{to_agent}:inbox", {
+    r.xadd(f"ma:agent:{to_agent}:inbox", {
         'prompt': prompt,
         'from_agent': from_agent,
         'timestamp': int(time.time())
@@ -56,7 +55,7 @@ def send_and_wait(to_agent, prompt, from_agent=0, timeout=120):
 def broadcast(agents, prompt, from_agent=0):
     """Envoie le même prompt à plusieurs agents"""
     for agent in agents:
-        r.xadd(f"{MA_PREFIX}:agent:{agent}:inbox", {
+        r.xadd(f"ma:agent:{agent}:inbox", {
             'prompt': prompt,
             'from_agent': from_agent,
             'timestamp': int(time.time())
@@ -66,7 +65,7 @@ def broadcast(agents, prompt, from_agent=0):
 
 def collect_responses(agents, timeout=60):
     """Collecte les réponses de plusieurs agents"""
-    streams = {f"{MA_PREFIX}:agent:{a}:outbox": '$' for a in agents}
+    streams = {f"ma:agent:{a}:outbox": '$' for a in agents}
     responses = {}
     start = time.time()
 
@@ -122,7 +121,7 @@ def workflow_parallel():
 
     # Envoyer toutes les tâches
     for worker, task in zip(workers, tasks):
-        r.xadd(f"{MA_PREFIX}:agent:{worker}:inbox", {
+        r.xadd(f"ma:agent:{worker}:inbox", {
             'prompt': task,
             'from_agent': 100,
             'timestamp': int(time.time())

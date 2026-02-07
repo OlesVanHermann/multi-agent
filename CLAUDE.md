@@ -1,22 +1,6 @@
-# Multi-Agent System v2.2
+# Multi-Agent System v2.3
 
 Système d'orchestration multi-agents pour projets de développement complexes.
-
----
-
-## ⚠️ RÈGLE DE SÉCURITÉ
-
-**JAMAIS `rm`. Toujours `mv` vers `$REMOVED/`**
-
-```bash
-# INTERDIT
-rm -rf fichier
-
-# OBLIGATOIRE
-mv "$fichier" "$REMOVED/$(date +%Y%m%d_%H%M%S)_$(basename $fichier)"
-```
-
-Variable : `$REMOVED = $BASE/removed`
 
 ---
 
@@ -28,7 +12,7 @@ Ce système permet de faire tourner jusqu'à **1000 agents** en parallèle avec 
 - **Isolation Git** : chaque dev travaille dans son propre clone/branche
 - **Communication Redis Streams** : coordination temps réel avec historique
 - **Sessions Claude** : prompt caching pour ~90% d'économie de tokens
-- **Hiérarchie claire** : Architect → Super-Master → Master → Workers
+- **Hiérarchie claire** : Architect (000) → Super-Master → Master → Workers
 
 ---
 
@@ -39,13 +23,13 @@ Ce système permet de faire tourner jusqu'à **1000 agents** en parallèle avec 
 │                    HIÉRARCHIE DES AGENTS                        │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  9XX ARCHITECTS ─────────────────────────────────────────────── │
-│  │ Créent la structure, les prompts, configurent le projet      │
-│  │ SEULS à pouvoir modifier les prompts                         │
+│  000 ARCHITECT ──────────────────────────────────────────────── │
+│  │ Point d'entrée, configure le système, modifie les prompts    │
+│  │ Démarrage isolé: ./scripts/start-000.sh                      │
 │  └────────────────────────────────────────────────────────────  │
 │                              │                                   │
 │                              ▼                                   │
-│  0XX SUPER-MASTERS ──────────────────────────────────────────── │
+│  0XX SUPER-MASTERS (001-099) ────────────────────────────────── │
 │  │ Coordination multi-projets, vision globale                   │
 │  └────────────────────────────────────────────────────────────  │
 │                              │                                   │
@@ -97,13 +81,18 @@ cd infrastructure
 # Démarre Redis via Docker
 ```
 
-### 3. Lancer l'Architect (900)
+### 3. Lancer l'Architect (000) + Infrastructure
 
 ```bash
-claude --prompt prompts/900-architect.md
+./scripts/start-000.sh
 ```
 
-L'Architect va :
+Ce script démarre automatiquement :
+1. Redis
+2. Le web dashboard (http://localhost:8000)
+3. La session tmux `agent-000` avec Claude + bridge
+
+L'Architect va ensuite :
 1. Te demander quel projet configurer
 2. Lire les exemples dans `examples/`
 3. Créer les prompts dev (3XX) adaptés
@@ -113,7 +102,7 @@ L'Architect va :
 ### 4. Lancer les agents
 
 ```bash
-./scripts/start-agents.sh
+./scripts/start.sh all
 ```
 
 ---
@@ -124,19 +113,19 @@ L'Architect va :
 multi-agent/
 ├── CLAUDE.md                    # CE FICHIER
 ├── README.md                    # Guide de déploiement
-├── project-config.md            # Configuration (créé par 900)
+├── project-config.md            # Configuration (créé par 000)
 │
 ├── prompts/                     # Prompts des agents
 │   ├── CONVENTIONS.md           # Conventions de numérotation
 │   ├── PATHS.md                 # Variables de chemins
-│   ├── 000-*.md                 # Super-Masters
+│   ├── 000-architect.md         # Architect (point d'entrée)
+│   ├── 0XX-*.md                 # Super-Masters (001-099)
 │   ├── 100-*.md                 # Masters
 │   ├── 200-*.md                 # Explorers
-│   ├── 3XX-*.md                 # Developers (créés par 900)
+│   ├── 3XX-*.md                 # Developers (créés par 000)
 │   ├── 400-*.md                 # Integrators
 │   ├── 5XX-*.md                 # Testers
-│   ├── 600-*.md                 # Releasers
-│   └── 900-*.md                 # Architects
+│   └── 600-*.md                 # Releasers
 │
 ├── examples/                    # Exemples MCP OnlyOffice
 │   ├── prompts/                 # Prompts dev spécialisés
@@ -149,13 +138,25 @@ multi-agent/
 │   └── pool-requests/
 │
 ├── scripts/                     # Scripts d'orchestration
-│   └── bridge/                  # Scripts pour le nouveau bridge
+│   ├── start-000.sh             # Démarrer Architect + infra
+│   ├── stop-000.sh              # Arrêter Architect + infra
+│   ├── start.sh                 # Démarrer agents (sauf 000)
+│   ├── stop.sh                  # Arrêter agents (sauf 000)
+│   ├── send.sh                  # Envoyer message
+│   ├── watch.sh                 # Voir logs
+│   └── monitor.py               # Monitoring
+│
+├── web/                         # Web dashboard
+│   ├── backend/                 # FastAPI + Uvicorn (port 8000)
+│   ├── frontend/                # React + Vite
+│   ├── keycloak/                # Auth config (optionnel)
+│   ├── nginx/                   # Reverse proxy config
+│   ├── docker-compose.yml       # Docker production
+│   └── start.sh                 # Quick start script
 │
 ├── core/
-│   ├── agent-runner/            # Legacy Python runner
-│   ├── agent-bridge/            # NOUVEAU: Bridge PTY + Redis Streams
-│   ├── bridge/                  # SSH tunnel Mac↔VM
-│   └── dashboard/               # Web dashboard
+│   ├── agent-bridge/            # Bridge PTY + Redis Streams
+│   └── bridge/                  # SSH tunnel Mac↔VM
 │
 ├── docs/                        # Documentation
 │   └── BRIDGE.md                # Doc technique du bridge
@@ -182,7 +183,8 @@ multi-agent/
 
 | Plage | Type | Modifie prompts |
 |-------|------|-----------------|
-| 000-099 | Super-Masters | Non |
+| **000** | **Architect** | **OUI** |
+| 001-099 | Super-Masters | Non |
 | 100-199 | Masters | Non |
 | 200-299 | Explorers | Non |
 | 300-399 | Developers | Non |
@@ -191,16 +193,16 @@ multi-agent/
 | 600-699 | Releasers | Non |
 | 700-799 | Documenters | Non |
 | 800-899 | Monitors | Non |
-| **900-999** | **Architects** | **OUI** |
+| 900-999 | Réservé | Non |
 
-**Règle fondamentale :** Seuls les agents 9XX peuvent modifier les prompts.
+**Règle fondamentale :** Seul l'agent 000 (Architect) peut modifier les prompts.
 
 ---
 
 ## Pipeline
 
 ```
-900 Architect (configure)
+000 Architect (configure + supervise)
          │
          ▼
 200 Explorer (analyse) → crée SPEC
@@ -262,9 +264,10 @@ pending/  →  assigned/  →  done/
 
 | Fichier | Rôle |
 |---------|------|
-| `prompts/900-architect.md` | Point d'entrée, configure tout |
+| `prompts/000-architect.md` | Point d'entrée, configure tout |
 | `prompts/PATHS.md` | Variables de chemins |
 | `project-config.md` | Configuration du projet |
+| `FRAMEWORK-SCRIPTS.md` | **OBLIGATOIRE - Liste des scripts à utiliser** |
 | `pool-requests/knowledge/*.md` | Inventaires (tracking ❌/✅) |
 | `examples/` | Exemples à suivre |
 
@@ -285,6 +288,94 @@ pending/  →  assigned/  →  done/
 1. Lire `CLAUDE.md` (ce fichier) pour le contexte
 2. Si prompt agent lu → DEVENIR l'agent
 3. Exécuter sans confirmation supplémentaire
+
+---
+
+## RÈGLE ABSOLUE
+
+**STRICTEMENT OBÉIR AUX PROMPTS.**
+
+- NE JAMAIS improviser ou décider par toi-même
+- NE JAMAIS utiliser d'autres scripts que ceux décrits dans ce prompt
+- NE JAMAIS contourner le workflow défini
+- Si quelque chose ne fonctionne pas → SIGNALER, ne pas inventer de solution
+- L'utilisateur décide, pas toi
+
+**INTERDIT:** arrêter Chrome, fermer le dernier tab, utiliser MCP chrome-devtools, utiliser Playwright
+
+**Méthode:** CDP direct via websockets (port 9222)
+
+---
+
+## Règles de sécurité
+
+### JAMAIS de suppression définitive
+
+**INTERDIT :** `rm -rf`, `rm -r`, `rm`, `rmdir`, `unlink`
+
+**OBLIGATOIRE :** Utiliser `safe_rm` ou déplacer vers `$BASE/removed/`
+
+```bash
+# MAUVAIS - INTERDIT
+rm -rf /chemin/vers/dossier
+
+# BON - Déplacer vers removed/
+mv /chemin/vers/dossier $BASE/removed/$(date +%Y%m%d_%H%M%S)_dossier
+
+# OU utiliser la fonction safe_rm
+safe_rm /chemin/vers/dossier
+```
+
+### Fonction safe_rm
+
+Ajouter dans `.bashrc` ou utiliser directement :
+
+```bash
+safe_rm() {
+    local target="$1"
+    local removed_dir="$HOME/multi-agent/removed"
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local name=$(basename "$target")
+
+    mkdir -p "$removed_dir"
+    mv "$target" "$removed_dir/${timestamp}_${name}"
+    echo "Moved to: $removed_dir/${timestamp}_${name}"
+}
+```
+
+### JAMAIS créer des scripts personnalisés
+
+**INTERDIT :** `python3 << 'EOF'`, `bash << 'EOF'`, créer des scripts ad-hoc
+
+**OBLIGATOIRE :** Utiliser UNIQUEMENT les scripts dans `$BASE/framework/`
+
+Les agents DOIVENT consulter [`FRAMEWORK-SCRIPTS.md`](FRAMEWORK-SCRIPTS.md) pour la liste complète.
+
+```bash
+# ❌ MAUVAIS - Créer un script personnalisé
+python3 << 'EOF'
+import json
+data = {"key": "value"}
+print(json.dumps(data))
+EOF
+
+# ✅ BON - Utiliser un script du framework
+python3 $BASE/framework/generate_structure.py --input data.json
+```
+
+**SI aucun script n'existe :** ARRÊTER et SIGNALER à Agent 000 (Architect)
+
+### Nettoyage du répertoire removed/
+
+Le répertoire `removed/` peut être nettoyé **manuellement** après vérification :
+
+```bash
+# Voir ce qui a été supprimé
+ls -la $BASE/removed/
+
+# Supprimer les fichiers de plus de 7 jours (après vérification manuelle)
+find $BASE/removed/ -mtime +7 -exec rm -rf {} \;
+```
 
 ---
 
@@ -355,7 +446,7 @@ Pour les projets qui utilisent multi-agent et qui tournent déjà :
 ```bash
 # === SUR LA MACHINE DU PROJET ===
 
-# 1. Stopper les agents (jamais les 9XX)
+# 1. Stopper les agents (jamais le 000)
 ./scripts/stop.sh
 
 # 2. Pull les dernières modifications
@@ -383,4 +474,4 @@ curl -o core/agent-bridge/agent.py \
 
 ---
 
-*Multi-Agent System v2.2 - Janvier 2026*
+*Multi-Agent System v2.3 - Janvier 2026*

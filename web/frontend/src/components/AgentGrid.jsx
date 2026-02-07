@@ -1,113 +1,121 @@
-import React from 'react'
+import React, { useState } from 'react'
 
-const AGENT_RANGES = [
-  { start: 0, end: 99, label: '0XX Super-Masters' },
-  { start: 100, end: 199, label: '1XX Masters' },
-  { start: 200, end: 299, label: '2XX Explorers' },
-  { start: 300, end: 399, label: '3XX Developers' },
-  { start: 400, end: 499, label: '4XX Integrators' },
-  { start: 500, end: 599, label: '5XX Testers' },
-  { start: 600, end: 699, label: '6XX Releasers' },
-  { start: 900, end: 999, label: '9XX Architects' },
-]
+// Agent descriptions for tooltips
+export const AGENT_LABELS = {
+  '100': 'Master Studies - Orchestration pipeline',
+  '300': 'Crawl - Téléchargement site web',
+  '301': 'Extract Index - Structure & types de pages',
+  '320': 'Templates - Analyse templates site',
+  '321': 'Sémantique - Analyse sémantique contenu',
+  '322': 'Liens - Maillage interne & countries.json',
+  '323': 'Agrégation SEO Technique',
+  '330': 'Trustpilot - Avis clients',
+  '331': 'Reddit - Discussions & mentions',
+  '332': 'WebHostingTalk - Forum hébergement',
+  '333': 'G2 - Avis B2B',
+  '334': 'YouTube - Chaîne & vidéos',
+  '335': 'Forums - Autres forums',
+  '336': 'Agrégation Réputation',
+  '340': 'PageSpeed - Performance web',
+  '341': 'Latence - Tests réseau multi-pays',
+  '342': 'BGP - Infrastructure réseau & AS',
+  '343': 'PTR - Reverse DNS',
+  '344': 'Pricing - Tarifs multi-pays',
+  '345': 'Infrastructure - Datacenters & tech',
+  '346': 'Sécurité - Audit sécurité',
+  '347': 'Agrégation Performance',
+  '348': 'Price Tracker - Suivi prix',
+  '349': 'PTR Analysis - Analyse reverse DNS',
+  '350': 'Support - Analyse support client',
+  '351': 'Offres Emploi - Recrutement',
+  '352': 'Key People - Dirigeants',
+  '353': 'LinkedIn - Profil entreprise',
+  '354': 'Agrégation Entreprise',
+  '355': 'X.com - Présence Twitter/X',
+  '356': 'News - Actualités presse',
+  '357': 'Mastodon - Présence Mastodon',
+  '360': 'SimilarWeb - Trafic & audience',
+  '364': 'Ahrefs - Backlinks & SEO',
+  '368': 'Ubersuggest - Mots-clés',
+  '373': 'SEO Google - Visibilité SERP',
+  '374': 'Agrégation SEO',
+  '390': 'Rapport Final - Génération rapport',
+  '391': 'Diff JSON - Comparaison données',
+  '392': 'Diff Changes - Alertes changements',
+  '393': 'Diff History - Historique évolutions',
+  '600': 'Release Studies - Publication PDF',
+  '601': 'Diff - Release comparaisons',
+  '900': 'Architect - Configuration système',
+}
 
-function AgentGrid({ agents, selectedAgent, onAgentClick }) {
-  // Create a map for quick lookup
-  const agentMap = {}
-  agents.forEach(a => {
-    agentMap[a.id] = a
-  })
+function AgentGrid({ agents, selectedAgent, controlAgent, onAgentClick }) {
+  const [hoveredAgent, setHoveredAgent] = useState(null)
 
-  // Get status color
+  // Get status color based on server-reported status
   const getStatusColor = (status) => {
     switch (status) {
-      case 'idle': return 'green'
-      case 'busy': return 'orange'
-      case 'blocked':
-      case 'error': return 'red'
-      case 'stopped': return 'gray'
+      case 'busy': return 'green'
+      case 'active': return 'gray'
+      case 'idle': return 'gray'
+      case 'stale': return 'gray'
+      case 'starting': return 'blue'
+      case 'error':
+      case 'blocked': return 'orange'
+      case 'stopped': return 'darkgray'
       default: return 'gray'
     }
   }
 
-  // Check if agent is stale (not seen in 30s)
-  const isStale = (lastSeen) => {
-    if (!lastSeen) return true
-    const now = Math.floor(Date.now() / 1000)
-    return (now - lastSeen) > 30
-  }
+  // Label to display at top
+  const displayId = hoveredAgent || selectedAgent || controlAgent
+  const displayLabel = displayId
+    ? `${displayId} - ${AGENT_LABELS[displayId] || 'Agent'}`
+    : null
 
-  // Get range status (worst status of any agent in range)
-  const getRangeStatus = (start, end) => {
-    let hasRunning = false
-    let hasWorking = false
-    let hasError = false
-
-    for (let id = start; id <= end; id++) {
-      const agent = agentMap[id.toString()]
-      if (agent && !isStale(agent.last_seen)) {
-        hasRunning = true
-        if (agent.status === 'busy') hasWorking = true
-        if (agent.status === 'blocked' || agent.status === 'error') hasError = true
-      }
+  // Group agents by hundred range (1XX, 2XX, 3XX...)
+  const groups = []
+  let currentGroup = []
+  let currentRange = -1
+  agents.forEach(agent => {
+    const range = Math.floor(parseInt(agent.id) / 100)
+    if (range !== currentRange) {
+      if (currentGroup.length > 0) groups.push(currentGroup)
+      currentGroup = []
+      currentRange = range
     }
-
-    if (hasError) return 'red'
-    if (hasWorking) return 'orange'
-    if (hasRunning) return 'green'
-    return 'gray'
-  }
+    currentGroup.push(agent)
+  })
+  if (currentGroup.length > 0) groups.push(currentGroup)
 
   return (
     <div className="agent-grid-container">
-      {/* Visual grid */}
-      <div className="agent-grid">
-        {agents.map(agent => {
-          const status = isStale(agent.last_seen) ? 'stopped' : agent.status
-          const color = getStatusColor(status)
-          const isSelected = agent.id === selectedAgent
-
-          return (
-            <div
-              key={agent.id}
-              className={`agent-cell ${color} ${isSelected ? 'selected' : ''}`}
-              onClick={() => onAgentClick(agent.id)}
-              title={`Agent ${agent.id} - ${status}`}
-            >
-              {agent.id}
-            </div>
-          )
-        })}
+      {/* Hover/selected label */}
+      <div className="agent-hover-label">
+        {displayLabel || '\u00A0'}
       </div>
 
-      {/* Range summary */}
-      <div className="range-summary">
-        {AGENT_RANGES.map(range => {
-          const status = getRangeStatus(range.start, range.end)
-          return (
-            <div key={range.start} className={`range-item ${status}`}>
-              <span className="range-indicator"></span>
-              {range.label}
-            </div>
-          )
-        })}
-      </div>
+      {/* Visual grid grouped by range */}
+      {groups.map((group, gi) => (
+        <div key={gi} className="agent-grid-group">
+          {group.map(agent => {
+            const color = getStatusColor(agent.status)
+            const isSelected = agent.id === selectedAgent || agent.id === controlAgent
 
-      {/* Legend */}
-      <div className="legend">
-        <div className="legend-item">
-          <span className="dot green"></span> IDLE
+            return (
+              <div
+                key={agent.id}
+                className={`agent-cell ${color} ${isSelected ? 'selected' : ''}`}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => onAgentClick(agent.id)}
+                onMouseEnter={() => setHoveredAgent(agent.id)}
+                onMouseLeave={() => setHoveredAgent(null)}
+              >
+                {agent.id}
+              </div>
+            )
+          })}
         </div>
-        <div className="legend-item">
-          <span className="dot orange"></span> WORKING
-        </div>
-        <div className="legend-item">
-          <span className="dot red"></span> BLOCKED/ERROR
-        </div>
-        <div className="legend-item">
-          <span className="dot gray"></span> STOPPED
-        </div>
-      </div>
+      ))}
     </div>
   )
 }

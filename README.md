@@ -137,7 +137,7 @@ export CLAUDE_CONFIG_DIR=~/.claude-profiles/mon-profil
 python3 core/agent-bridge/healthcheck.py
 
 # Monitor temps réel
-./python3 scripts/monitor.py
+python3 scripts/monitor.py
 
 # Arrêter tous les agents
 ./scripts/stop.sh
@@ -163,15 +163,15 @@ multi-agent/
 │   │   ├── agent.py         # Agent principal
 │   │   ├── orchestrator.py  # Workflows multi-agents
 │   │   └── healthcheck.py   # Monitoring
-│   └── agent-runner/        # Legacy runner (subprocess)
+│   ├── bridge/              # SSH tunnel Mac↔VM
+│   └── dashboard/           # Web dashboard
 │
 ├── scripts/
-│   └── bridge/              # Scripts pour le bridge
-│       ├── start-bridge-agents.sh
-│       ├── stop-bridge-agents.sh
-│       ├── send.sh
-│       ├── watch.sh
-│       └── monitor.sh
+│   ├── start.sh             # Démarrer agents
+│   ├── stop.sh              # Arrêter agents
+│   ├── send.sh              # Envoyer message
+│   ├── watch.sh             # Voir logs
+│   └── monitor.py           # Monitoring
 │
 ├── prompts/                 # Prompts système des agents
 ├── examples/                # Exemples de configuration
@@ -189,7 +189,7 @@ multi-agent/
 
 1. Copier un prompt existant dans `prompts/`
 2. Modifier l'ID et les instructions
-3. Ajouter au tableau `AGENTS` dans `start-bridge-agents.sh`
+3. Ajouter au tableau `AGENTS` dans `scripts/start.sh`
 
 ### Configurer pour votre projet
 

@@ -18,17 +18,10 @@ services:
   backend:
     build: ./backend
     environment:
-      - REDIS_HOST=redis
+      - REDIS_HOST=host.docker.internal
       - REDIS_PORT=6379
-    depends_on:
-      - redis
-    restart: unless-stopped
-
-  # Redis (use host Redis if already running, or this one)
-  redis:
-    image: redis:7-alpine
-    volumes:
-      - redis_data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
   # Keycloak for authentication
@@ -45,5 +38,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  redis_data:
   keycloak_data:

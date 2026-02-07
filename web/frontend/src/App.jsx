@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import AgentGrid from './components/AgentGrid'
+import AgentGrid, { AGENT_LABELS } from './components/AgentGrid'
 import Terminal from './components/Terminal'
 import StatusBar from './components/StatusBar'
 import { useAuth } from './AuthProvider'
@@ -9,6 +9,7 @@ function App() {
   const [agents, setAgents] = useState([])
   const [selectedAgent, setSelectedAgent] = useState(null)
   const [controlPlane, setControlPlane] = useState('100') // Master by default
+  const [activePanel, setActivePanel] = useState('control') // 'control' or 'agent'
   const [lastUpdate, setLastUpdate] = useState(null)
   const [redisOk, setRedisOk] = useState(false)
   const wsRef = useRef(null)
@@ -19,10 +20,14 @@ function App() {
       try {
         const res = await fetch('/api/agents')
         const data = await res.json()
-        setAgents(data.agents)
-        setLastUpdate(new Date())
+        // Only update if we got valid agent data
+        if (data.agents && Array.isArray(data.agents) && data.agents.length > 0) {
+          setAgents(data.agents)
+          setLastUpdate(new Date())
+        }
       } catch (err) {
         console.error('Failed to fetch agents:', err)
+        // Don't clear agents on error - keep showing last known state
       }
     }
 
@@ -42,7 +47,7 @@ function App() {
     const interval = setInterval(() => {
       fetchAgents()
       checkHealth()
-    }, 5000)
+    }, 15000)  // Refresh every 15 seconds for stability
 
     return () => clearInterval(interval)
   }, [])
@@ -58,13 +63,16 @@ function App() {
       wsRef.current.onmessage = (event) => {
         const data = JSON.parse(event.data)
         if (data.type === 'status_update') {
-          setAgents(data.agents)
-          setLastUpdate(new Date())
+          // Only update if we got valid agent data
+          if (data.agents && Array.isArray(data.agents) && data.agents.length > 0) {
+            setAgents(data.agents)
+            setLastUpdate(new Date())
+          }
         }
       }
 
       wsRef.current.onclose = () => {
-        setTimeout(connect, 3000)
+        setTimeout(connect, 5000)  // Reconnect after 5 seconds
       }
 
       wsRef.current.onerror = (err) => {
@@ -82,15 +90,18 @@ function App() {
   }, [])
 
   const handleAgentClick = (agentId) => {
-    setSelectedAgent(agentId)
-  }
-
-  const handleControlPlaneToggle = () => {
-    setControlPlane(prev => prev === '100' ? '900' : '100')
+    const num = parseInt(agentId)
+    if (num < 200 || num >= 900) {
+      setControlPlane(agentId)
+      setActivePanel('control')
+    } else {
+      setSelectedAgent(agentId)
+      setActivePanel('agent')
+    }
   }
 
   const activeCount = agents.filter(a =>
-    a.status === 'busy' || a.status === 'idle'
+    a.status === 'active' || a.status === 'busy' || a.status === 'idle'
   ).length
 
   return (
@@ -110,33 +121,32 @@ function App() {
           <AgentGrid
             agents={agents}
             selectedAgent={selectedAgent}
+            controlAgent={controlPlane}
             onAgentClick={handleAgentClick}
           />
         </section>
 
         {/* Center column: Control Plane Terminal */}
-        <section className="panel control-panel">
+        <section
+          className={`panel control-panel ${activePanel === 'control' ? 'panel-active' : ''}`}
+          onMouseEnter={() => setActivePanel('control')}
+        >
           <div className="panel-header">
-            <h2>CONTROL PLANE ({controlPlane})</h2>
-            <button onClick={handleControlPlaneToggle} className="toggle-btn">
-              Switch to {controlPlane === '100' ? '900' : '100'}
-            </button>
+            <h2>CONTROL ({controlPlane}) — {AGENT_LABELS[controlPlane] || getAgentType(controlPlane)}</h2>
           </div>
-          <Terminal agentId={controlPlane} />
+          <Terminal agentId={controlPlane} focused={activePanel === 'control'} />
         </section>
 
         {/* Right column: Selected Agent Terminal */}
-        <section className="panel agent-panel">
+        <section
+          className={`panel agent-panel ${activePanel === 'agent' ? 'panel-active' : ''}`}
+          onMouseEnter={() => setActivePanel('agent')}
+        >
           <div className="panel-header">
-            <h2>AGENT {selectedAgent || '---'}</h2>
-            {selectedAgent && (
-              <span className="agent-type">
-                {getAgentType(selectedAgent)}
-              </span>
-            )}
+            <h2>AGENT {selectedAgent ? `(${selectedAgent}) — ${AGENT_LABELS[selectedAgent] || getAgentType(selectedAgent)}` : '---'}</h2>
           </div>
           {selectedAgent ? (
-            <Terminal agentId={selectedAgent} />
+            <Terminal agentId={selectedAgent} focused={activePanel === 'agent'} />
           ) : (
             <div className="no-selection">
               Select an agent from the grid

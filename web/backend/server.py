@@ -5,21 +5,60 @@ FastAPI server exposing agent status and WebSocket streams
 """
 
 import os
+import re
 import asyncio
 import time
+import subprocess
 from typing import Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
+import json
+import base64
+import hashlib
+import hmac
+
 import redis.asyncio as redis
+import httpx
+
+# Simple auth users (used when Keycloak is not available)
+SIMPLE_AUTH_USERS = {
+    "octave": {
+        "password": "changeme",
+        "email": "octave@multi-agent.local",
+        "name": "Octave Admin",
+        "roles": ["admin"]
+    },
+    "operator": {
+        "password": "operator123",
+        "email": "operator@multi-agent.local",
+        "name": "Operator User",
+        "roles": ["operator"]
+    },
+    "viewer": {
+        "password": "viewer123",
+        "email": "viewer@multi-agent.local",
+        "name": "Viewer User",
+        "roles": ["viewer"]
+    },
+}
+
+# Secret for signing simple tokens
+_TOKEN_SECRET = hashlib.sha256(b"multi-agent-local-dev").hexdigest()
+
+# Frontend static files path
+FRONTEND_DIR = os.environ.get("FRONTEND_DIR", "../frontend/dist")
+
+# Keycloak URL for auth proxy
+KEYCLOAK_URL = os.environ.get("KEYCLOAK_URL", "http://localhost:8080")
 
 # Config
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
-MA_PREFIX = os.environ.get("MA_PREFIX", "ma")
 
 # Redis connection pool
 redis_pool: Optional[redis.Redis] = None
@@ -78,145 +117,7 @@ class SendMessage(BaseModel):
     from_agent: str = "web"
 
 
-# === Dashboard HTML ===
-
-DASHBOARD_HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Multi-Agent Dashboard</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #c9d1d9; }
-  .header { background: #161b22; border-bottom: 1px solid #30363d; padding: 16px 24px; display: flex; align-items: center; gap: 12px; }
-  .header h1 { font-size: 20px; color: #58a6ff; }
-  .header .prefix { background: #238636; color: #fff; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; }
-  .header .count { color: #8b949e; font-size: 14px; margin-left: auto; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; padding: 24px; }
-  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; transition: border-color 0.2s; }
-  .card:hover { border-color: #58a6ff; }
-  .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-  .agent-id { font-size: 24px; font-weight: 700; color: #f0f6fc; }
-  .status { padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; text-transform: uppercase; }
-  .status.idle { background: #238636; color: #fff; }
-  .status.busy { background: #d29922; color: #fff; }
-  .status.error, .status.stopped { background: #da3633; color: #fff; }
-  .status.unknown { background: #484f58; color: #c9d1d9; }
-  .card-body { font-size: 13px; color: #8b949e; }
-  .card-body .row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #21262d; }
-  .card-body .row:last-child { border-bottom: none; }
-  .card-body .label { color: #8b949e; }
-  .card-body .value { color: #c9d1d9; font-weight: 500; }
-  .stale { opacity: 0.5; }
-  .messages { background: #161b22; border: 1px solid #30363d; border-radius: 8px; margin: 0 24px 24px; padding: 16px; max-height: 300px; overflow-y: auto; }
-  .messages h2 { font-size: 14px; color: #58a6ff; margin-bottom: 8px; }
-  .msg { font-size: 12px; padding: 4px 0; border-bottom: 1px solid #21262d; font-family: monospace; }
-  .msg .from { color: #d29922; }
-  .msg .time { color: #484f58; }
-  .refresh-info { text-align: center; color: #484f58; font-size: 12px; padding: 8px; }
-</style>
-</head>
-<body>
-<div class="header">
-  <h1>Multi-Agent Dashboard</h1>
-  <span class="prefix" id="prefix">--</span>
-  <span class="count" id="agent-count">Loading...</span>
-</div>
-<div class="grid" id="agent-grid"></div>
-<div class="messages">
-  <h2>Recent Messages</h2>
-  <div id="msg-list"><em style="color:#484f58">Connecting...</em></div>
-</div>
-<div class="refresh-info">Auto-refresh every 2s via WebSocket</div>
-
-<script>
-const grid = document.getElementById('agent-grid');
-const msgList = document.getElementById('msg-list');
-const prefixEl = document.getElementById('prefix');
-const countEl = document.getElementById('agent-count');
-const messages = [];
-const MAX_MSGS = 50;
-
-function ageSince(ts) {
-  if (!ts) return '?';
-  const s = Math.floor(Date.now()/1000) - ts;
-  if (s < 60) return s + 's';
-  if (s < 3600) return Math.floor(s/60) + 'm';
-  return Math.floor(s/3600) + 'h';
-}
-
-function renderAgents(agents) {
-  countEl.textContent = agents.length + ' agents';
-  grid.innerHTML = agents.map(a => {
-    const age = Math.floor(Date.now()/1000) - a.last_seen;
-    const stale = age > 30 ? 'stale' : '';
-    const cls = a.status || 'unknown';
-    return `<div class="card ${stale}">
-      <div class="card-header">
-        <span class="agent-id">${a.id}</span>
-        <span class="status ${cls}">${a.status}</span>
-      </div>
-      <div class="card-body">
-        <div class="row"><span class="label">Queue</span><span class="value">${a.queue_size || 0}</span></div>
-        <div class="row"><span class="label">Tasks</span><span class="value">${a.tasks_completed || 0}</span></div>
-        <div class="row"><span class="label">Mode</span><span class="value">${a.mode || '-'}</span></div>
-        <div class="row"><span class="label">Last seen</span><span class="value">${ageSince(a.last_seen)} ago</span></div>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-function addMessage(agentId, data) {
-  const text = data.response || data.prompt || JSON.stringify(data);
-  const short = text.length > 120 ? text.slice(0,120) + '...' : text;
-  messages.unshift({agent: agentId, text: short, time: new Date().toLocaleTimeString()});
-  if (messages.length > MAX_MSGS) messages.length = MAX_MSGS;
-  msgList.innerHTML = messages.map(m =>
-    `<div class="msg"><span class="from">[${m.agent}]</span> ${m.text} <span class="time">${m.time}</span></div>`
-  ).join('');
-}
-
-// Fetch initial
-// Base path detection (works behind /inception/ proxy or standalone)
-const basePath = location.pathname.replace(/\\/+$/, '');
-const apiBase = basePath + '/api';
-const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-const wsBase = wsProto + '//' + location.host + basePath + '/ws';
-
-fetch(apiBase + '/agents').then(r=>r.json()).then(d => {
-  renderAgents(d.agents);
-  if (d.agents.length > 0) {
-    fetch(apiBase + '/health').then(r=>r.json()).then(h => prefixEl.textContent = 'live');
-  }
-});
-
-// Status WebSocket
-const wsStatus = new WebSocket(wsBase + '/status');
-wsStatus.onmessage = (e) => {
-  const d = JSON.parse(e.data);
-  if (d.agents) renderAgents(d.agents);
-};
-wsStatus.onclose = () => setTimeout(() => location.reload(), 3000);
-
-// Messages WebSocket
-const wsMsg = new WebSocket(wsBase + '/messages');
-wsMsg.onmessage = (e) => {
-  const d = JSON.parse(e.data);
-  if (d.agent_id && d.data) addMessage(d.agent_id, d.data);
-};
-</script>
-</body>
-</html>"""
-
-
 # === Routes ===
-
-@app.get("/", response_class=HTMLResponse)
-async def dashboard():
-    """Inline dashboard UI"""
-    return DASHBOARD_HTML
-
 
 @app.get("/api/health")
 async def health():
@@ -236,34 +137,73 @@ async def health():
     }
 
 
+def _is_agent_working(agent_id: str) -> bool:
+    """Check if Claude Code is actively working by looking for 'esc to interrupt' in tmux."""
+    try:
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-t", f"agent-{agent_id}.0", "-p", "-S", "-5"],
+            capture_output=True, text=True, timeout=2
+        )
+        if result.returncode == 0 and "esc to interrupt" in result.stdout:
+            return True
+    except Exception:
+        pass
+    return False
+
+
 @app.get("/api/agents")
 async def list_agents():
-    """List all agents with their status"""
-    if not redis_pool:
-        raise HTTPException(status_code=503, detail="Redis not available")
-
+    """List all agents with active tmux sessions"""
     agents = []
 
-    # Scan for agent status keys
-    cursor = 0
-    while True:
-        cursor, keys = await redis_pool.scan(cursor, match=f"{MA_PREFIX}:agent:*", count=100)
-        for key in keys:
-            # Only process status hashes (ma:agent:{id} without :inbox/:outbox)
-            parts = key.split(":")
-            if len(parts) == 3 and parts[2].isdigit():
-                agent_id = parts[2]
-                data = await redis_pool.hgetall(key)
-                agents.append(AgentStatus(
-                    id=agent_id,
-                    status=data.get("status", "unknown"),
-                    last_seen=int(data.get("last_seen", 0)),
-                    queue_size=int(data.get("queue_size", 0)),
-                    tasks_completed=int(data.get("tasks_completed", 0)),
-                    mode=data.get("mode", "unknown")
-                ))
-        if cursor == 0:
-            break
+    # Get active tmux sessions (agent-XXX format)
+    try:
+        result = subprocess.run(
+            ["tmux", "list-sessions", "-F", "#{session_name}"],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().split("\n"):
+                if line.startswith("agent-"):
+                    agent_id = line.replace("agent-", "")
+                    if agent_id.isdigit():
+                        # Default: tmux session exists = agent is active
+                        status = "active"
+                        last_seen = int(time.time())
+                        queue_size = 0
+                        tasks_completed = 0
+
+                        if redis_pool:
+                            try:
+                                data = await redis_pool.hgetall(f"ma:agent:{agent_id}")
+                                if data:
+                                    hb_last_seen = int(data.get("last_seen", 0))
+                                    queue_size = int(data.get("queue_size", 0))
+                                    tasks_completed = int(data.get("tasks_completed", 0))
+
+                                    # Only trust heartbeat if fresh (< 15s)
+                                    if time.time() - hb_last_seen <= 15:
+                                        status = data.get("status", "active")
+                                        last_seen = hb_last_seen
+                                    # else: stale heartbeat, tmux exists → "active"
+                            except Exception:
+                                pass
+
+                        # Override: detect if Claude Code is actually working
+                        if status != "busy" and _is_agent_working(agent_id):
+                            status = "busy"
+
+                        agents.append(AgentStatus(
+                            id=agent_id,
+                            status=status,
+                            last_seen=last_seen,
+                            queue_size=queue_size,
+                            tasks_completed=tasks_completed,
+                            mode="tmux"
+                        ))
+    except Exception as e:
+        print(f"Error listing tmux sessions: {e}")
 
     # Sort by agent ID
     agents.sort(key=lambda a: int(a.id))
@@ -281,7 +221,7 @@ async def get_agent(agent_id: str):
     if not redis_pool:
         raise HTTPException(status_code=503, detail="Redis not available")
 
-    key = f"{MA_PREFIX}:agent:{agent_id}"
+    key = f"ma:agent:{agent_id}"
     data = await redis_pool.hgetall(key)
 
     if not data:
@@ -297,24 +237,279 @@ async def get_agent(agent_id: str):
     ).model_dump()
 
 
+class UpdateInput(BaseModel):
+    text: str
+    submit: bool = False
+
+
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes from text."""
+    return _ANSI_RE.sub('', text)
+
+
+def _extract_current_input(ansi_output: str) -> str:
+    """Extract typed input from tmux output captured with -e (ANSI codes).
+
+    Distinguishes real typed text from Claude Code suggestions:
+    - Suggestion: \\x1b[7m (reverse video = cursor) appears at position 0
+      before any normal text. The cursor sitting at the start means nothing
+      was typed, everything is ghost/suggestion text. Returns "".
+    - Typed text: normal characters appear before any \\x1b[7m cursor.
+      Returns only the typed portion (before suggestion/cursor escapes).
+
+    Only searches the last 8 non-empty lines to avoid false prompt matches.
+    """
+    SKIP_MARKERS = ["⏵", "───"]
+
+    lines = ansi_output.rstrip().split("\n")
+    checked = 0
+
+    for line in reversed(lines):
+        clean = _strip_ansi(line).strip()
+        if not clean:
+            continue
+        if any(m in clean for m in SKIP_MARKERS) or clean.startswith("⏺"):
+            continue
+
+        checked += 1
+        if checked > 8:
+            break
+
+        # Look for ❯ prompt (with or without ANSI around it)
+        prompt_match = re.search(r'❯[\xa0 ]', line)
+        if prompt_match:
+            after = line[prompt_match.end():]
+
+            # Check if \x1b[7m (cursor/reverse video) appears before any normal text.
+            # Pattern: optional ANSI codes, then \x1b[7m → cursor at pos 0 → all suggestion
+            if re.match(r'(?:\x1b\[[0-9;]*m)*\x1b\[7m', after):
+                return ""
+
+            # Real text exists before cursor. Extract up to first suggestion marker:
+            # \x1b[7m (cursor), \x1b[2m (dim), \x1b[0;2m (reset+dim)
+            sugg_start = re.search(r'\x1b\[(?:7m|2m|0;2m)', after)
+            if sugg_start:
+                typed_part = after[:sugg_start.start()]
+            else:
+                typed_part = after
+
+            return _strip_ansi(typed_part).strip()
+
+        # Fallback: other prompt types (no suggestion detection)
+        for prompt in ["$ ", ">>> ", "... ", "> "]:
+            if prompt in clean:
+                idx = clean.rfind(prompt)
+                return clean[idx + len(prompt):]
+
+    return ""
+
+
 @app.post("/api/agent/{agent_id}/send")
 async def send_to_agent(agent_id: str, msg: SendMessage):
-    """Send message to an agent"""
-    if not redis_pool:
-        raise HTTPException(status_code=503, detail="Redis not available")
+    """Send message to an agent via tmux send-keys (with Enter)"""
+    session_name = f"agent-{agent_id}"
+    target = f"{session_name}.0"
 
-    # Use legacy inbox format (RPUSH to list)
-    inbox = f"{MA_PREFIX}:inject:{agent_id}"
-    message = f"FROM:{msg.from_agent}|{msg.message}"
+    try:
+        # Check if session exists
+        result = subprocess.run(
+            ["tmux", "has-session", "-t", session_name],
+            capture_output=True
+        )
+        if result.returncode != 0:
+            raise HTTPException(status_code=404, detail=f"Agent {agent_id} session not found")
 
-    await redis_pool.rpush(inbox, message)
+        # Send message via tmux send-keys
+        subprocess.run(
+            ["tmux", "send-keys", "-t", target, msg.message, "Enter"],
+            check=True
+        )
 
-    return {
-        "status": "sent",
-        "agent_id": agent_id,
-        "message_length": len(msg.message),
-        "timestamp": int(time.time())
+        return {
+            "status": "sent",
+            "agent_id": agent_id,
+            "message_length": len(msg.message),
+            "timestamp": int(time.time())
+        }
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send: {str(e)}")
+
+
+@app.post("/api/agent/{agent_id}/input")
+async def update_agent_input(agent_id: str, data: UpdateInput):
+    """Update the current input line in tmux (co-editing)"""
+    session_name = f"agent-{agent_id}"
+    target = f"{session_name}.0"
+
+    try:
+        # Check if session exists
+        result = subprocess.run(
+            ["tmux", "has-session", "-t", session_name],
+            capture_output=True
+        )
+        if result.returncode != 0:
+            raise HTTPException(status_code=404, detail=f"Agent {agent_id} session not found")
+
+        # Clear current line (Ctrl+U) and send new text
+        subprocess.run(
+            ["tmux", "send-keys", "-t", target, "C-u"],
+            check=True
+        )
+
+        # Send the new text (literal mode: -l prevents interpreting key names)
+        if data.text:
+            subprocess.run(
+                ["tmux", "send-keys", "-t", target, "-l", data.text],
+                check=True
+            )
+
+        # Submit if requested
+        if data.submit:
+            subprocess.run(
+                ["tmux", "send-keys", "-t", target, "Enter"],
+                check=True
+            )
+
+        return {
+            "status": "updated",
+            "agent_id": agent_id,
+            "text": data.text,
+            "submitted": data.submit,
+            "timestamp": int(time.time())
+        }
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update input: {str(e)}")
+
+
+@app.get("/api/agent/{agent_id}/output")
+async def get_agent_output(agent_id: str, lines: int = 500):
+    """Capture tmux pane output for an agent"""
+    session_name = f"agent-{agent_id}"
+    target = f"{session_name}.0"
+
+    try:
+        # Check if session exists
+        result = subprocess.run(
+            ["tmux", "has-session", "-t", session_name],
+            capture_output=True
+        )
+        if result.returncode != 0:
+            raise HTTPException(status_code=404, detail=f"Agent {agent_id} session not found")
+
+        # Capture pane content (plain for display)
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-t", target, "-p", "-J", "-S", f"-{lines}"],
+            capture_output=True,
+            text=True
+        )
+        output = result.stdout.rstrip('\n ')
+
+        # Capture with ANSI codes for input detection (suggestion vs typed)
+        result_ansi = subprocess.run(
+            ["tmux", "capture-pane", "-t", target, "-p", "-e", "-S", "-20"],
+            capture_output=True,
+            text=True
+        )
+        current_input = _extract_current_input(result_ansi.stdout)
+
+        return {
+            "agent_id": agent_id,
+            "output": output,
+            "current_input": current_input,
+            "lines": lines,
+            "timestamp": int(time.time())
+        }
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to capture: {str(e)}")
+
+
+# === Keycloak Proxy ===
+
+def _make_simple_token(username: str, user_info: dict) -> str:
+    """Create a simple base64-encoded JWT-like token for local auth."""
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()).decode().rstrip("=")
+    payload_data = {
+        "sub": username,
+        "preferred_username": username,
+        "email": user_info["email"],
+        "name": user_info["name"],
+        "roles": user_info["roles"],
+        "realm_access": {"roles": user_info["roles"]},
+        "iat": int(time.time()),
+        "exp": int(time.time()) + 86400,
     }
+    payload = base64.urlsafe_b64encode(json.dumps(payload_data).encode()).decode().rstrip("=")
+    sig = hmac.new(_TOKEN_SECRET.encode(), f"{header}.{payload}".encode(), hashlib.sha256).hexdigest()[:16]
+    return f"{header}.{payload}.{sig}"
+
+
+@app.api_route("/auth/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+async def proxy_keycloak(request: Request, path: str):
+    """Auth endpoint: tries Keycloak first, falls back to simple local auth."""
+
+    # Handle token requests locally if Keycloak is unavailable
+    if "openid-connect/token" in path and request.method == "POST":
+        body = await request.body()
+        params = dict(x.split("=", 1) for x in body.decode().split("&") if "=" in x)
+
+        from urllib.parse import unquote_plus
+        username = unquote_plus(params.get("username", ""))
+        password = unquote_plus(params.get("password", ""))
+
+        # Try Keycloak first
+        url = f"{KEYCLOAK_URL}/{path}"
+        headers = {k: v for k, v in request.headers.items() if k.lower() not in ["host"]}
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.request(
+                    method="POST", url=url, headers=headers, content=body,
+                    params=request.query_params, timeout=5.0
+                )
+                if response.status_code < 500:
+                    return Response(content=response.content, status_code=response.status_code,
+                                    headers=dict(response.headers))
+        except Exception:
+            pass  # Keycloak not available, use simple auth
+
+        # Simple local auth fallback
+        user_info = SIMPLE_AUTH_USERS.get(username)
+        if user_info and user_info["password"] == password:
+            token = _make_simple_token(username, user_info)
+            return Response(
+                content=json.dumps({
+                    "access_token": token,
+                    "refresh_token": token,
+                    "token_type": "Bearer",
+                    "expires_in": 86400,
+                }),
+                status_code=200,
+                headers={"Content-Type": "application/json"},
+            )
+        else:
+            return Response(
+                content=json.dumps({"error": "invalid_grant", "error_description": "Invalid credentials"}),
+                status_code=401,
+                headers={"Content-Type": "application/json"},
+            )
+
+    # For other auth paths, proxy to Keycloak
+    url = f"{KEYCLOAK_URL}/{path}"
+    body = await request.body()
+    headers = {k: v for k, v in request.headers.items() if k.lower() not in ["host"]}
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.request(
+                method=request.method, url=url, headers=headers, content=body,
+                params=request.query_params, timeout=30.0
+            )
+            return Response(content=response.content, status_code=response.status_code,
+                            headers=dict(response.headers))
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Keycloak proxy error: {str(e)}")
 
 
 # === WebSocket ===
@@ -344,6 +539,70 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+@app.websocket("/ws/agent/{agent_id}")
+async def websocket_agent_output(websocket: WebSocket, agent_id: str):
+    """WebSocket endpoint for real-time agent tmux output with input sync"""
+    await websocket.accept()
+
+    session_name = f"agent-{agent_id}"
+    target = f"{session_name}.0"
+    last_output = ""
+    last_input = ""
+
+    try:
+        while True:
+            # Capture pane content (plain for display)
+            result = subprocess.run(
+                ["tmux", "capture-pane", "-t", target, "-p", "-J", "-S", "-500"],
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode != 0:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"Agent {agent_id} session not found"
+                })
+                break
+
+            current_output = result.stdout.rstrip('\n ')
+
+            # Capture with ANSI for input detection (suggestion vs typed)
+            result_ansi = subprocess.run(
+                ["tmux", "capture-pane", "-t", target, "-p", "-e", "-S", "-20"],
+                capture_output=True,
+                text=True
+            )
+            current_input = _extract_current_input(result_ansi.stdout)
+
+            # Send output if changed
+            if current_output != last_output:
+                await websocket.send_json({
+                    "type": "output",
+                    "agent_id": agent_id,
+                    "output": current_output,
+                    "timestamp": int(time.time())
+                })
+                last_output = current_output
+
+            # Send input if changed (separate message for input sync)
+            if current_input != last_input:
+                await websocket.send_json({
+                    "type": "input_sync",
+                    "agent_id": agent_id,
+                    "current_input": current_input,
+                    "timestamp": int(time.time())
+                })
+                last_input = current_input
+
+            await asyncio.sleep(0.3)  # 300ms refresh for better input sync
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        print(f"Agent WebSocket error: {e}")
+
+
 @app.websocket("/ws/messages")
 async def websocket_messages(websocket: WebSocket):
     """WebSocket endpoint for real-time agent messages"""
@@ -362,7 +621,7 @@ async def websocket_messages(websocket: WebSocket):
             cursor = 0
             streams = {}
             while True:
-                cursor, keys = await redis_pool.scan(cursor, match=f"{MA_PREFIX}:agent:*:outbox", count=100)
+                cursor, keys = await redis_pool.scan(cursor, match="ma:agent:*:outbox", count=100)
                 for key in keys:
                     stream_id = last_ids.get(key, "$")
                     streams[key] = stream_id
@@ -405,44 +664,89 @@ async def websocket_messages(websocket: WebSocket):
 
 @app.websocket("/ws/status")
 async def websocket_status(websocket: WebSocket):
-    """WebSocket endpoint for agent status updates (polling)"""
+    """WebSocket endpoint for agent status updates (polling tmux sessions)"""
     await websocket.accept()
 
     try:
         while True:
-            if redis_pool:
-                # Get all agent statuses
-                agents = []
-                cursor = 0
-                while True:
-                    cursor, keys = await redis_pool.scan(cursor, match=f"{MA_PREFIX}:agent:*", count=100)
-                    for key in keys:
-                        parts = key.split(":")
-                        if len(parts) == 3 and parts[2].isdigit():
-                            agent_id = parts[2]
-                            data = await redis_pool.hgetall(key)
-                            agents.append({
-                                "id": agent_id,
-                                "status": data.get("status", "unknown"),
-                                "last_seen": int(data.get("last_seen", 0)),
-                            })
-                    if cursor == 0:
-                        break
+            agents = []
 
-                agents.sort(key=lambda a: int(a["id"]))
+            # Get active tmux sessions
+            try:
+                result = subprocess.run(
+                    ["tmux", "list-sessions", "-F", "#{session_name}"],
+                    capture_output=True,
+                    text=True
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.strip().split("\n"):
+                        if line.startswith("agent-"):
+                            agent_id = line.replace("agent-", "")
+                            if agent_id.isdigit():
+                                # Default: tmux exists = agent is active
+                                status = "active"
+                                last_seen = int(time.time())
 
-                await websocket.send_json({
-                    "type": "status_update",
-                    "agents": agents,
-                    "timestamp": int(time.time())
-                })
+                                if redis_pool:
+                                    try:
+                                        data = await redis_pool.hgetall(f"ma:agent:{agent_id}")
+                                        if data:
+                                            hb_last_seen = int(data.get("last_seen", 0))
+                                            # Only trust heartbeat if fresh (< 15s)
+                                            if time.time() - hb_last_seen <= 15:
+                                                status = data.get("status", "active")
+                                                last_seen = hb_last_seen
+                                            # else: stale heartbeat, tmux exists → "active"
+                                    except Exception:
+                                        pass
 
-            await asyncio.sleep(2)  # Update every 2 seconds
+                                # Override: detect if Claude Code is actually working
+                                if status != "busy" and _is_agent_working(agent_id):
+                                    status = "busy"
+
+                                agents.append({
+                                    "id": agent_id,
+                                    "status": status,
+                                    "last_seen": last_seen,
+                                })
+            except Exception as e:
+                print(f"Error listing tmux sessions: {e}")
+
+            agents.sort(key=lambda a: int(a["id"]))
+
+            await websocket.send_json({
+                "type": "status_update",
+                "agents": agents,
+                "timestamp": int(time.time())
+            })
+
+            await asyncio.sleep(15)  # Update every 15 seconds for stability
 
     except WebSocketDisconnect:
         pass
     except Exception as e:
         print(f"Status WebSocket error: {e}")
+
+
+# === Static Files (Frontend) ===
+
+# Serve static assets (JS, CSS, etc.)
+frontend_path = os.path.join(os.path.dirname(__file__), FRONTEND_DIR)
+if os.path.exists(frontend_path):
+    app.mount("/assets", StaticFiles(directory=os.path.join(frontend_path, "assets")), name="assets")
+
+    @app.get("/")
+    async def serve_index():
+        """Serve frontend index.html"""
+        return FileResponse(os.path.join(frontend_path, "index.html"))
+
+    @app.get("/{path:path}")
+    async def serve_spa(path: str):
+        """Catch-all for SPA routing"""
+        file_path = os.path.join(frontend_path, path)
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+            return FileResponse(file_path)
+        return FileResponse(os.path.join(frontend_path, "index.html"))
 
 
 # === Main ===

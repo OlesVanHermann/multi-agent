@@ -7,7 +7,6 @@
 
 set -e
 
-MA_PREFIX="${MA_PREFIX:-ma}"
 TO_AGENT=$1
 shift 2>/dev/null || true
 
@@ -32,7 +31,7 @@ fi
 # Auto-detect from_agent from tmux session name
 if [ -n "$TMUX" ]; then
     SESSION_NAME=$(tmux display-message -p '#S' 2>/dev/null || echo "")
-    if [[ "$SESSION_NAME" =~ ^${MA_PREFIX}-agent-([0-9]+)$ ]]; then
+    if [[ "$SESSION_NAME" =~ ^agent-([0-9]+)$ ]]; then
         FROM_AGENT="${BASH_REMATCH[1]}"
     fi
 fi
@@ -54,7 +53,7 @@ fi
 TIMESTAMP=$(date +%s)
 
 # Envoyer via Redis Streams (nouveau format)
-redis-cli XADD "${MA_PREFIX}:agent:${TO_AGENT}:inbox" '*' \
+redis-cli XADD "ma:agent:${TO_AGENT}:inbox" '*' \
     prompt "$MESSAGE" \
     from_agent "$FROM_AGENT" \
     timestamp "$TIMESTAMP" > /dev/null

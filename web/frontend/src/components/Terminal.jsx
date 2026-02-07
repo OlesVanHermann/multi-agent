@@ -1,156 +1,279 @@
 import React, { useState, useEffect, useRef } from 'react'
 
-function Terminal({ agentId }) {
-  const [lines, setLines] = useState([])
+function Terminal({ agentId, focused }) {
+  const [output, setOutput] = useState('')
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+  const [connected, setConnected] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [paused, setPaused] = useState(false)
   const outputRef = useRef(null)
   const wsRef = useRef(null)
+  const inputRef = useRef(null)
+  const lastSentInput = useRef('')
+  const syncTimeoutRef = useRef(null)
 
-  // Auto-scroll to bottom
-  useEffect(() => {
-    if (outputRef.current) {
-      outputRef.current.scrollTop = outputRef.current.scrollHeight
+  // Scroll/pause refs
+  const userScrolledRef = useRef(false)
+  const scrollPauseRef = useRef(null)
+  const pendingOutputRef = useRef(null) // latest output while paused
+
+  // Sync coordination refs (avoid stale closures in WebSocket handler)
+  const lastLocalEditRef = useRef(0)
+  const lastSubmitRef = useRef(0)
+  const inputValueRef = useRef('')
+
+  // WebSocket lifecycle ref
+  const reconnectTimeoutRef = useRef(null)
+
+  // Resume syncing: apply pending output and scroll to bottom
+  const resumeSync = () => {
+    userScrolledRef.current = false
+    setPaused(false)
+    if (pendingOutputRef.current !== null) {
+      setOutput(pendingOutputRef.current)
+      pendingOutputRef.current = null
     }
-  }, [lines])
+    requestAnimationFrame(() => {
+      if (outputRef.current) {
+        outputRef.current.scrollTop = outputRef.current.scrollHeight
+      }
+    })
+  }
 
-  // Subscribe to messages for this agent
+  // Detect user scroll
+  const handleScroll = () => {
+    const el = outputRef.current
+    if (!el) return
+    const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50
+
+    if (!isAtBottom) {
+      userScrolledRef.current = true
+      setPaused(true)
+      // Reset the 5s timer on every scroll movement
+      if (scrollPauseRef.current) clearTimeout(scrollPauseRef.current)
+      scrollPauseRef.current = setTimeout(resumeSync, 5000)
+    } else {
+      // User scrolled back to bottom manually - resume immediately
+      if (userScrolledRef.current) {
+        if (scrollPauseRef.current) clearTimeout(scrollPauseRef.current)
+        resumeSync()
+      }
+    }
+  }
+
+  // Focus input when this terminal becomes active
   useEffect(() => {
+    if (focused && inputRef.current) {
+      inputRef.current.focus()
+    }
+  }, [focused])
+
+  // Auto-scroll when output changes (only fires when not paused)
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      if (outputRef.current && !userScrolledRef.current) {
+        outputRef.current.scrollTop = outputRef.current.scrollHeight
+      }
+    })
+  }, [output])
+
+  // Load and connect
+  useEffect(() => {
+    if (!agentId) return
+
+    setOutput('Loading...')
+    setConnected(false)
+    setPaused(false)
+    setInput('')
+    inputValueRef.current = ''
+    lastSentInput.current = ''
+    lastLocalEditRef.current = 0
+    lastSubmitRef.current = 0
+    userScrolledRef.current = false
+    pendingOutputRef.current = null
+    if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current)
+
+    // Fetch initial output
+    const fetchOutput = async () => {
+      try {
+        const res = await fetch(`/api/agent/${agentId}/output`)
+        if (res.ok) {
+          const data = await res.json()
+          setOutput(data.output || '(empty)')
+          if (data.current_input) {
+            setInput(data.current_input)
+            inputValueRef.current = data.current_input
+            lastSentInput.current = data.current_input
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch output:', err)
+        setOutput('Error loading output')
+      }
+    }
+
+    fetchOutput()
+
+    // Connect WebSocket
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${protocol}//${window.location.host}/ws/messages`
+    const wsUrl = `${protocol}//${window.location.host}/ws/agent/${agentId}`
 
     const connect = () => {
-      wsRef.current = new WebSocket(wsUrl)
+      const ws = new WebSocket(wsUrl)
+      wsRef.current = ws
 
-      wsRef.current.onmessage = (event) => {
+      ws.onopen = () => setConnected(true)
+
+      ws.onmessage = (event) => {
         const data = JSON.parse(event.data)
-        if (data.type === 'message') {
-          // Show messages from or to this agent
-          if (data.agent_id === agentId || data.data?.to_agent === agentId) {
-            const timestamp = new Date().toLocaleTimeString()
-            const from = data.agent_id
-            const response = data.data?.response || ''
 
-            // Truncate long responses for display
-            const preview = response.length > 200
-              ? response.substring(0, 200) + '...'
-              : response
-
-            setLines(prev => [...prev.slice(-100), {
-              time: timestamp,
-              type: 'response',
-              from: from,
-              text: preview
-            }])
+        if (data.type === 'output') {
+          if (userScrolledRef.current) {
+            // Paused: store latest but don't update view
+            pendingOutputRef.current = data.output || ''
+          } else {
+            // Live: update view
+            setOutput(data.output || '')
+            pendingOutputRef.current = null
           }
+        }
+        else if (data.type === 'input_sync') {
+          const now = Date.now()
+          const tmuxInput = data.current_input || ''
+
+          if (now - lastLocalEditRef.current < 800) return
+          if (now - lastSubmitRef.current < 3000) return
+          if (document.activeElement === inputRef.current &&
+              tmuxInput !== inputValueRef.current) return
+
+          setInput(tmuxInput)
+          inputValueRef.current = tmuxInput
+          lastSentInput.current = tmuxInput
+        }
+        else if (data.type === 'error') {
+          setOutput(`Error: ${data.message}`)
         }
       }
 
-      wsRef.current.onclose = () => {
-        setTimeout(connect, 3000)
+      ws.onclose = () => {
+        setConnected(false)
+        // Only reconnect if this WS is still the active one
+        // (not replaced by a new connection after agent switch)
+        if (wsRef.current === ws) {
+          reconnectTimeoutRef.current = setTimeout(connect, 2000)
+        }
       }
+
+      ws.onerror = () => setConnected(false)
     }
 
     connect()
 
-    // Clear lines when agent changes
-    setLines([{
-      time: new Date().toLocaleTimeString(),
-      type: 'system',
-      text: `Connected to agent ${agentId}`
-    }])
-
     return () => {
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current)
       if (wsRef.current) {
+        wsRef.current.onclose = null  // Prevent reconnect on intentional close
         wsRef.current.close()
+        wsRef.current = null
       }
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
+      if (scrollPauseRef.current) clearTimeout(scrollPauseRef.current)
     }
   }, [agentId])
 
-  const handleSend = async () => {
+  // Handle input change - sync to tmux with debounce
+  const handleInputChange = (e) => {
+    const newValue = e.target.value
+    setInput(newValue)
+    inputValueRef.current = newValue
+    setSyncing(true)
+    lastLocalEditRef.current = Date.now()
+
+    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
+
+    syncTimeoutRef.current = setTimeout(async () => {
+      if (newValue !== lastSentInput.current) {
+        try {
+          await fetch(`/api/agent/${agentId}/input`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: newValue, submit: false })
+          })
+          lastSentInput.current = newValue
+        } catch (err) {
+          console.error('Sync error:', err)
+        }
+      }
+      setSyncing(false)
+    }, 150)
+  }
+
+  // Handle submit
+  const handleSubmit = async () => {
     if (!input.trim() || sending) return
 
     const message = input.trim()
-    setInput('')
     setSending(true)
+    lastSubmitRef.current = Date.now()
 
-    // Add to local display
-    setLines(prev => [...prev, {
-      time: new Date().toLocaleTimeString(),
-      type: 'command',
-      text: `> ${message}`
-    }])
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current)
+      syncTimeoutRef.current = null
+      setSyncing(false)
+    }
 
     try {
-      const res = await fetch(`/api/agent/${agentId}/send`, {
+      await fetch(`/api/agent/${agentId}/input`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: message,
-          from_agent: 'web'
-        })
+        body: JSON.stringify({ text: message, submit: true })
       })
-
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`)
-      }
-
-      setLines(prev => [...prev, {
-        time: new Date().toLocaleTimeString(),
-        type: 'system',
-        text: `Sent to agent ${agentId}`
-      }])
+      setInput('')
+      inputValueRef.current = ''
+      lastSentInput.current = ''
     } catch (err) {
-      setLines(prev => [...prev, {
-        time: new Date().toLocaleTimeString(),
-        type: 'error',
-        text: `Error: ${err.message}`
-      }])
+      console.error('Submit error:', err)
     } finally {
       setSending(false)
+      requestAnimationFrame(() => {
+        if (inputRef.current) inputRef.current.focus()
+      })
     }
   }
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      handleSend()
+      handleSubmit()
     }
-  }
-
-  const handleClear = () => {
-    setLines([{
-      time: new Date().toLocaleTimeString(),
-      type: 'system',
-      text: 'Cleared'
-    }])
   }
 
   return (
     <div className="terminal">
-      <div className="terminal-output" ref={outputRef}>
-        {lines.map((line, i) => (
-          <div key={i} className={`terminal-line ${line.type}`}>
-            <span className="time">{line.time}</span>
-            {line.from && <span className="from">[{line.from}]</span>}
-            <span className="text">{line.text}</span>
-          </div>
-        ))}
+      <div className="terminal-header">
+        <span className={`status-dot ${connected ? 'green' : 'red'}`}></span>
+        Agent {agentId} {connected ? '(live)' : '(disconnected)'}
+        {syncing && <span className="sync-indicator"> ⟳</span>}
+        {paused && <span className="pause-indicator"> ⏸</span>}
       </div>
+      <pre className="terminal-output" ref={outputRef} onScroll={handleScroll}>
+        {output}
+      </pre>
       <div className="terminal-input">
-        <span className="prompt">$</span>
+        <span className="prompt">❯</span>
         <input
+          ref={inputRef}
           type="text"
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={handleInputChange}
           onKeyDown={handleKeyDown}
-          placeholder={`Send to agent ${agentId}...`}
+          placeholder={`Co-edit with tmux...`}
           disabled={sending}
         />
-        <button onClick={handleSend} disabled={sending || !input.trim()}>
-          Send
+        <button onClick={handleSubmit} disabled={sending || !input.trim()}>
+          ⏎
         </button>
-        <button onClick={handleClear}>Clear</button>
       </div>
     </div>
   )

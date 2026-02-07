@@ -3,8 +3,7 @@
 # Usage: ./watch.sh <agent_id>
 
 AGENT_ID=${1:-300}
-MA_PREFIX="${MA_PREFIX:-ma}"
-STREAM="${MA_PREFIX}:agent:${AGENT_ID}:outbox"
+STREAM="ma:agent:${AGENT_ID}:outbox"
 
 echo "Watching agent $AGENT_ID responses..."
 echo "Stream: $STREAM"
