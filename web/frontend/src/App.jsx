@@ -3,6 +3,7 @@ import AgentGrid, { AGENT_LABELS } from './components/AgentGrid'
 import Terminal from './components/Terminal'
 import StatusBar from './components/StatusBar'
 import { useAuth } from './AuthProvider'
+import { api, wsUrl } from './basePath'
 
 function App() {
   const { user, logout, isOperator } = useAuth()
@@ -18,7 +19,7 @@ function App() {
   useEffect(() => {
     const fetchAgents = async () => {
       try {
-        const res = await fetch('/api/agents')
+        const res = await fetch(api('api/agents'))
         const data = await res.json()
         // Only update if we got valid agent data
         if (data.agents && Array.isArray(data.agents) && data.agents.length > 0) {
@@ -33,7 +34,7 @@ function App() {
 
     const checkHealth = async () => {
       try {
-        const res = await fetch('/api/health')
+        const res = await fetch(api('api/health'))
         const data = await res.json()
         setRedisOk(data.redis)
       } catch (err) {
@@ -54,11 +55,10 @@ function App() {
 
   // WebSocket for real-time status
   useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${protocol}//${window.location.host}/ws/status`
+    const statusWsUrl = wsUrl('ws/status')
 
     const connect = () => {
-      wsRef.current = new WebSocket(wsUrl)
+      wsRef.current = new WebSocket(statusWsUrl)
 
       wsRef.current.onmessage = (event) => {
         const data = JSON.parse(event.data)

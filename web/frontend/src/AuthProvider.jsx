@@ -3,7 +3,9 @@ import React, { createContext, useContext, useState, useEffect } from 'react'
 const AuthContext = createContext(null)
 
 // Keycloak configuration
-const KEYCLOAK_URL = '/auth'
+// Detect base path for auth endpoint (works behind reverse proxy)
+const BASE = window.location.pathname.replace(/\/+$/, '')
+const KEYCLOAK_URL = `${BASE}/auth`
 const REALM = 'multi-agent'
 const CLIENT_ID = 'multi-agent-web'
 

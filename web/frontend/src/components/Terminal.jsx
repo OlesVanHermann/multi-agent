@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { api, wsUrl } from '../basePath'
 
 function Terminal({ agentId, focused }) {
   const [output, setOutput] = useState('')
@@ -97,7 +98,7 @@ function Terminal({ agentId, focused }) {
     // Fetch initial output
     const fetchOutput = async () => {
       try {
-        const res = await fetch(`/api/agent/${agentId}/output`)
+        const res = await fetch(api(`api/agent/${agentId}/output`))
         if (res.ok) {
           const data = await res.json()
           setOutput(data.output || '(empty)')
@@ -116,11 +117,10 @@ function Terminal({ agentId, focused }) {
     fetchOutput()
 
     // Connect WebSocket
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${protocol}//${window.location.host}/ws/agent/${agentId}`
+    const agentWsUrl = wsUrl(`ws/agent/${agentId}`)
 
     const connect = () => {
-      const ws = new WebSocket(wsUrl)
+      const ws = new WebSocket(agentWsUrl)
       wsRef.current = ws
 
       ws.onopen = () => setConnected(true)
@@ -195,7 +195,7 @@ function Terminal({ agentId, focused }) {
     syncTimeoutRef.current = setTimeout(async () => {
       if (newValue !== lastSentInput.current) {
         try {
-          await fetch(`/api/agent/${agentId}/input`, {
+          await fetch(api(`api/agent/${agentId}/input`), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: newValue, submit: false })
@@ -224,7 +224,7 @@ function Terminal({ agentId, focused }) {
     }
 
     try {
-      await fetch(`/api/agent/${agentId}/input`, {
+      await fetch(api(`api/agent/${agentId}/input`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: message, submit: true })
