@@ -92,7 +92,7 @@ else
     log_ok "Keycloak starting on http://localhost:8080"
 fi
 
-# === 3. Start Web Dashboard ===
+# === 4. Start Web Dashboard ===
 log_info "Starting web dashboard..."
 if lsof -i :8000 &>/dev/null 2>&1; then
     log_ok "Dashboard already running on :8000"
@@ -100,7 +100,22 @@ else
     # Install Python deps if needed
     if ! python3 -c "import fastapi" 2>/dev/null; then
         log_info "Installing Python dependencies..."
-        pip3 install -r "$WEB_DIR/backend/requirements.txt" 2>/dev/null
+        pip3 install -r "$WEB_DIR/backend/requirements.txt" 2>/dev/null || \
+        pip3 install --break-system-packages -r "$WEB_DIR/backend/requirements.txt" 2>/dev/null
+    fi
+
+    # Build frontend if needed
+    if [ ! -f "$WEB_DIR/frontend/dist/index.html" ]; then
+        if command -v npm &>/dev/null; then
+            log_info "Building frontend..."
+            cd "$WEB_DIR/frontend"
+            npm install --silent 2>/dev/null
+            npm run build 2>/dev/null
+            cd "$BASE_DIR"
+            log_ok "Frontend built"
+        else
+            log_warn "npm not found — frontend not built (API-only mode)"
+        fi
     fi
 
     # Start uvicorn in background

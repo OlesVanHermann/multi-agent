@@ -32,7 +32,7 @@ if [ "$MODE" = "dev" ]; then
 
     echo "[backend] Starting FastAPI on :8000..."
     cd "$SCRIPT_DIR/backend"
-    python3 -m uvicorn server:app --host 0.0.0.0 --port 8000 --reload &
+    MA_PREFIX="${MA_PREFIX:-ma}" python3 -m uvicorn server:app --host 127.0.0.1 --port 8000 --reload &
     BACKEND_PID=$!
 
     echo ""
@@ -57,7 +57,7 @@ else
 
     echo "[backend] Starting FastAPI on :8000..."
     cd "$SCRIPT_DIR/backend"
-    python3 -m uvicorn server:app --host 0.0.0.0 --port 8000
+    MA_PREFIX="${MA_PREFIX:-ma}" python3 -m uvicorn server:app --host 127.0.0.1 --port 8000
 
     # Backend serves frontend from ../frontend/dist
 fi
