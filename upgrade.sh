@@ -1,21 +1,23 @@
 #!/bin/bash
-# upgrade.sh - Met à jour le framework depuis GitHub sans écraser les données locales
+# upgrade.sh - Met à jour le framework depuis GitHub sans écraser les données projet
 #
 # Usage:
 #   ./upgrade.sh              # Met à jour depuis main
 #   ./upgrade.sh v2.1         # Met à jour vers un tag spécifique
-#   ./upgrade.sh --dry-run    # Simule sans appliquer
+#   ./upgrade.sh --dry-run    # Montre ce qui va changer sans appliquer
 
 set -e
 
 REPO_URL="https://github.com/OlesVanHermann/multi-agent.git"
-BRANCH="${1:-main}"
 DRY_RUN=false
+BRANCH="main"
 
-if [ "$1" = "--dry-run" ]; then
-    DRY_RUN=true
-    BRANCH="${2:-main}"
-fi
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run) DRY_RUN=true ;;
+        *)         BRANCH="$arg" ;;
+    esac
+done
 
 # Colors (compatible bash/zsh)
 RED=$'\033[0;31m'
@@ -25,235 +27,166 @@ BLUE=$'\033[0;34m'
 NC=$'\033[0m'
 
 log_info() { printf "%s[INFO]%s %s\n" "$BLUE" "$NC" "$1"; }
-log_ok() { printf "%s[OK]%s %s\n" "$GREEN" "$NC" "$1"; }
+log_ok()   { printf "%s[OK]%s %s\n" "$GREEN" "$NC" "$1"; }
 log_warn() { printf "%s[WARN]%s %s\n" "$YELLOW" "$NC" "$1"; }
-log_error() { printf "%s[ERROR]%s %s\n" "$RED" "$NC" "$1"; }
+log_error(){ printf "%s[ERROR]%s %s\n" "$RED" "$NC" "$1"; }
 
-# ============================================================
-# Détection automatique des commandes
-# ============================================================
+# Détecter commandes
 find_cmd() {
-    local cmd_name="$1"
-    shift
+    local cmd_name="$1"; shift
     for cmd in "$@"; do
-        # Gérer les commandes multi-mots comme "python3 -m pip"
         local first_word="${cmd%% *}"
         if command -v "$first_word" &>/dev/null; then
-            echo "$cmd"
-            return 0
+            echo "$cmd"; return 0
         fi
     done
-    log_error "Commande '$cmd_name' non trouvée. Essayé: $*"
+    log_error "Commande '$cmd_name' non trouvée."
     exit 1
 }
 
-# Détecter les commandes disponibles
 GIT_CMD=$(find_cmd "git" git)
-PIP_CMD=$(find_cmd "pip" pip3 pip "python3 -m pip" "python -m pip")
-PYTHON_CMD=$(find_cmd "python" python3 python)
+PIP_CMD=$(find_cmd "pip" pip3 pip "python3 -m pip")
 RSYNC_CMD=$(find_cmd "rsync" rsync)
-FIND_CMD=$(find_cmd "find" gfind find)
-DU_CMD=$(find_cmd "du" gdu du)
+
+# ============================================================
+# FRAMEWORK = mis à jour | PROJET = préservé
+# ============================================================
+FRAMEWORK_DIRS=(core scripts web docs upgrades tests infrastructure templates examples)
+FRAMEWORK_FILES=(requirements.txt CLAUDE.md UPGRADE.md README.md LICENSE .gitignore)
 
 echo ""
 echo "╔════════════════════════════════════════════╗"
 echo "║       Multi-Agent Framework Upgrade        ║"
 echo "╚════════════════════════════════════════════╝"
 echo ""
-log_info "Source: $REPO_URL"
-log_info "Branch/Tag: $BRANCH"
-[ "$DRY_RUN" = true ] && log_warn "Mode DRY-RUN activé (simulation)"
+log_info "Source: $REPO_URL ($BRANCH)"
+[ "$DRY_RUN" = true ] && log_warn "Mode DRY-RUN — rien ne sera modifié"
 echo ""
 
 # ============================================================
-# FICHIERS FRAMEWORK (seront mis à jour)
+# 1. Télécharger la nouvelle version
 # ============================================================
-FRAMEWORK_DIRS=(
-    "core/"
-    "scripts/"
-    "docs/"
-    "upgrades/"
-)
-
-FRAMEWORK_FILES=(
-    "requirements.txt"
-    "CLAUDE.md"
-    "UPGRADE.md"
-    "README.md"
-    "LICENSE"
-    ".gitignore"
-)
-
-# ============================================================
-# FICHIERS PROJET (ne seront PAS touchés)
-# ============================================================
-# prompts/           - Vos prompts personnalisés
-# pool-requests/     - Vos données (knowledge, pending, done...)
-# project/           - Votre code source
-# project-config.md  - Votre configuration
-# logs/              - Vos logs
-# sessions/          - Vos sessions
-
-# ============================================================
-# ÉTAPE 1: Backup COMPLET du répertoire
-# ============================================================
-echo "─────────────────────────────────────────────"
-log_info "Étape 1/5: Backup complet"
-echo ""
-
-CURRENT_DIR=$(basename "$(pwd)")
-BACKUP_DIR="../${CURRENT_DIR}-backup-$(date +%Y%m%d-%H%M%S)"
-
-if [ "$DRY_RUN" = false ]; then
-    log_info "Création du backup complet..."
-
-    # Backup complet (exclure les gros fichiers temporaires)
-    mkdir -p "$BACKUP_DIR"
-    $RSYNC_CMD -a --exclude='.git' \
-             --exclude='logs/*.log' \
-             --exclude='sessions/*' \
-             --exclude='__pycache__' \
-             --exclude='*.pyc' \
-             ./ "$BACKUP_DIR/"
-
-    # Compter les fichiers
-    FILE_COUNT=$($FIND_CMD "$BACKUP_DIR" -type f | wc -l | tr -d ' ')
-    DIR_SIZE=$($DU_CMD -sh "$BACKUP_DIR" | cut -f1)
-
-    echo ""
-    log_ok "Backup complet créé:"
-    echo "    📁 $BACKUP_DIR"
-    echo "    📄 $FILE_COUNT fichiers"
-    echo "    💾 $DIR_SIZE"
-    echo ""
-    echo "    Pour restaurer: mv ./* ./removed/ && cp -r $BACKUP_DIR/* ./"
-else
-    log_warn "[DRY-RUN] Backup complet serait créé dans $BACKUP_DIR"
-fi
-
-# ============================================================
-# ÉTAPE 2: Arrêter les agents
-# ============================================================
-echo ""
-echo "─────────────────────────────────────────────"
-log_info "Étape 2/5: Arrêt des agents"
-echo ""
-
-if [ "$DRY_RUN" = false ]; then
-    ./scripts/infra.sh stop 2>/dev/null && log_ok "Infrastructure arrêtée" || true
-    pkill -f "agent.py" 2>/dev/null && log_ok "Processus agent.py arrêtés" || true
-else
-    log_warn "[DRY-RUN] Les agents seraient arrêtés"
-fi
-
-# ============================================================
-# ÉTAPE 3: Télécharger la nouvelle version
-# ============================================================
-echo ""
-echo "─────────────────────────────────────────────"
-log_info "Étape 3/5: Téléchargement de $BRANCH"
-echo ""
-
 TEMP_DIR=$(mktemp -d)
-log_info "Téléchargement dans $TEMP_DIR..."
+trap "rm -rf '$TEMP_DIR'" EXIT
 
-if [ "$DRY_RUN" = false ]; then
-    $GIT_CMD clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$TEMP_DIR"
-    log_ok "Téléchargement terminé"
-else
-    log_warn "[DRY-RUN] $GIT_CMD clone --depth 1 --branch $BRANCH $REPO_URL"
-fi
-
-# ============================================================
-# ÉTAPE 4: Mise à jour des fichiers framework UNIQUEMENT
-# ============================================================
-echo ""
-echo "─────────────────────────────────────────────"
-log_info "Étape 4/5: Mise à jour des fichiers framework"
+log_info "Téléchargement..."
+$GIT_CMD clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$TEMP_DIR" 2>&1 | tail -1
+log_ok "Téléchargé"
 echo ""
 
-log_info "Dossiers mis à jour:"
+# ============================================================
+# 2. Afficher ce qui va changer
+# ============================================================
+echo "─── Répertoires framework ───"
+echo ""
 for dir in "${FRAMEWORK_DIRS[@]}"; do
-    # Enlever le / final pour avoir le nom du dossier
-    dir_name="${dir%/}"
-    if [ -d "$TEMP_DIR/$dir_name" ]; then
-        if [ "$DRY_RUN" = false ]; then
-            # Créer le dossier destination s'il n'existe pas
-            mkdir -p "./$dir_name"
-            # Sync DANS le dossier (avec trailing slash) pour ne supprimer que le contenu du dossier
-            $RSYNC_CMD -av --delete "$TEMP_DIR/$dir_name/" "./$dir_name/" 2>&1 | grep -v "/$" | head -5 || true
+    if [ -d "$TEMP_DIR/$dir" ]; then
+        if [ -d "./$dir" ]; then
+            # Compter les fichiers modifiés
+            CHANGES=$($RSYNC_CMD -rn --delete "$TEMP_DIR/$dir/" "./$dir/" 2>/dev/null | grep -v "/$" | grep -v "^$" | grep -v "sending" | grep -v "total" | grep -v "sent " | wc -l | tr -d ' ')
+            if [ "$CHANGES" -gt 0 ]; then
+                printf "  ${YELLOW}↻${NC} %-20s %s fichiers modifiés\n" "$dir/" "$CHANGES"
+            else
+                printf "  ${GREEN}✓${NC} %-20s à jour\n" "$dir/"
+            fi
+        else
+            printf "  ${YELLOW}+${NC} %-20s nouveau\n" "$dir/"
         fi
-        log_ok "$dir_name/"
     fi
 done
 
 echo ""
-log_info "Fichiers mis à jour:"
+echo "─── Fichiers framework ───"
+echo ""
 for file in "${FRAMEWORK_FILES[@]}"; do
     if [ -f "$TEMP_DIR/$file" ]; then
-        if [ "$DRY_RUN" = false ]; then
-            cp "$TEMP_DIR/$file" "./"
+        if [ -f "./$file" ]; then
+            if ! diff -q "$TEMP_DIR/$file" "./$file" &>/dev/null; then
+                printf "  ${YELLOW}↻${NC} %s\n" "$file"
+            else
+                printf "  ${GREEN}✓${NC} %s (à jour)\n" "$file"
+            fi
+        else
+            printf "  ${YELLOW}+${NC} %s (nouveau)\n" "$file"
         fi
+    fi
+done
+
+echo ""
+echo "─── Préservés (pas touchés) ───"
+echo ""
+for dir in prompts pool-requests project sessions logs; do
+    [ -d "./$dir" ] && printf "  ✓ %s/\n" "$dir"
+done
+[ -f "./project-config.md" ] && printf "  ✓ project-config.md\n"
+echo ""
+
+# ============================================================
+# Dry-run: on s'arrête là
+# ============================================================
+if [ "$DRY_RUN" = true ]; then
+    log_warn "Dry-run terminé. Relancer sans --dry-run pour appliquer."
+    echo ""
+    exit 0
+fi
+
+# ============================================================
+# 3. Backup
+# ============================================================
+CURRENT_DIR=$(basename "$(pwd)")
+BACKUP_DIR="../${CURRENT_DIR}-backup-$(date +%Y%m%d-%H%M%S)"
+log_info "Backup dans $BACKUP_DIR..."
+mkdir -p "$BACKUP_DIR"
+$RSYNC_CMD -a --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' \
+         --exclude='logs/*.log' --exclude='sessions/*' ./ "$BACKUP_DIR/"
+log_ok "Backup créé"
+
+# ============================================================
+# 4. Arrêter les agents
+# ============================================================
+if [ -f "./scripts/infra.sh" ]; then
+    ./scripts/infra.sh stop 2>/dev/null && log_ok "Infrastructure arrêtée" || true
+elif [ -f "./scripts/stop.sh" ]; then
+    ./scripts/stop.sh 2>/dev/null || true
+fi
+pkill -f "agent.py" 2>/dev/null || true
+
+# ============================================================
+# 5. Appliquer la mise à jour
+# ============================================================
+log_info "Mise à jour..."
+
+for dir in "${FRAMEWORK_DIRS[@]}"; do
+    if [ -d "$TEMP_DIR/$dir" ]; then
+        mkdir -p "./$dir"
+        $RSYNC_CMD -a --delete "$TEMP_DIR/$dir/" "./$dir/"
+        log_ok "$dir/"
+    fi
+done
+
+for file in "${FRAMEWORK_FILES[@]}"; do
+    if [ -f "$TEMP_DIR/$file" ]; then
+        cp "$TEMP_DIR/$file" "./"
         log_ok "$file"
     fi
 done
 
 # ============================================================
-# ÉTAPE 5: Installation des dépendances
+# 6. Dépendances
 # ============================================================
-echo ""
-echo "─────────────────────────────────────────────"
-log_info "Étape 5/5: Installation des dépendances"
-echo ""
-
-if [ "$DRY_RUN" = false ]; then
-    $PIP_CMD install -q -r requirements.txt 2>/dev/null || \
-    $PIP_CMD install -q --break-system-packages -r requirements.txt 2>/dev/null
-    log_ok "Dépendances installées"
-else
-    log_warn "[DRY-RUN] $PIP_CMD install -r requirements.txt"
-fi
+log_info "Installation des dépendances..."
+$PIP_CMD install -q -r requirements.txt 2>/dev/null || \
+$PIP_CMD install -q --break-system-packages -r requirements.txt 2>/dev/null || true
+log_ok "Dépendances installées"
 
 # ============================================================
-# NETTOYAGE
-# ============================================================
-if [ "$DRY_RUN" = false ]; then
-    mkdir -p ./removed
-    mv "$TEMP_DIR" "./removed/temp-upgrade-$(date +%s)" 2>/dev/null || true
-fi
-
-# ============================================================
-# RÉSUMÉ
+# Résumé
 # ============================================================
 echo ""
 echo "╔════════════════════════════════════════════╗"
 echo "║            Mise à jour terminée            ║"
 echo "╚════════════════════════════════════════════╝"
 echo ""
-
-if [ "$DRY_RUN" = false ]; then
-    echo "Fichiers MIS À JOUR:"
-    echo "  ↻ core/                 (framework)"
-    echo "  ↻ scripts/              (framework)"
-    echo "  ↻ docs/                 (framework)"
-    echo "  ↻ requirements.txt      (dépendances)"
-    echo ""
-    echo "Fichiers PRÉSERVÉS:"
-    echo "  ✓ prompts/              (vos prompts)"
-    echo "  ✓ pool-requests/        (vos données)"
-    echo "  ✓ project/              (votre code)"
-    echo "  ✓ project-config.md     (votre config)"
-    echo ""
-    echo "Backup complet: $BACKUP_DIR"
-    echo ""
-    echo "⚠️  En cas de problème, restaurez avec:"
-    echo "    mv ./* ./removed/ && cp -r $BACKUP_DIR/* ./"
-    echo ""
-    echo "Prochaines étapes:"
-    echo "  1. Lire upgrades/ pour les actions spécifiques"
-    echo "  2. Lancer: ./scripts/agent.sh start all"
-else
-    echo "[DRY-RUN] Aucune modification effectuée"
-    echo "Relancez sans --dry-run pour appliquer"
-fi
+echo "  Backup: $BACKUP_DIR"
+echo "  Lancer: ./scripts/agent.sh start all"
 echo ""
