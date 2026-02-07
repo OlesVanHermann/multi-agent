@@ -14,6 +14,10 @@ BASE_DIR="$SCRIPT_DIR/.."
 BRIDGE_SCRIPT="$BASE_DIR/core/agent-bridge/agent.py"
 LOG_DIR="$BASE_DIR/logs"
 PROMPTS_DIR="$BASE_DIR/prompts"
+# Auto-detect MA_PREFIX from project-config.md if not set
+if [ -z "${MA_PREFIX:-}" ] && [ -f "$BASE_DIR/project-config.md" ]; then
+    MA_PREFIX=$(grep '^MA_PREFIX=' "$BASE_DIR/project-config.md" 2>/dev/null | cut -d= -f2 | tr -d ' ' || true)
+fi
 MA_PREFIX="${MA_PREFIX:-ma}"
 
 # Colors

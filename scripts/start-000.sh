@@ -14,6 +14,10 @@ BASE_DIR="$SCRIPT_DIR/.."
 BRIDGE_SCRIPT="$BASE_DIR/core/agent-bridge/agent.py"
 LOG_DIR="$BASE_DIR/logs/000"
 WEB_DIR="$BASE_DIR/web"
+# Auto-detect MA_PREFIX from project-config.md if not set
+if [ -z "${MA_PREFIX:-}" ] && [ -f "$BASE_DIR/project-config.md" ]; then
+    MA_PREFIX=$(grep '^MA_PREFIX=' "$BASE_DIR/project-config.md" 2>/dev/null | cut -d= -f2 | tr -d ' ' || true)
+fi
 MA_PREFIX="${MA_PREFIX:-ma}"
 SESSION_NAME="${MA_PREFIX}-agent-000"
 
@@ -47,9 +51,16 @@ if ! command -v docker &>/dev/null; then
     fi
 fi
 
+# Use sudo for docker if user not in docker group
+DOCKER="docker"
 if ! docker info &>/dev/null 2>&1; then
-    log_error "Docker is installed but not running. Start Docker Desktop (Mac) or 'sudo systemctl start docker' (Linux)."
-    exit 1
+    if sudo docker info &>/dev/null 2>&1; then
+        DOCKER="sudo docker"
+        log_warn "Using sudo for Docker (add user to docker group: sudo usermod -aG docker \$USER)"
+    else
+        log_error "Docker is installed but not running. Start Docker Desktop (Mac) or 'sudo systemctl start docker' (Linux)."
+        exit 1
+    fi
 fi
 log_ok "Docker ready"
 
@@ -58,10 +69,10 @@ log_info "Starting Redis..."
 if redis-cli ping &>/dev/null 2>&1; then
     log_ok "Redis already running"
 else
-    docker run -d --name ma-redis -p 127.0.0.1:6379:6379 \
+    $DOCKER run -d --name ma-redis -p 127.0.0.1:6379:6379 \
         -v ma-redis-data:/data --restart unless-stopped \
         redis:7-alpine redis-server --appendonly yes 2>/dev/null \
-        || docker start ma-redis 2>/dev/null || true
+        || $DOCKER start ma-redis 2>/dev/null || true
     sleep 2
     if redis-cli ping &>/dev/null 2>&1; then
         log_ok "Redis started (Docker)"
@@ -73,7 +84,7 @@ fi
 
 # === 3. Start Keycloak (Docker) ===
 log_info "Starting Keycloak..."
-if docker ps --format '{{.Names}}' | grep -q ma-keycloak; then
+if $DOCKER ps --format '{{.Names}}' | grep -q ma-keycloak; then
     log_ok "Keycloak already running"
 else
     REALM_FILE="$WEB_DIR/keycloak/realm-multi-agent.json"
@@ -81,14 +92,14 @@ else
     if [ -f "$REALM_FILE" ]; then
         REALM_MOUNT="-v $REALM_FILE:/opt/keycloak/data/import/realm-multi-agent.json:ro"
     fi
-    docker run -d --name ma-keycloak -p 127.0.0.1:8080:8080 \
+    $DOCKER run -d --name ma-keycloak -p 127.0.0.1:8080:8080 \
         -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin \
         -e KC_HEALTH_ENABLED=true \
         $REALM_MOUNT \
         -v ma-keycloak-data:/opt/keycloak/data \
         --restart unless-stopped \
         quay.io/keycloak/keycloak:23.0 start-dev --import-realm 2>/dev/null \
-        || docker start ma-keycloak 2>/dev/null || true
+        || $DOCKER start ma-keycloak 2>/dev/null || true
     log_ok "Keycloak starting on http://localhost:8080"
 fi
 

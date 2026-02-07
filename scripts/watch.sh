@@ -2,6 +2,12 @@
 # watch.sh - Écoute les réponses d'un agent via Redis Streams
 # Usage: ./watch.sh <agent_id>
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE_DIR="$SCRIPT_DIR/.."
+# Auto-detect MA_PREFIX from project-config.md if not set
+if [ -z "${MA_PREFIX:-}" ] && [ -f "$BASE_DIR/project-config.md" ]; then
+    MA_PREFIX=$(grep '^MA_PREFIX=' "$BASE_DIR/project-config.md" 2>/dev/null | cut -d= -f2 | tr -d ' ' || true)
+fi
 MA_PREFIX="${MA_PREFIX:-ma}"
 
 AGENT_ID=${1:-300}
