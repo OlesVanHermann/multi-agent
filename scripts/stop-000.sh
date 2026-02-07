@@ -12,7 +12,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$SCRIPT_DIR/.."
 LOG_DIR="$BASE_DIR/logs/000"
-SESSION_NAME="agent-000"
+MA_PREFIX="${MA_PREFIX:-ma}"
+SESSION_NAME="${MA_PREFIX}-agent-000"
 
 # Colors
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'

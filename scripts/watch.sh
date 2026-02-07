@@ -2,8 +2,10 @@
 # watch.sh - Écoute les réponses d'un agent via Redis Streams
 # Usage: ./watch.sh <agent_id>
 
+MA_PREFIX="${MA_PREFIX:-ma}"
+
 AGENT_ID=${1:-300}
-STREAM="ma:agent:${AGENT_ID}:outbox"
+STREAM="${MA_PREFIX}:agent:${AGENT_ID}:outbox"
 
 echo "Watching agent $AGENT_ID responses..."
 echo "Stream: $STREAM"

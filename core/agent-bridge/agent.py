@@ -37,6 +37,7 @@ BASE_DIR = Path(__file__).parent.parent.parent
 LOG_DIR = os.environ.get("LOG_DIR", str(BASE_DIR / "logs"))
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
+MA_PREFIX = os.environ.get("MA_PREFIX", "ma")
 
 MAX_HISTORY = 50
 RESPONSE_TIMEOUT = 300  # 5 min max wait for Claude response
@@ -54,7 +55,7 @@ class State(Enum):
 class TmuxAgent:
     def __init__(self, agent_id):
         self.agent_id = str(agent_id)
-        self.session_name = f"agent-{agent_id}"
+        self.session_name = f"{MA_PREFIX}-agent-{agent_id}"
         self.state = State.IDLE
         self.state_lock = Lock()
 
@@ -83,8 +84,8 @@ class TmuxAgent:
 
         # Redis
         self.redis = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
-        self.inbox = f"ma:agent:{agent_id}:inbox"
-        self.outbox = f"ma:agent:{agent_id}:outbox"
+        self.inbox = f"{MA_PREFIX}:agent:{agent_id}:inbox"
+        self.outbox = f"{MA_PREFIX}:agent:{agent_id}:outbox"
 
         try:
             self.redis.ping()
@@ -96,7 +97,7 @@ class TmuxAgent:
         self.last_output_lines = self._get_pane_line_count()
 
         # Legacy inbox (ma:inject:{id} format used by prompts)
-        self.legacy_inbox = f"ma:inject:{agent_id}"
+        self.legacy_inbox = f"{MA_PREFIX}:inject:{agent_id}"
 
         # Threads
         self.running = True
@@ -104,7 +105,6 @@ class TmuxAgent:
             Thread(target=self._listen_redis, daemon=True, name="redis_listener"),
             Thread(target=self._listen_legacy, daemon=True, name="legacy_listener"),
             Thread(target=self._process_queue, daemon=True, name="queue_processor"),
-            Thread(target=self._heartbeat, daemon=True, name="heartbeat"),
         ]
         for t in self.threads:
             t.start()
@@ -255,7 +255,7 @@ class TmuxAgent:
     def _set_redis_status(self):
         """Update status in Redis"""
         try:
-            self.redis.hset(f"ma:agent:{self.agent_id}", mapping={
+            self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", mapping={
                 "status": self.state.value,
                 "last_seen": int(time.time()),
                 "queue_size": self.prompt_queue.qsize(),
@@ -264,12 +264,6 @@ class TmuxAgent:
             })
         except redis.ConnectionError:
             pass
-
-    def _heartbeat(self):
-        """Thread: send heartbeat every 5 seconds"""
-        while self.running:
-            self._set_redis_status()
-            time.sleep(5)
 
     def _listen_redis(self):
         """Thread: listen to Redis inbox (Streams format)"""
@@ -400,7 +394,7 @@ class TmuxAgent:
                     MAX_CHUNK = 15000  # Redis can handle larger messages
 
                     if len(response) <= MAX_CHUNK:
-                        self.redis.xadd(f"ma:agent:{from_agent}:inbox", {
+                        self.redis.xadd(f"{MA_PREFIX}:agent:{from_agent}:inbox", {
                             'response': response,
                             'from_agent': self.agent_id,
                             'type': 'response',
@@ -411,7 +405,7 @@ class TmuxAgent:
                         # Split into chunks for very long responses
                         chunks = [response[i:i+MAX_CHUNK] for i in range(0, len(response), MAX_CHUNK)]
                         for i, chunk in enumerate(chunks):
-                            self.redis.xadd(f"ma:agent:{from_agent}:inbox", {
+                            self.redis.xadd(f"{MA_PREFIX}:agent:{from_agent}:inbox", {
                                 'response': chunk,
                                 'from_agent': self.agent_id,
                                 'type': 'response',
@@ -436,14 +430,14 @@ class TmuxAgent:
     def send_to_agent(self, to_agent, prompt):
         """Send message to another agent"""
         if to_agent == 'all':
-            agent_keys = self.redis.keys('ma:agent:*')
+            agent_keys = self.redis.keys(f'{MA_PREFIX}:agent:*')
             sent_count = 0
             for key in agent_keys:
                 parts = key.split(':')
                 if len(parts) == 3 and parts[2].isdigit():
                     target_id = parts[2]
                     if target_id != self.agent_id:
-                        self.redis.xadd(f"ma:agent:{target_id}:inbox", {
+                        self.redis.xadd(f"{MA_PREFIX}:agent:{target_id}:inbox", {
                             'prompt': prompt,
                             'from_agent': self.agent_id,
                             'timestamp': int(time.time())
@@ -451,7 +445,7 @@ class TmuxAgent:
                         sent_count += 1
             self._log(f"-> Broadcast to {sent_count} agents: {prompt[:60]}...")
         else:
-            self.redis.xadd(f"ma:agent:{to_agent}:inbox", {
+            self.redis.xadd(f"{MA_PREFIX}:agent:{to_agent}:inbox", {
                 'prompt': prompt,
                 'from_agent': self.agent_id,
                 'timestamp': int(time.time())
@@ -493,7 +487,7 @@ class TmuxAgent:
             self._log("Shutting down...")
         finally:
             self.running = False
-            self.redis.hset(f"ma:agent:{self.agent_id}", "status", "stopped")
+            self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", "status", "stopped")
             self.logfile.close()
 
     def _find_prompt_file(self):

@@ -14,7 +14,8 @@ BASE_DIR="$SCRIPT_DIR/.."
 BRIDGE_SCRIPT="$BASE_DIR/core/agent-bridge/agent.py"
 LOG_DIR="$BASE_DIR/logs/000"
 WEB_DIR="$BASE_DIR/web"
-SESSION_NAME="agent-000"
+MA_PREFIX="${MA_PREFIX:-ma}"
+SESSION_NAME="${MA_PREFIX}-agent-000"
 
 # Colors
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -96,7 +97,7 @@ else
     tmux split-window -t "$SESSION_NAME" -h -p 30
 
     # Pane 1: Bridge (monitors Redis, sends to Claude via tmux)
-    tmux send-keys -t "$SESSION_NAME.1" "cd '$BASE_DIR' && sleep 3 && python3 '$BRIDGE_SCRIPT' 000 2>&1 | tee -a '$LOG_DIR/bridge.log'" Enter
+    tmux send-keys -t "$SESSION_NAME.1" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX=$MA_PREFIX python3 '$BRIDGE_SCRIPT' 000 2>&1 | tee -a '$LOG_DIR/bridge.log'" Enter
 
     # Select pane 0 (Claude) as active
     tmux select-pane -t "$SESSION_NAME.0"

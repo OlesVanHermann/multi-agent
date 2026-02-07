@@ -32,11 +32,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+MA_PREFIX = os.environ.get("MA_PREFIX", "ma")
+
 # Streams to sync
 SYNC_STREAMS = [
-    "ma:tasks:global",      # Super-Master → Master
-    "ma:results:global",    # Results back
-    "ma:heartbeat",         # Health
+    f"{MA_PREFIX}:tasks:global",      # Super-Master → Master
+    f"{MA_PREFIX}:results:global",    # Results back
+    f"{MA_PREFIX}:heartbeat",         # Health
 ]
 
 

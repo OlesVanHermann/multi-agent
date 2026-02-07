@@ -59,6 +59,7 @@ KEYCLOAK_URL = os.environ.get("KEYCLOAK_URL", "http://localhost:8080")
 # Config
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
+MA_PREFIX = os.environ.get("MA_PREFIX", "ma")
 
 # Redis connection pool
 redis_pool: Optional[redis.Redis] = None
@@ -141,7 +142,7 @@ def _is_agent_working(agent_id: str) -> bool:
     """Check if Claude Code is actively working by looking for 'esc to interrupt' in tmux."""
     try:
         result = subprocess.run(
-            ["tmux", "capture-pane", "-t", f"agent-{agent_id}.0", "-p", "-S", "-5"],
+            ["tmux", "capture-pane", "-t", f"{MA_PREFIX}-agent-{agent_id}.0", "-p", "-S", "-5"],
             capture_output=True, text=True, timeout=2
         )
         if result.returncode == 0 and "esc to interrupt" in result.stdout:
@@ -165,8 +166,8 @@ async def list_agents():
         )
         if result.returncode == 0:
             for line in result.stdout.strip().split("\n"):
-                if line.startswith("agent-"):
-                    agent_id = line.replace("agent-", "")
+                if line.startswith(f"{MA_PREFIX}-agent-"):
+                    agent_id = line.replace(f"{MA_PREFIX}-agent-", "")
                     if agent_id.isdigit():
                         # Default: tmux session exists = agent is active
                         status = "active"
@@ -176,7 +177,7 @@ async def list_agents():
 
                         if redis_pool:
                             try:
-                                data = await redis_pool.hgetall(f"ma:agent:{agent_id}")
+                                data = await redis_pool.hgetall(f"{MA_PREFIX}:agent:{agent_id}")
                                 if data:
                                     hb_last_seen = int(data.get("last_seen", 0))
                                     queue_size = int(data.get("queue_size", 0))
@@ -221,7 +222,7 @@ async def get_agent(agent_id: str):
     if not redis_pool:
         raise HTTPException(status_code=503, detail="Redis not available")
 
-    key = f"ma:agent:{agent_id}"
+    key = f"{MA_PREFIX}:agent:{agent_id}"
     data = await redis_pool.hgetall(key)
 
     if not data:
@@ -310,7 +311,7 @@ def _extract_current_input(ansi_output: str) -> str:
 @app.post("/api/agent/{agent_id}/send")
 async def send_to_agent(agent_id: str, msg: SendMessage):
     """Send message to an agent via tmux send-keys (with Enter)"""
-    session_name = f"agent-{agent_id}"
+    session_name = f"{MA_PREFIX}-agent-{agent_id}"
     target = f"{session_name}.0"
 
     try:
@@ -341,7 +342,7 @@ async def send_to_agent(agent_id: str, msg: SendMessage):
 @app.post("/api/agent/{agent_id}/input")
 async def update_agent_input(agent_id: str, data: UpdateInput):
     """Update the current input line in tmux (co-editing)"""
-    session_name = f"agent-{agent_id}"
+    session_name = f"{MA_PREFIX}-agent-{agent_id}"
     target = f"{session_name}.0"
 
     try:
@@ -387,7 +388,7 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
 @app.get("/api/agent/{agent_id}/output")
 async def get_agent_output(agent_id: str, lines: int = 500):
     """Capture tmux pane output for an agent"""
-    session_name = f"agent-{agent_id}"
+    session_name = f"{MA_PREFIX}-agent-{agent_id}"
     target = f"{session_name}.0"
 
     try:
@@ -544,7 +545,7 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
     """WebSocket endpoint for real-time agent tmux output with input sync"""
     await websocket.accept()
 
-    session_name = f"agent-{agent_id}"
+    session_name = f"{MA_PREFIX}-agent-{agent_id}"
     target = f"{session_name}.0"
     last_output = ""
     last_input = ""
@@ -621,7 +622,7 @@ async def websocket_messages(websocket: WebSocket):
             cursor = 0
             streams = {}
             while True:
-                cursor, keys = await redis_pool.scan(cursor, match="ma:agent:*:outbox", count=100)
+                cursor, keys = await redis_pool.scan(cursor, match=f"{MA_PREFIX}:agent:*:outbox", count=100)
                 for key in keys:
                     stream_id = last_ids.get(key, "$")
                     streams[key] = stream_id
@@ -680,8 +681,8 @@ async def websocket_status(websocket: WebSocket):
                 )
                 if result.returncode == 0:
                     for line in result.stdout.strip().split("\n"):
-                        if line.startswith("agent-"):
-                            agent_id = line.replace("agent-", "")
+                        if line.startswith(f"{MA_PREFIX}-agent-"):
+                            agent_id = line.replace(f"{MA_PREFIX}-agent-", "")
                             if agent_id.isdigit():
                                 # Default: tmux exists = agent is active
                                 status = "active"
@@ -689,7 +690,7 @@ async def websocket_status(websocket: WebSocket):
 
                                 if redis_pool:
                                     try:
-                                        data = await redis_pool.hgetall(f"ma:agent:{agent_id}")
+                                        data = await redis_pool.hgetall(f"{MA_PREFIX}:agent:{agent_id}")
                                         if data:
                                             hb_last_seen = int(data.get("last_seen", 0))
                                             # Only trust heartbeat if fresh (< 15s)
