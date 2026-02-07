@@ -28,31 +28,58 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 mkdir -p "$LOG_DIR"
 
+# === Detect mode: Docker or Native ===
+USE_DOCKER=false
+if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+    USE_DOCKER=true
+fi
+
 # === 1. Start Redis ===
 log_info "Starting Redis..."
 if redis-cli ping &>/dev/null 2>&1; then
     log_ok "Redis already running"
+elif $USE_DOCKER; then
+    log_info "Starting Redis via Docker..."
+    docker run -d --name ma-redis -p 127.0.0.1:6379:6379 \
+        -v ma-redis-data:/data --restart unless-stopped \
+        redis:7-alpine redis-server --appendonly yes 2>/dev/null \
+        || docker start ma-redis 2>/dev/null || true
+    sleep 2
+    redis-cli ping &>/dev/null && log_ok "Redis started (Docker)" || log_error "Failed to start Redis"
+elif command -v brew &>/dev/null; then
+    brew services start redis 2>/dev/null || true
+    sleep 2
+    redis-cli ping &>/dev/null && log_ok "Redis started (brew)" || log_error "Failed to start Redis"
+elif command -v redis-server &>/dev/null; then
+    redis-server --daemonize yes --port 6379
+    sleep 1
+    redis-cli ping &>/dev/null && log_ok "Redis started (native)" || log_error "Failed to start Redis"
 else
-    if command -v brew &>/dev/null; then
-        brew services start redis 2>/dev/null || true
-        sleep 2
-    elif command -v redis-server &>/dev/null; then
-        redis-server --daemonize yes --port 6379
-        sleep 1
-    else
-        log_error "Redis not installed. Run: brew install redis"
-        exit 1
-    fi
-
-    if redis-cli ping &>/dev/null 2>&1; then
-        log_ok "Redis started"
-    else
-        log_error "Failed to start Redis"
-        exit 1
-    fi
+    log_error "Redis not installed. Install redis or docker."
+    exit 1
 fi
 
-# === 2. Start Web Dashboard ===
+# === 2. Start Keycloak (Docker only) ===
+if $USE_DOCKER && [ -f "$WEB_DIR/keycloak/realm-multi-agent.json" ]; then
+    log_info "Starting Keycloak..."
+    if docker ps --format '{{.Names}}' | grep -q ma-keycloak; then
+        log_ok "Keycloak already running"
+    else
+        docker run -d --name ma-keycloak -p 127.0.0.1:8080:8080 \
+            -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin \
+            -e KC_HEALTH_ENABLED=true \
+            -v "$WEB_DIR/keycloak/realm-multi-agent.json:/opt/keycloak/data/import/realm-multi-agent.json:ro" \
+            -v ma-keycloak-data:/opt/keycloak/data \
+            --restart unless-stopped \
+            quay.io/keycloak/keycloak:23.0 start-dev --import-realm 2>/dev/null \
+            || docker start ma-keycloak 2>/dev/null || true
+        log_ok "Keycloak starting on http://localhost:8080"
+    fi
+else
+    log_warn "Keycloak skipped (no Docker or no realm config)"
+fi
+
+# === 3. Start Web Dashboard ===
 log_info "Starting web dashboard..."
 if lsof -i :8000 &>/dev/null 2>&1; then
     log_ok "Dashboard already running on :8000"
@@ -65,7 +92,7 @@ else
 
     # Start uvicorn in background
     cd "$WEB_DIR/backend"
-    python3 -m uvicorn server:app --host 0.0.0.0 --port 8000 \
+    MA_PREFIX=$MA_PREFIX python3 -m uvicorn server:app --host 127.0.0.1 --port 8000 \
         >> "$LOG_DIR/dashboard.log" 2>&1 &
     DASHBOARD_PID=$!
     echo "$DASHBOARD_PID" > "$LOG_DIR/dashboard.pid"
