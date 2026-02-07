@@ -104,8 +104,17 @@ else
         pip3 install --break-system-packages -r "$WEB_DIR/backend/requirements.txt" 2>/dev/null
     fi
 
-    # Build frontend if needed
+    # Build frontend if missing or outdated (source newer than dist)
+    NEED_BUILD=false
     if [ ! -f "$WEB_DIR/frontend/dist/index.html" ]; then
+        NEED_BUILD=true
+    elif [ -f "$WEB_DIR/frontend/src/App.jsx" ]; then
+        # Rebuild if any source file is newer than dist
+        NEWEST_SRC=$(find "$WEB_DIR/frontend/src" -type f -newer "$WEB_DIR/frontend/dist/index.html" 2>/dev/null | head -1)
+        [ -n "$NEWEST_SRC" ] && NEED_BUILD=true
+    fi
+
+    if $NEED_BUILD; then
         if command -v npm &>/dev/null; then
             log_info "Building frontend..."
             cd "$WEB_DIR/frontend"

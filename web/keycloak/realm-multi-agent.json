@@ -82,16 +82,8 @@
       "directAccessGrantsEnabled": true,
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
-      "redirectUris": [
-        "http://localhost/*",
-        "http://localhost:3000/*",
-        "http://127.0.0.1/*"
-      ],
-      "webOrigins": [
-        "http://localhost",
-        "http://localhost:3000",
-        "http://127.0.0.1"
-      ],
+      "redirectUris": ["*"],
+      "webOrigins": ["*"],
       "defaultClientScopes": [
         "web-origins",
         "profile",
