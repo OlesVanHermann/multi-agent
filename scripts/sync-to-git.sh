@@ -6,8 +6,8 @@
 #        ./sync-to-git.sh "fix-timeout" --dry-run
 #
 # Setup (once per Mac):
-#   git clone git@github.com:OlesVanHermann/multi-agent.git /path/to/multi-agent-git
-#   git -C /path/to/multi-agent-git remote add hub ubuntu@mx9.di2amp.com:/home/ubuntu/multi-agent.git
+#   git clone https://github.com/OlesVanHermann/multi-agent.git ~/multi-agent-git
+#   cd ~/multi-agent-git && git remote add hub ubuntu@mx9.di2amp.com:/home/ubuntu/multi-agent.git
 #
 # Config: set these env vars or edit defaults below
 
@@ -68,66 +68,68 @@ fi
 
 if [ ! -d "$MA_GIT/.git" ]; then
     echo -e "${RED}Error: $MA_GIT is not a git repository${NC}"
-    echo "Run: git clone git@github.com:OlesVanHermann/multi-agent.git $MA_GIT"
+    echo "Run: git clone https://github.com/OlesVanHermann/multi-agent.git $MA_GIT"
     exit 1
 fi
 
-# === FRAMEWORK FILES TO SYNC ===
-# These are the framework files (not project-specific)
-INCLUDES=(
-    "core/"
-    "scripts/"
-    "docs/"
-    "tests/"
-    "web/"
-    "upgrades/"
-    "infrastructure/"
-    "templates/"
-    "examples/"
-    "requirements.txt"
-    "CLAUDE.md"
-    "README.md"
-)
+# === SYNC FRAMEWORK DIRS ===
+# Sync each framework directory individually (no --delete to preserve git-only files)
+FRAMEWORK_DIRS=(core scripts web docs tests upgrades infrastructure templates examples)
+FRAMEWORK_FILES=(requirements.txt CLAUDE.md README.md)
 
-# === SYNC ===
-echo -e "${CYAN}[1/4] Syncing framework files...${NC}"
-
-RSYNC_ARGS=(
-    -av
-    --delete
-    --checksum
-)
-
-# Build include/exclude for rsync
-for inc in "${INCLUDES[@]}"; do
-    RSYNC_ARGS+=(--include="$inc" --include="${inc}**")
-done
-
-# Exclude everything else at root level
-RSYNC_ARGS+=(
-    --exclude="prompts/"
-    --exclude="pool-requests/"
-    --exclude="project/"
-    --exclude="project-config.md"
-    --exclude="logs/"
-    --exclude="sessions/"
-    --exclude="removed/"
+# Global excludes (junk that should never be synced)
+EXCLUDES=(
     --exclude=".git/"
     --exclude="__pycache__/"
     --exclude=".pytest_cache/"
     --exclude="*.pyc"
+    --exclude=".DS_Store"
+    --exclude=".venv/"
+    --exclude="node_modules/"
+    --exclude="dump.rdb"
     --exclude=".claude/"
 )
 
+echo -e "${CYAN}[1/4] Syncing framework files...${NC}"
+
 if $DRY_RUN; then
     echo -e "${YELLOW}[DRY RUN] Would sync:${NC}"
-    rsync "${RSYNC_ARGS[@]}" --dry-run "$MA_SRC/" "$MA_GIT/" 2>&1 | grep -v '/$' | head -40
+    echo ""
+    for dir in "${FRAMEWORK_DIRS[@]}"; do
+        if [ -d "$MA_SRC/$dir" ]; then
+            changes=$(rsync -avc --dry-run "${EXCLUDES[@]}" "$MA_SRC/$dir/" "$MA_GIT/$dir/" 2>&1 | grep -v '/$' | grep -v 'building\|sent\|total' | head -20)
+            if [ -n "$changes" ]; then
+                echo "  $dir/:"
+                echo "$changes" | sed 's/^/    /'
+            fi
+        fi
+    done
+    for f in "${FRAMEWORK_FILES[@]}"; do
+        if [ -f "$MA_SRC/$f" ]; then
+            if ! cmp -s "$MA_SRC/$f" "$MA_GIT/$f" 2>/dev/null; then
+                echo "  $f (modified)"
+            fi
+        fi
+    done
     echo ""
     echo -e "${YELLOW}[DRY RUN] Would create branch: $BRANCH${NC}"
     exit 0
 fi
 
-rsync "${RSYNC_ARGS[@]}" "$MA_SRC/" "$MA_GIT/" 2>&1 | tail -5
+# Sync directories
+for dir in "${FRAMEWORK_DIRS[@]}"; do
+    if [ -d "$MA_SRC/$dir" ]; then
+        mkdir -p "$MA_GIT/$dir"
+        rsync -avc "${EXCLUDES[@]}" "$MA_SRC/$dir/" "$MA_GIT/$dir/" 2>&1 | grep -v '/$' | grep -v 'building\|sent\|total'
+    fi
+done
+
+# Sync individual files
+for f in "${FRAMEWORK_FILES[@]}"; do
+    if [ -f "$MA_SRC/$f" ]; then
+        cp -v "$MA_SRC/$f" "$MA_GIT/$f" 2>&1
+    fi
+done
 echo ""
 
 # === GIT ===
