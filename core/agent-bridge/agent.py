@@ -79,7 +79,7 @@ class TmuxAgent:
         # Verify tmux session exists
         if not self._tmux_session_exists():
             self._log(f"ERROR: tmux session '{self.session_name}' not found!")
-            self._log("Start Claude first with: ./scripts/start.sh " + agent_id)
+            self._log("Start Claude first with: ./scripts/agent.sh start " + agent_id)
             sys.exit(1)
 
         # Redis

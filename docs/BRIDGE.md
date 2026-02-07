@@ -91,14 +91,14 @@ python core/agent-bridge/agent.py 300 --headless
 ### Lancer plusieurs agents
 
 ```bash
-# Agents 300-309 en tmux
-./scripts/start.sh 300 310
+# Agents spécifiques
+./scripts/agent.sh start 300 310
 
 # Tous les agents configurés
-./scripts/start.sh all
+./scripts/agent.sh start all
 
 # Arrêter
-./scripts/stop.sh
+./scripts/agent.sh stop all
 ```
 
 ## Communication Redis
@@ -298,8 +298,8 @@ Forcer une nouvelle session :
 /newsession
 
 # Ou redémarrer l'agent
-./scripts/stop.sh 300 301
-./scripts/start.sh 300
+./scripts/agent.sh stop 300
+./scripts/agent.sh start 300
 ```
 
 ---

@@ -140,7 +140,7 @@ log_info "Étape 2/5: Arrêt des agents"
 echo ""
 
 if [ "$DRY_RUN" = false ]; then
-    ./scripts/stop.sh 2>/dev/null && log_ok "Agents bridge arrêtés" || true
+    ./scripts/infra.sh stop 2>/dev/null && log_ok "Infrastructure arrêtée" || true
     pkill -f "agent.py" 2>/dev/null && log_ok "Processus agent.py arrêtés" || true
 else
     log_warn "[DRY-RUN] Les agents seraient arrêtés"
@@ -207,7 +207,8 @@ log_info "Étape 5/5: Installation des dépendances"
 echo ""
 
 if [ "$DRY_RUN" = false ]; then
-    $PIP_CMD install -q -r requirements.txt
+    $PIP_CMD install -q -r requirements.txt 2>/dev/null || \
+    $PIP_CMD install -q --break-system-packages -r requirements.txt 2>/dev/null
     log_ok "Dépendances installées"
 else
     log_warn "[DRY-RUN] $PIP_CMD install -r requirements.txt"
@@ -250,7 +251,7 @@ if [ "$DRY_RUN" = false ]; then
     echo ""
     echo "Prochaines étapes:"
     echo "  1. Lire upgrades/ pour les actions spécifiques"
-    echo "  2. Lancer: ./scripts/start.sh all"
+    echo "  2. Lancer: ./scripts/agent.sh start all"
 else
     echo "[DRY-RUN] Aucune modification effectuée"
     echo "Relancez sans --dry-run pour appliquer"

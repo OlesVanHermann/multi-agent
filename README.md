@@ -70,11 +70,14 @@ echo "test" | claude --print -
 ### 4. Lancer les agents
 
 ```bash
-# Tous les agents préconfigurés
-./scripts/start.sh all
+# Tout lancer (infra + agents)
+./scripts/agent.sh start all
 
-# Ou un agent spécifique (interactif)
-./scripts/start.sh 300
+# Ou un agent spécifique
+./scripts/agent.sh start 300
+
+# Infra seule (Docker, Redis, Keycloak, Dashboard, Agent 000)
+./scripts/infra.sh start
 ```
 
 ## Mise à jour (Upgrade)
@@ -119,7 +122,7 @@ Si vous utilisez plusieurs profils Claude :
 
 ```bash
 export CLAUDE_CONFIG_DIR=~/.claude-profiles/mon-profil
-./scripts/start.sh all
+./scripts/agent.sh start all
 ```
 
 ## Utilisation
@@ -139,8 +142,8 @@ python3 core/agent-bridge/healthcheck.py
 # Monitor temps réel
 python3 scripts/monitor.py
 
-# Arrêter tous les agents
-./scripts/stop.sh
+# Tout arrêter (agents + infra)
+./scripts/infra.sh stop
 ```
 
 ### Commandes interactives (mode non-headless)
@@ -167,8 +170,8 @@ multi-agent/
 │   └── dashboard/           # Web dashboard
 │
 ├── scripts/
-│   ├── start.sh             # Démarrer agents
-│   ├── stop.sh              # Arrêter agents
+│   ├── infra.sh             # start/stop infrastructure + Agent 000
+│   ├── agent.sh             # start/stop agents workers
 │   ├── send.sh              # Envoyer message
 │   ├── watch.sh             # Voir logs
 │   └── monitor.py           # Monitoring
@@ -189,7 +192,7 @@ multi-agent/
 
 1. Copier un prompt existant dans `prompts/`
 2. Modifier l'ID et les instructions
-3. Ajouter au tableau `AGENTS` dans `scripts/start.sh`
+3. Lancer avec `./scripts/agent.sh start <id>`
 
 ### Configurer pour votre projet
 
@@ -266,9 +269,9 @@ export CLAUDE_CONFIG_DIR=~/.claude-profiles/votre-profil
 ### Redémarrer proprement
 
 ```bash
-./scripts/stop.sh
+./scripts/infra.sh stop
 redis-cli FLUSHDB
-./scripts/start.sh all
+./scripts/agent.sh start all
 ```
 
 ## Contribuer

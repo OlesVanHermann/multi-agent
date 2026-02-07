@@ -25,7 +25,7 @@ Ce système permet de faire tourner jusqu'à **1000 agents** en parallèle avec 
 │                                                                  │
 │  000 ARCHITECT ──────────────────────────────────────────────── │
 │  │ Point d'entrée, configure le système, modifie les prompts    │
-│  │ Démarrage isolé: ./scripts/start-000.sh                      │
+│  │ Démarrage: ./scripts/infra.sh start                            │
 │  └────────────────────────────────────────────────────────────  │
 │                              │                                   │
 │                              ▼                                   │
@@ -73,36 +73,22 @@ ssh user@machine
 cd /chemin/multi-agent
 ```
 
-### 2. Setup infrastructure
+### 2. Lancer tout (infrastructure + agents)
 
 ```bash
-cd infrastructure
-./setup.sh
-# Démarre Redis via Docker
-```
-
-### 3. Lancer l'Architect (000) + Infrastructure
-
-```bash
-./scripts/start-000.sh
+./scripts/agent.sh start all
 ```
 
 Ce script démarre automatiquement :
-1. Redis
+1. Docker, Redis, Keycloak (via `infra.sh`)
 2. Le web dashboard (http://localhost:8000)
-3. La session tmux `agent-000` avec Claude + bridge
+3. L'agent 000 (Architect) avec Claude + bridge
+4. Tous les agents définis dans `prompts/`
 
-L'Architect va ensuite :
-1. Te demander quel projet configurer
-2. Lire les exemples dans `examples/`
-3. Créer les prompts dev (3XX) adaptés
-4. Créer les inventaires
-5. Générer `project-config.md`
-
-### 4. Lancer les agents
+Pour lancer uniquement l'infrastructure + Architect :
 
 ```bash
-./scripts/start.sh all
+./scripts/infra.sh start
 ```
 
 ---
@@ -138,10 +124,8 @@ multi-agent/
 │   └── pool-requests/
 │
 ├── scripts/                     # Scripts d'orchestration
-│   ├── start-000.sh             # Démarrer Architect + infra
-│   ├── stop-000.sh              # Arrêter Architect + infra
-│   ├── start.sh                 # Démarrer agents (sauf 000)
-│   ├── stop.sh                  # Arrêter agents (sauf 000)
+│   ├── infra.sh                 # start/stop infrastructure + Agent 000
+│   ├── agent.sh                 # start/stop agents workers
 │   ├── send.sh                  # Envoyer message
 │   ├── watch.sh                 # Voir logs
 │   └── monitor.py               # Monitoring
@@ -446,15 +430,15 @@ Pour les projets qui utilisent multi-agent et qui tournent déjà :
 ```bash
 # === SUR LA MACHINE DU PROJET ===
 
-# 1. Stopper les agents (jamais le 000)
-./scripts/stop.sh
+# 1. Tout arrêter
+./scripts/infra.sh stop
 
 # 2. Pull les dernières modifications
 cd /chemin/vers/multi-agent
 git pull origin main
 
-# 3. Redémarrer les agents
-./scripts/start.sh all
+# 3. Tout relancer
+./scripts/agent.sh start all
 
 # 4. Vérifier
 tmux ls | grep agent
@@ -467,9 +451,9 @@ python3 scripts/monitor.py
 curl -o core/agent-bridge/agent.py \
   https://raw.githubusercontent.com/USER/multi-agent/main/core/agent-bridge/agent.py
 
-# Redémarrer les bridges concernés
-./scripts/stop.sh
-./scripts/start.sh all
+# Redémarrer
+./scripts/infra.sh stop
+./scripts/agent.sh start all
 ```
 
 ---

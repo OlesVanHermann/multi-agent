@@ -71,7 +71,7 @@ echo "Backup: $BACKUP_DIR"
 ### Étape 3: Arrêter les agents
 
 ```bash
-./scripts/stop.sh 2>/dev/null || true
+./scripts/infra.sh stop 2>/dev/null || true
 tmux kill-server 2>/dev/null || true
 ```
 
@@ -110,7 +110,7 @@ pip install -r requirements.txt
 
 ```bash
 python3 core/agent-bridge/healthcheck.py
-./scripts/start.sh all
+./scripts/agent.sh start all
 ```
 
 ---
@@ -136,7 +136,7 @@ cp project-config.md $BACKUP_DIR/ 2>/dev/null || true
 echo "Backup: $BACKUP_DIR"
 
 # Stop agents
-./scripts/stop.sh 2>/dev/null || true
+./scripts/infra.sh stop 2>/dev/null || true
 
 # Download & update framework only
 TEMP_DIR=$(mktemp -d)
