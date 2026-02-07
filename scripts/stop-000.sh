@@ -43,19 +43,19 @@ fi
 pkill -f "uvicorn server:app" 2>/dev/null && log_ok "Killed uvicorn processes" || true
 
 # === 3. Stop Keycloak (Docker) ===
+log_info "Stopping Keycloak..."
 if docker ps --format '{{.Names}}' 2>/dev/null | grep -q ma-keycloak; then
-    log_info "Stopping Keycloak..."
-    docker stop ma-keycloak 2>/dev/null && log_ok "Keycloak stopped" || true
+    docker stop ma-keycloak 2>/dev/null && log_ok "Keycloak stopped"
+else
+    log_warn "Keycloak not running"
 fi
 
-# === 4. Stop Redis ===
+# === 4. Stop Redis (Docker) ===
 log_info "Stopping Redis..."
 if docker ps --format '{{.Names}}' 2>/dev/null | grep -q ma-redis; then
-    docker stop ma-redis 2>/dev/null && log_ok "Redis stopped (Docker)" || true
-elif command -v brew &>/dev/null; then
-    brew services stop redis 2>/dev/null && log_ok "Redis stopped (brew)" || true
+    docker stop ma-redis 2>/dev/null && log_ok "Redis stopped"
 else
-    redis-cli shutdown 2>/dev/null && log_ok "Redis stopped" || true
+    log_warn "Redis container not running"
 fi
 
 echo ""

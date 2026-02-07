@@ -28,55 +28,68 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 mkdir -p "$LOG_DIR"
 
-# === Detect mode: Docker or Native ===
-USE_DOCKER=false
-if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
-    USE_DOCKER=true
+# === 1. Ensure Docker is available ===
+log_info "Checking Docker..."
+if ! command -v docker &>/dev/null; then
+    log_info "Docker not found. Installing..."
+    if command -v brew &>/dev/null; then
+        brew install --cask docker
+        log_info "Docker Desktop installed. Please launch it from Applications, then re-run this script."
+        exit 1
+    elif command -v apt-get &>/dev/null; then
+        sudo apt-get update -qq && sudo apt-get install -y -qq docker.io docker-compose-plugin
+        sudo systemctl start docker
+        sudo usermod -aG docker "$USER"
+        log_ok "Docker installed"
+    else
+        log_error "Cannot install Docker automatically. Install Docker manually."
+        exit 1
+    fi
 fi
 
-# === 1. Start Redis ===
+if ! docker info &>/dev/null 2>&1; then
+    log_error "Docker is installed but not running. Start Docker Desktop (Mac) or 'sudo systemctl start docker' (Linux)."
+    exit 1
+fi
+log_ok "Docker ready"
+
+# === 2. Start Redis (Docker) ===
 log_info "Starting Redis..."
 if redis-cli ping &>/dev/null 2>&1; then
     log_ok "Redis already running"
-elif $USE_DOCKER; then
-    log_info "Starting Redis via Docker..."
+else
     docker run -d --name ma-redis -p 127.0.0.1:6379:6379 \
         -v ma-redis-data:/data --restart unless-stopped \
         redis:7-alpine redis-server --appendonly yes 2>/dev/null \
         || docker start ma-redis 2>/dev/null || true
     sleep 2
-    redis-cli ping &>/dev/null && log_ok "Redis started (Docker)" || log_error "Failed to start Redis"
-elif command -v brew &>/dev/null; then
-    brew services start redis 2>/dev/null || true
-    sleep 2
-    redis-cli ping &>/dev/null && log_ok "Redis started (brew)" || log_error "Failed to start Redis"
-elif command -v redis-server &>/dev/null; then
-    redis-server --daemonize yes --port 6379
-    sleep 1
-    redis-cli ping &>/dev/null && log_ok "Redis started (native)" || log_error "Failed to start Redis"
-else
-    log_error "Redis not installed. Install redis or docker."
-    exit 1
+    if redis-cli ping &>/dev/null 2>&1; then
+        log_ok "Redis started (Docker)"
+    else
+        log_error "Failed to start Redis"
+        exit 1
+    fi
 fi
 
-# === 2. Start Keycloak (Docker only) ===
-if $USE_DOCKER && [ -f "$WEB_DIR/keycloak/realm-multi-agent.json" ]; then
-    log_info "Starting Keycloak..."
-    if docker ps --format '{{.Names}}' | grep -q ma-keycloak; then
-        log_ok "Keycloak already running"
-    else
-        docker run -d --name ma-keycloak -p 127.0.0.1:8080:8080 \
-            -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin \
-            -e KC_HEALTH_ENABLED=true \
-            -v "$WEB_DIR/keycloak/realm-multi-agent.json:/opt/keycloak/data/import/realm-multi-agent.json:ro" \
-            -v ma-keycloak-data:/opt/keycloak/data \
-            --restart unless-stopped \
-            quay.io/keycloak/keycloak:23.0 start-dev --import-realm 2>/dev/null \
-            || docker start ma-keycloak 2>/dev/null || true
-        log_ok "Keycloak starting on http://localhost:8080"
-    fi
+# === 3. Start Keycloak (Docker) ===
+log_info "Starting Keycloak..."
+if docker ps --format '{{.Names}}' | grep -q ma-keycloak; then
+    log_ok "Keycloak already running"
 else
-    log_warn "Keycloak skipped (no Docker or no realm config)"
+    REALM_FILE="$WEB_DIR/keycloak/realm-multi-agent.json"
+    REALM_MOUNT=""
+    if [ -f "$REALM_FILE" ]; then
+        REALM_MOUNT="-v $REALM_FILE:/opt/keycloak/data/import/realm-multi-agent.json:ro"
+    fi
+    docker run -d --name ma-keycloak -p 127.0.0.1:8080:8080 \
+        -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin \
+        -e KC_HEALTH_ENABLED=true \
+        $REALM_MOUNT \
+        -v ma-keycloak-data:/opt/keycloak/data \
+        --restart unless-stopped \
+        quay.io/keycloak/keycloak:23.0 start-dev --import-realm 2>/dev/null \
+        || docker start ma-keycloak 2>/dev/null || true
+    log_ok "Keycloak starting on http://localhost:8080"
 fi
 
 # === 3. Start Web Dashboard ===
