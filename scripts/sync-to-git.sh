@@ -37,6 +37,9 @@ DRY_RUN=false
 [[ "${2:-}" == "--dry-run" || "${1:-}" == "--dry-run" ]] && DRY_RUN=true
 [[ "${1:-}" == "--dry-run" ]] && DESCRIPTION=""
 
+# Sanitize description for git branch name (spaces → hyphens, lowercase)
+DESCRIPTION=$(echo "$DESCRIPTION" | tr ' ' '-' | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9._-')
+
 if [ -z "$DESCRIPTION" ]; then
     echo "Usage: $0 <description> [--dry-run]"
     echo ""
@@ -88,6 +91,8 @@ EXCLUDES=(
     --exclude="node_modules/"
     --exclude="dump.rdb"
     --exclude=".claude/"
+    --exclude="keycloak*/"
+    --exclude="*.jar"
 )
 
 echo -e "${CYAN}[1/4] Syncing framework files...${NC}"
