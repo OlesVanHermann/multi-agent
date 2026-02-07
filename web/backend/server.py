@@ -25,27 +25,22 @@ import hmac
 import redis.asyncio as redis
 import httpx
 
-# Simple auth users (used when Keycloak is not available)
-SIMPLE_AUTH_USERS = {
-    "octave": {
-        "password": "changeme",
-        "email": "octave@multi-agent.local",
-        "name": "Octave Admin",
-        "roles": ["admin"]
-    },
-    "operator": {
-        "password": "operator123",
-        "email": "operator@multi-agent.local",
-        "name": "Operator User",
-        "roles": ["operator"]
-    },
-    "viewer": {
-        "password": "viewer123",
-        "email": "viewer@multi-agent.local",
-        "name": "Viewer User",
-        "roles": ["viewer"]
-    },
-}
+# Simple auth fallback (only used when Keycloak is unavailable)
+# Empty by default — all auth goes through Keycloak
+# For local dev without Keycloak, set SIMPLE_AUTH env var:
+#   SIMPLE_AUTH="user:pass:admin" python3 -m uvicorn server:app ...
+SIMPLE_AUTH_USERS = {}
+_simple_auth = os.environ.get("SIMPLE_AUTH", "")
+if _simple_auth:
+    for entry in _simple_auth.split(","):
+        parts = entry.strip().split(":")
+        if len(parts) >= 2:
+            SIMPLE_AUTH_USERS[parts[0]] = {
+                "password": parts[1],
+                "email": f"{parts[0]}@multi-agent.local",
+                "name": parts[0].capitalize(),
+                "roles": [parts[2]] if len(parts) > 2 else ["viewer"]
+            }
 
 # Secret for signing simple tokens
 _TOKEN_SECRET = hashlib.sha256(b"multi-agent-local-dev").hexdigest()
