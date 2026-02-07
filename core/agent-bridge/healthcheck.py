@@ -15,6 +15,7 @@ import argparse
 
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
+MA_PREFIX = os.environ.get("MA_PREFIX", "ma")
 
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 
@@ -23,7 +24,7 @@ def check_agents():
     """Liste et vérifie tous les agents"""
     agents = {}
 
-    for key in r.keys("ma:agent:*"):
+    for key in r.keys(f"{MA_PREFIX}:agent:*"):
         # Filtrer pour avoir seulement ma:agent:XXX (pas inbox/outbox)
         parts = key.split(':')
         if len(parts) == 3:  # ma:agent:XXX
@@ -94,7 +95,7 @@ def check_streams():
     print("Redis Streams Status")
     print("-" * 80)
 
-    for key in sorted(r.keys("ma:agent:*:inbox") + r.keys("ma:agent:*:outbox")):
+    for key in sorted(r.keys(f"{MA_PREFIX}:agent:*:inbox") + r.keys(f"{MA_PREFIX}:agent:*:outbox")):
         try:
             info = r.xinfo_stream(key)
             length = info.get('length', 0)

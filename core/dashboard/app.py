@@ -25,6 +25,7 @@ import redis
 app = FastAPI(title="Multi-Agent")
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379")
+MA_PREFIX = os.environ.get("MA_PREFIX", "ma")
 
 def get_redis():
     if "://" in REDIS_URL:
@@ -544,13 +545,13 @@ async def dashboard():
 @app.get("/api/agents")
 async def get_agents():
     r = get_redis()
-    return r.hgetall("ma:agents")
+    return r.hgetall(f"{MA_PREFIX}:agents")
 
 
 @app.get("/api/conversation/{agent_id}")
 async def get_conversation(agent_id: str, limit: int = 50):
     r = get_redis()
-    messages = r.xrevrange(f"ma:conversation:{agent_id}", count=limit)
+    messages = r.xrevrange(f"{MA_PREFIX}:conversation:{agent_id}", count=limit)
     return [{"id": m[0], "role": m[1].get("role",""), "content": m[1].get("content",""), "timestamp": m[1].get("timestamp","")} for m in reversed(messages)]
 
 
@@ -558,7 +559,7 @@ async def get_conversation(agent_id: str, limit: int = 50):
 async def inject_message(agent_id: str, payload: dict):
     r = get_redis()
     if msg := payload.get("message"):
-        r.rpush(f"ma:inject:{agent_id}", msg)
+        r.rpush(f"{MA_PREFIX}:inject:{agent_id}", msg)
     return {"ok": True}
 
 
@@ -567,7 +568,7 @@ async def ws_conversation(websocket: WebSocket, agent_id: str):
     await websocket.accept()
     r = get_redis()
     pubsub = r.pubsub()
-    pubsub.subscribe(f"ma:conversation:{agent_id}:live")
+    pubsub.subscribe(f"{MA_PREFIX}:conversation:{agent_id}:live")
     try:
         while True:
             if msg := pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0):

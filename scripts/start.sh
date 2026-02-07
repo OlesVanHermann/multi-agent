@@ -10,10 +10,11 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BASE_DIR="$SCRIPT_DIR/../.."
+BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BRIDGE_SCRIPT="$BASE_DIR/core/agent-bridge/agent.py"
 LOG_DIR="$BASE_DIR/logs"
 PROMPTS_DIR="$BASE_DIR/prompts"
+MA_PREFIX="${MA_PREFIX:-ma}"
 
 # Colors
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -41,7 +42,7 @@ ensure_redis() {
 
 start_single_agent() {
     local agent_id=$1
-    local SESSION_NAME="agent-$agent_id"
+    local SESSION_NAME="${MA_PREFIX}-agent-$agent_id"
 
     # Check if session exists
     if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
@@ -51,7 +52,7 @@ start_single_agent() {
 
     # NEVER start 9XX Architects automatically - they must be started manually
     if [[ "$agent_id" =~ ^9[0-9][0-9]$ ]]; then
-        log_warn "Skipping Architect $agent_id (start manually with: tmux new -s agent-$agent_id 'claude')"
+        log_warn "Skipping Architect $agent_id (start manually with: tmux new -s ${MA_PREFIX}-agent-$agent_id 'claude')"
         return
     fi
 
@@ -69,10 +70,10 @@ start_single_agent() {
     sleep 2
 
     # Split window horizontally - Pane 1: Bridge process
-    tmux split-window -t "$SESSION_NAME" -h -p 30
+    tmux split-window -t "$SESSION_NAME" -h -l 60
 
     # Pane 1: Bridge (monitors Redis, sends to Claude via tmux)
-    tmux send-keys -t "$SESSION_NAME.1" "cd '$BASE_DIR' && sleep 3 && python3 '$BRIDGE_SCRIPT' $agent_id 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
+    tmux send-keys -t "$SESSION_NAME.1" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX=$MA_PREFIX python3 '$BRIDGE_SCRIPT' $agent_id 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
 
     # Select pane 0 (Claude) as active
     tmux select-pane -t "$SESSION_NAME.0"
@@ -100,8 +101,8 @@ start_all() {
     echo ""
     log_ok "Started $count agents"
     echo ""
-    echo "  List sessions: tmux ls | grep agent"
-    echo "  Attach: tmux attach -t agent-300"
+    echo "  List sessions: tmux ls | grep ${MA_PREFIX}-agent"
+    echo "  Attach: tmux attach -t ${MA_PREFIX}-agent-300"
     echo "  Monitor: python3 scripts/monitor.py"
 }
 
@@ -137,7 +138,7 @@ case "$1" in
             start_single_agent "$agent_id"
         done
         echo ""
-        echo "  Attach: tmux attach -t agent-<id>"
+        echo "  Attach: tmux attach -t ${MA_PREFIX}-agent-<id>"
         echo "  Monitor: python3 scripts/monitor.py"
         ;;
 esac
