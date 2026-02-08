@@ -51,54 +51,60 @@ do_start() {
     log_info "Starting proxy $LISTEN_HOST:$LISTEN_PORT → $BACKEND_HOST:$BACKEND_PORT..."
 
     # Write proxy script to a temp file (avoids quoting issues)
+    # TCP-level proxy: forwards raw bytes bidirectionally
+    # Supports HTTP, WebSocket, and any protocol transparently
     PROXY_PY="$LOG_DIR/.proxy.py"
     cat > "$PROXY_PY" << 'PYEOF'
-import http.server, http.client, socketserver, sys, signal
+import socket, threading, sys, signal, selectors
 
 BACKEND = (sys.argv[1], int(sys.argv[2]))
 LISTEN  = (sys.argv[3], int(sys.argv[4]))
 
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
-class Proxy(http.server.BaseHTTPRequestHandler):
-    def do_proxy(self):
-        try:
-            conn = http.client.HTTPConnection(*BACKEND, timeout=60)
-            length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(length) if length > 0 else None
-            hdrs = {k: v for k, v in self.headers.items() if k.lower() != "host"}
-            hdrs["Host"] = f"{BACKEND[0]}:{BACKEND[1]}"
-            hdrs["X-Forwarded-For"] = self.client_address[0]
-            conn.request(self.command, self.path, body=body, headers=hdrs)
-            resp = conn.getresponse()
-            self.send_response(resp.status)
-            for k, v in resp.getheaders():
-                if k.lower() not in ("transfer-encoding",):
-                    self.send_header(k, v)
-            self.end_headers()
-            while True:
-                chunk = resp.read(65536)
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
-            conn.close()
-        except Exception as e:
-            self.send_response(502)
-            self.send_header("Content-Type", "text/plain")
-            self.end_headers()
-            self.wfile.write(f"502 Bad Gateway: {e}".encode())
-
-    def log_message(self, *a):
+def pipe(src, dst):
+    """Forward data from src to dst until EOF."""
+    try:
+        while True:
+            data = src.recv(65536)
+            if not data:
+                break
+            dst.sendall(data)
+    except Exception:
         pass
+    finally:
+        try: dst.shutdown(socket.SHUT_WR)
+        except Exception: pass
 
-    do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_HEAD = do_proxy
+def handle(client, addr):
+    """Handle one client connection: connect to backend, pipe both ways."""
+    try:
+        backend = socket.create_connection(BACKEND, timeout=10)
+        backend.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        t1 = threading.Thread(target=pipe, args=(client, backend), daemon=True)
+        t2 = threading.Thread(target=pipe, args=(backend, client), daemon=True)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+    except Exception:
+        pass
+    finally:
+        try: client.close()
+        except Exception: pass
+        try: backend.close()
+        except Exception: pass
 
-class Server(socketserver.TCPServer):
-    allow_reuse_address = True
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(LISTEN)
+server.listen(128)
+print(f"TCP proxy {LISTEN[0]}:{LISTEN[1]} -> {BACKEND[0]}:{BACKEND[1]}", flush=True)
 
-print(f"Proxy listening on {LISTEN[0]}:{LISTEN[1]} → {BACKEND[0]}:{BACKEND[1]}", flush=True)
-with Server(LISTEN, Proxy) as s:
-    s.serve_forever()
+while True:
+    client, addr = server.accept()
+    threading.Thread(target=handle, args=(client, addr), daemon=True).start()
 PYEOF
 
     if [ "$LISTEN_PORT" -lt 1024 ] && [ "$(uname)" = "Linux" ]; then

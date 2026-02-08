@@ -636,11 +636,9 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
             await asyncio.sleep(0.3)  # 300ms refresh for better input sync
 
     except WebSocketDisconnect:
-        print(f"WS agent/{agent_id}: client disconnected")
+        pass
     except Exception as e:
-        import traceback
-        print(f"WS agent/{agent_id}: ERROR: {e}")
-        traceback.print_exc()
+        print(f"WS agent/{agent_id}: {e}")
 
 
 @app.websocket("/ws/messages")
@@ -763,11 +761,9 @@ async def websocket_status(websocket: WebSocket):
             await asyncio.sleep(15)  # Update every 15 seconds for stability
 
     except WebSocketDisconnect:
-        print("WS status: client disconnected")
+        pass
     except Exception as e:
-        import traceback
-        print(f"WS status: ERROR: {e}")
-        traceback.print_exc()
+        print(f"WS status: {e}")
 
 
 # === Static Files (Frontend) ===
