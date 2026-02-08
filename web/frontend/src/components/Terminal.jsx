@@ -281,7 +281,10 @@ function Terminal({ agentId, focused }) {
     } finally {
       setSending(false)
       requestAnimationFrame(() => {
-        if (inputRef.current) inputRef.current.focus()
+        if (inputRef.current) {
+          inputRef.current.style.height = 'auto'
+          inputRef.current.focus()
+        }
       })
     }
   }
