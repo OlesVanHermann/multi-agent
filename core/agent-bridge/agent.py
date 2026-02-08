@@ -298,12 +298,12 @@ class TmuxAgent:
 
                             self._log(f"<- Response from {from_id} ({len(response_text)} chars){' ['+chunk_info+']' if chunk_info else ''}")
 
-                            # Forward FULL response to Claude in tmux so Master can see it
-                            header = f"[RESPONSE FROM AGENT {from_id}]"
+                            # Forward response to Claude in tmux (compact format)
+                            header = f"[FROM {from_id}]"
                             if chunk_info:
-                                header += f" [CHUNK {chunk_info}]"
+                                header += f" [{chunk_info}]"
 
-                            notification = f"{header}\n{response_text}\n[END RESPONSE FROM {from_id}]"
+                            notification = f"{header}\n{response_text}\n[/{from_id}]"
                             self.prompt_queue.put({
                                 'prompt': notification,
                                 'from_agent': f'response_{from_id}',
@@ -392,7 +392,7 @@ class TmuxAgent:
             # Notify sender if it was another agent
             from_agent = task.get('from_agent')
 
-            if from_agent and from_agent not in ['manual', 'cli', 'auto_init', 'unknown', 'legacy']:
+            if from_agent and from_agent not in ['manual', 'cli', 'auto_init', 'unknown', 'legacy', 'compaction_reload'] and response.strip():
                 try:
                     # Send FULL response - no truncation
                     # For very long responses, split into chunks
