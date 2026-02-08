@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { api, wsUrl } from '../basePath'
 
-function Terminal({ agentId, focused }) {
+function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   const [output, setOutput] = useState('')
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -116,10 +116,13 @@ function Terminal({ agentId, focused }) {
 
     fetchOutput()
 
-    // Connect WebSocket
-    const agentWsUrl = wsUrl(`ws/agent/${agentId}`)
+    // Connect WebSocket (pauses when tab is hidden)
+    const agentWsUrl = wsUrl(`ws/agent/${agentId}?poll=${pollInterval}`)
+    let intentionalClose = false
 
     const connect = () => {
+      if (document.hidden) return  // Don't connect if tab is hidden
+      intentionalClose = false
       const ws = new WebSocket(agentWsUrl)
       wsRef.current = ws
 
@@ -130,10 +133,8 @@ function Terminal({ agentId, focused }) {
 
         if (data.type === 'output') {
           if (userScrolledRef.current) {
-            // Paused: store latest but don't update view
             pendingOutputRef.current = data.output || ''
           } else {
-            // Live: update view
             setOutput(data.output || '')
             pendingOutputRef.current = null
           }
@@ -158,9 +159,7 @@ function Terminal({ agentId, focused }) {
 
       ws.onclose = () => {
         setConnected(false)
-        // Only reconnect if this WS is still the active one
-        // (not replaced by a new connection after agent switch)
-        if (wsRef.current === ws) {
+        if (wsRef.current === ws && !intentionalClose) {
           reconnectTimeoutRef.current = setTimeout(connect, 2000)
         }
       }
@@ -168,19 +167,31 @@ function Terminal({ agentId, focused }) {
       ws.onerror = () => setConnected(false)
     }
 
+    const handleVisibility = () => {
+      if (document.hidden) {
+        intentionalClose = true
+        if (wsRef.current) { wsRef.current.close(); wsRef.current = null }
+        setConnected(false)
+      } else {
+        if (!wsRef.current) connect()
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibility)
     connect()
 
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibility)
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current)
+      intentionalClose = true
       if (wsRef.current) {
-        wsRef.current.onclose = null  // Prevent reconnect on intentional close
         wsRef.current.close()
         wsRef.current = null
       }
       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
       if (scrollPauseRef.current) clearTimeout(scrollPauseRef.current)
     }
-  }, [agentId])
+  }, [agentId, pollInterval])
 
   // Sync mutex: prevent concurrent syncs that interleave in tmux
   const syncInFlightRef = useRef(false)

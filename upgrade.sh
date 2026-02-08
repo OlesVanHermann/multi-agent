@@ -83,7 +83,7 @@ for dir in "${FRAMEWORK_DIRS[@]}"; do
     if [ -d "$TEMP_DIR/$dir" ]; then
         if [ -d "./$dir" ]; then
             # Compter les fichiers modifiés
-            CHANGES=$($RSYNC_CMD -rn --delete "$TEMP_DIR/$dir/" "./$dir/" 2>/dev/null | grep -v "/$" | grep -v "^$" | grep -v "sending" | grep -v "total" | grep -v "sent " | wc -l | tr -d ' ')
+            CHANGES=$($RSYNC_CMD -rn --delete --exclude='node_modules' --exclude='dist' "$TEMP_DIR/$dir/" "./$dir/" 2>/dev/null | grep -v "/$" | grep -v "^$" | grep -v "sending" | grep -v "total" | grep -v "sent " | wc -l | tr -d ' ')
             if [ "$CHANGES" -gt 0 ]; then
                 printf "  ${YELLOW}↻${NC} %-20s %s fichiers modifiés\n" "$dir/" "$CHANGES"
             else
@@ -138,7 +138,7 @@ log_info "Mise à jour..."
 for dir in "${FRAMEWORK_DIRS[@]}"; do
     if [ -d "$TEMP_DIR/$dir" ]; then
         mkdir -p "./$dir"
-        $RSYNC_CMD -a --delete "$TEMP_DIR/$dir/" "./$dir/"
+        $RSYNC_CMD -a --delete --exclude='node_modules' --exclude='dist' "$TEMP_DIR/$dir/" "./$dir/"
         log_ok "$dir/"
     fi
 done

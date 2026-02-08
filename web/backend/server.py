@@ -186,10 +186,6 @@ async def list_agents():
                             except Exception:
                                 pass
 
-                        # Override: detect if Claude Code is actually working
-                        if status != "busy" and _is_agent_working(agent_id):
-                            status = "busy"
-
                         agents.append(AgentStatus(
                             id=agent_id,
                             status=status,
@@ -592,6 +588,10 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
     """WebSocket endpoint for real-time agent tmux output with input sync"""
     await websocket.accept()
 
+    # Poll interval from query param (default 1.0s)
+    poll = float(websocket.query_params.get("poll", "1.0"))
+    poll = max(0.2, min(poll, 10.0))  # Clamp 0.2-10s
+
     session_name = f"{MA_PREFIX}-agent-{agent_id}"
     target = f"{session_name}:0.0"
     last_output = ""
@@ -608,7 +608,6 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
             )
 
             if result.returncode != 0:
-                print(f"WS agent/{agent_id}: capture-pane failed: {result.stderr.strip()}")
                 await websocket.send_json({
                     "type": "error",
                     "message": f"Agent {agent_id} session not found"
@@ -646,7 +645,7 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
                 })
                 last_input = current_input
 
-            await asyncio.sleep(0.3)  # 300ms refresh for better input sync
+            await asyncio.sleep(poll)
 
     except WebSocketDisconnect:
         pass
@@ -718,6 +717,10 @@ async def websocket_status(websocket: WebSocket):
     """WebSocket endpoint for agent status updates (polling tmux sessions)"""
     await websocket.accept()
 
+    # Poll interval from query param (default 10s)
+    poll = float(websocket.query_params.get("poll", "10"))
+    poll = max(2, min(poll, 60))  # Clamp 2-60s
+
     try:
         while True:
             agents = []
@@ -751,10 +754,6 @@ async def websocket_status(websocket: WebSocket):
                                     except Exception:
                                         pass
 
-                                # Override: detect if Claude Code is actually working
-                                if status != "busy" and _is_agent_working(agent_id):
-                                    status = "busy"
-
                                 agents.append({
                                     "id": agent_id,
                                     "status": status,
@@ -771,7 +770,7 @@ async def websocket_status(websocket: WebSocket):
                 "timestamp": int(time.time())
             })
 
-            await asyncio.sleep(15)  # Update every 15 seconds for stability
+            await asyncio.sleep(poll)
 
     except WebSocketDisconnect:
         pass

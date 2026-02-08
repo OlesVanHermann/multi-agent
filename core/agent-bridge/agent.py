@@ -41,7 +41,7 @@ MA_PREFIX = os.environ.get("MA_PREFIX", "ma")
 
 MAX_HISTORY = 50
 RESPONSE_TIMEOUT = 300  # 5 min max wait for Claude response
-POLL_INTERVAL = 0.3     # How often to check for new output
+POLL_INTERVAL = 1.0     # How often to check for new output (was 0.3 — too CPU intensive)
 
 # Claude prompt markers (to detect end of response)
 PROMPT_MARKERS = ['❯', '>', '$', '%']

@@ -41,6 +41,10 @@ project/*
 # Redis
 dump.rdb
 
+# Node / Frontend build
+node_modules/
+web/frontend/dist/
+
 # Temp
 *.tmp
 *.temp

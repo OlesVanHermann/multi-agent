@@ -395,6 +395,42 @@ body {
   background: #666;
 }
 
+/* Poll timing controls */
+.poll-group {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.poll-label {
+  font-size: 0.6rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.poll-select {
+  padding: 0.15rem 0.3rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.65rem;
+  border-radius: 3px;
+  cursor: pointer;
+  min-width: 3rem;
+}
+
+.poll-select:hover {
+  color: var(--text-primary);
+  border-color: var(--blue);
+}
+
+.poll-select option {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
 /* Logout button */
 .logout-btn {
   padding: 0.25rem 0.75rem;
