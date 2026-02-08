@@ -131,18 +131,7 @@ if [ "$DRY_RUN" = true ]; then
 fi
 
 # ============================================================
-# 3. Backup
-# ============================================================
-CURRENT_DIR=$(basename "$(pwd)")
-BACKUP_DIR="../${CURRENT_DIR}-backup-$(date +%Y%m%d-%H%M%S)"
-log_info "Backup dans $BACKUP_DIR..."
-mkdir -p "$BACKUP_DIR"
-$RSYNC_CMD -a --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' \
-         --exclude='logs/*.log' --exclude='sessions/*' ./ "$BACKUP_DIR/"
-log_ok "Backup créé"
-
-# ============================================================
-# 4. Arrêter les agents
+# 3. Arrêter les agents
 # ============================================================
 if [ -f "./scripts/infra.sh" ]; then
     ./scripts/infra.sh stop 2>/dev/null && log_ok "Infrastructure arrêtée" || true
@@ -152,7 +141,7 @@ fi
 pkill -f "agent.py" 2>/dev/null || true
 
 # ============================================================
-# 5. Appliquer la mise à jour
+# 4. Appliquer la mise à jour
 # ============================================================
 log_info "Mise à jour..."
 
@@ -172,7 +161,7 @@ for file in "${FRAMEWORK_FILES[@]}"; do
 done
 
 # ============================================================
-# 6. Dépendances
+# 5. Dépendances
 # ============================================================
 log_info "Installation des dépendances..."
 $PIP_CMD install -q -r requirements.txt 2>/dev/null || \
@@ -187,6 +176,5 @@ echo "╔═══════════════════════�
 echo "║            Mise à jour terminée            ║"
 echo "╚════════════════════════════════════════════╝"
 echo ""
-echo "  Backup: $BACKUP_DIR"
 echo "  Lancer: ./scripts/agent.sh start all"
 echo ""
