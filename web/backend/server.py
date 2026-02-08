@@ -137,7 +137,7 @@ def _is_agent_working(agent_id: str) -> bool:
     """Check if Claude Code is actively working by looking for 'esc to interrupt' in tmux."""
     try:
         result = subprocess.run(
-            ["tmux", "capture-pane", "-t", f"{MA_PREFIX}-agent-{agent_id}.0", "-p", "-S", "-5"],
+            ["tmux", "capture-pane", "-t", f"{MA_PREFIX}-agent-{agent_id}:0.0", "-p", "-S", "-5"],
             capture_output=True, text=True, timeout=2
         )
         if result.returncode == 0 and "esc to interrupt" in result.stdout:
@@ -311,7 +311,7 @@ def _extract_current_input(ansi_output: str) -> str:
 async def send_to_agent(agent_id: str, msg: SendMessage):
     """Send message to an agent via tmux send-keys (with Enter)"""
     session_name = f"{MA_PREFIX}-agent-{agent_id}"
-    target = f"{session_name}.0"
+    target = f"{session_name}:0.0"
 
     try:
         # Check if session exists
@@ -342,7 +342,7 @@ async def send_to_agent(agent_id: str, msg: SendMessage):
 async def update_agent_input(agent_id: str, data: UpdateInput):
     """Update the current input line in tmux (co-editing)"""
     session_name = f"{MA_PREFIX}-agent-{agent_id}"
-    target = f"{session_name}.0"
+    target = f"{session_name}:0.0"
 
     try:
         # Check if session exists
@@ -391,7 +391,7 @@ ALLOWED_KEYS = {"Enter", "C-c", "Escape", "C-u", "C-d", "C-l", "C-z", "Up", "Dow
 async def send_keys_to_agent(agent_id: str, data: SendKeys):
     """Send raw tmux keys to an agent (Enter, Ctrl+C, Escape, etc.)"""
     session_name = f"{MA_PREFIX}-agent-{agent_id}"
-    target = f"{session_name}.0"
+    target = f"{session_name}:0.0"
 
     try:
         result = subprocess.run(
@@ -423,7 +423,7 @@ async def send_keys_to_agent(agent_id: str, data: SendKeys):
 async def get_agent_output(agent_id: str, lines: int = 500):
     """Capture tmux pane output for an agent"""
     session_name = f"{MA_PREFIX}-agent-{agent_id}"
-    target = f"{session_name}.0"
+    target = f"{session_name}:0.0"
 
     try:
         # Check if session exists
@@ -580,7 +580,7 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
     await websocket.accept()
 
     session_name = f"{MA_PREFIX}-agent-{agent_id}"
-    target = f"{session_name}.0"
+    target = f"{session_name}:0.0"
     last_output = ""
     last_input = ""
 
