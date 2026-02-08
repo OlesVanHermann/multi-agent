@@ -238,6 +238,10 @@ class UpdateInput(BaseModel):
     submit: bool = False
 
 
+class SendKeys(BaseModel):
+    keys: list[str]  # tmux key names: "Enter", "C-c", "Escape", etc.
+
+
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
 
 
@@ -378,6 +382,41 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
         }
     except subprocess.CalledProcessError as e:
         raise HTTPException(status_code=500, detail=f"Failed to update input: {str(e)}")
+
+
+ALLOWED_KEYS = {"Enter", "C-c", "Escape", "C-u", "C-d", "C-l", "C-z", "Up", "Down", "Tab", "Space", "y", "n"}
+
+
+@app.post("/api/agent/{agent_id}/keys")
+async def send_keys_to_agent(agent_id: str, data: SendKeys):
+    """Send raw tmux keys to an agent (Enter, Ctrl+C, Escape, etc.)"""
+    session_name = f"{MA_PREFIX}-agent-{agent_id}"
+    target = f"{session_name}.0"
+
+    try:
+        result = subprocess.run(
+            ["tmux", "has-session", "-t", session_name],
+            capture_output=True
+        )
+        if result.returncode != 0:
+            raise HTTPException(status_code=404, detail=f"Agent {agent_id} session not found")
+
+        for key in data.keys:
+            if key not in ALLOWED_KEYS:
+                raise HTTPException(status_code=400, detail=f"Key not allowed: {key}")
+            subprocess.run(
+                ["tmux", "send-keys", "-t", target, key],
+                check=True
+            )
+
+        return {
+            "status": "sent",
+            "agent_id": agent_id,
+            "keys": data.keys,
+            "timestamp": int(time.time())
+        }
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send keys: {str(e)}")
 
 
 @app.get("/api/agent/{agent_id}/output")

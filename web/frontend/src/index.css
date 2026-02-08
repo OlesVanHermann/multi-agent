@@ -321,6 +321,17 @@ body {
   cursor: not-allowed;
 }
 
+.terminal-input .key-btn {
+  font-size: 0.65rem;
+  padding: 0.2rem 0.5rem;
+  min-width: unset;
+}
+
+.terminal-input .key-btn.danger:hover {
+  color: var(--red);
+  border-color: var(--red);
+}
+
 /* No selection state */
 .no-selection {
   flex: 1;

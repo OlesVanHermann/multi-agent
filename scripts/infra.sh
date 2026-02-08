@@ -107,53 +107,7 @@ do_start() {
     fi
 
     # Web Dashboard
-    log_info "Starting web dashboard..."
-    if lsof -i :8000 &>/dev/null 2>&1; then
-        log_ok "Dashboard already running on :8000"
-    else
-        # Install Python deps if needed
-        if ! python3 -c "import fastapi" 2>/dev/null; then
-            log_info "Installing Python dependencies..."
-            pip3 install -r "$WEB_DIR/backend/requirements.txt" 2>/dev/null || \
-            pip3 install --break-system-packages -r "$WEB_DIR/backend/requirements.txt" 2>/dev/null
-        fi
-
-        # Build frontend if missing or outdated
-        NEED_BUILD=false
-        if [ ! -f "$WEB_DIR/frontend/dist/index.html" ]; then
-            NEED_BUILD=true
-        elif [ -f "$WEB_DIR/frontend/src/App.jsx" ]; then
-            NEWEST_SRC=$(find "$WEB_DIR/frontend/src" -type f -newer "$WEB_DIR/frontend/dist/index.html" 2>/dev/null | head -1)
-            [ -n "$NEWEST_SRC" ] && NEED_BUILD=true
-        fi
-
-        if $NEED_BUILD; then
-            if command -v npm &>/dev/null; then
-                log_info "Building frontend..."
-                cd "$WEB_DIR/frontend"
-                npm install --silent 2>/dev/null
-                npm run build 2>/dev/null
-                cd "$BASE_DIR"
-                log_ok "Frontend built"
-            else
-                log_warn "npm not found — frontend not built (API-only mode)"
-            fi
-        fi
-
-        cd "$WEB_DIR/backend"
-        MA_PREFIX=$MA_PREFIX python3 -m uvicorn server:app --host 127.0.0.1 --port 8000 \
-            >> "$LOG_DIR/dashboard.log" 2>&1 &
-        DASHBOARD_PID=$!
-        echo "$DASHBOARD_PID" > "$LOG_DIR/dashboard.pid"
-        cd "$BASE_DIR"
-        sleep 2
-
-        if lsof -i :8000 &>/dev/null 2>&1; then
-            log_ok "Dashboard started on http://localhost:8000 (PID: $DASHBOARD_PID)"
-        else
-            log_warn "Dashboard may not have started. Check $LOG_DIR/dashboard.log"
-        fi
-    fi
+    "$SCRIPT_DIR/web.sh" start
 
     # Agent 000
     log_info "Starting agent-000..."
@@ -208,15 +162,7 @@ do_stop() {
     fi
 
     # Dashboard
-    log_info "Stopping web dashboard..."
-    if [ -f "$LOG_DIR/dashboard.pid" ]; then
-        PID=$(cat "$LOG_DIR/dashboard.pid")
-        if kill "$PID" 2>/dev/null; then
-            log_ok "Killed dashboard (PID: $PID)"
-        fi
-        mv "$LOG_DIR/dashboard.pid" "$LOG_DIR/dashboard.pid.old" 2>/dev/null || true
-    fi
-    pkill -f "uvicorn server:app" 2>/dev/null && log_ok "Killed uvicorn processes" || true
+    "$SCRIPT_DIR/web.sh" stop
 
     # Keycloak
     log_info "Stopping Keycloak..."

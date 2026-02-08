@@ -209,11 +209,24 @@ function Terminal({ agentId, focused }) {
     }, 150)
   }
 
+  // Send raw tmux keys
+  const sendKeys = async (...keys) => {
+    try {
+      await fetch(api(`api/agent/${agentId}/keys`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keys })
+      })
+      lastSubmitRef.current = Date.now()
+    } catch (err) {
+      console.error('Send keys error:', err)
+    }
+  }
+
   // Handle submit
   const handleSubmit = async () => {
-    if (!input.trim() || sending) return
+    if (sending) return
 
-    const message = input.trim()
     setSending(true)
     lastSubmitRef.current = Date.now()
 
@@ -224,11 +237,17 @@ function Terminal({ agentId, focused }) {
     }
 
     try {
-      await fetch(api(`api/agent/${agentId}/input`), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: message, submit: true })
-      })
+      const message = input.trim()
+      if (message) {
+        await fetch(api(`api/agent/${agentId}/input`), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: message, submit: true })
+        })
+      } else {
+        // Empty input: just send Enter
+        await sendKeys('Enter')
+      }
       setInput('')
       inputValueRef.current = ''
       lastSentInput.current = ''
@@ -271,8 +290,14 @@ function Terminal({ agentId, focused }) {
           placeholder={`Co-edit with tmux...`}
           disabled={sending}
         />
-        <button onClick={handleSubmit} disabled={sending || !input.trim()}>
+        <button onClick={handleSubmit} disabled={sending} title="Send (Enter)">
           ⏎
+        </button>
+        <button onClick={() => sendKeys('Escape')} className="key-btn" title="Escape">
+          Esc
+        </button>
+        <button onClick={() => sendKeys('C-c')} className="key-btn danger" title="Ctrl+C">
+          ^C
         </button>
       </div>
     </div>
