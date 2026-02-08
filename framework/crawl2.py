@@ -135,9 +135,8 @@ def normalize_url(url: str) -> str:
         # http → https (301 redirect)
         if url.startswith('http://'):
             url = 'https://' + url[7:]
-        # bare domain → www (301 redirect): mistral.ai → www.mistral.ai
-        # NEVER add www. to subdomains (workspace.google.com, developers.google.com, etc.)
-        # Only add www. to bare 2-part domains (google.com → www.google.com)
+        # bare domain → www (301 redirect on most sites)
+        # Only add www. to bare 2-part domains, not subdomains
         if ROOT_DOMAIN:
             parsed = urlparse(url)
             netloc = parsed.netloc
@@ -439,7 +438,7 @@ async def main():
     if len(args) < 1:
         print("Usage: python3 crawl2.py <domaine> [--subdomains] [--agent-id=XXX]")
         print("Exemple: python3 crawl2.py hetzner.com")
-        print("         python3 crawl2.py mistral.ai --subdomains")
+        print("         python3 crawl2.py example.com --subdomains")
         print("         python3 crawl2.py zoom.us --agent-id=320")
         print("\nOptions:")
         print("  --subdomains      Inclure les sous-domaines (docs.X, help.X, etc.)")
@@ -458,7 +457,7 @@ async def main():
         if flag.startswith('--agent-id='):
             AGENT_ID = flag.split('=', 1)[1]
 
-    # ROOT_DOMAIN = domaine sans www. (ex: mistral.ai)
+    # ROOT_DOMAIN = domaine sans www.
     ROOT_DOMAIN = domain.removeprefix("www.")
 
     STUDY_DIR = STUDIES_DIR / domain / "300"
