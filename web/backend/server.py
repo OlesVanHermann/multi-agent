@@ -353,9 +353,10 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
         if result.returncode != 0:
             raise HTTPException(status_code=404, detail=f"Agent {agent_id} session not found")
 
-        # Clear current line (Ctrl+U) and send new text
+        # Clear current line: C-e (end) then C-u (kill to start)
+        # Both needed for text that wraps across multiple visual lines
         subprocess.run(
-            ["tmux", "send-keys", "-t", target, "C-u"],
+            ["tmux", "send-keys", "-t", target, "C-e", "C-u"],
             check=True
         )
 

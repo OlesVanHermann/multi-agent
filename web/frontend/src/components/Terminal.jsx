@@ -182,6 +182,43 @@ function Terminal({ agentId, focused }) {
     }
   }, [agentId])
 
+  // Sync mutex: prevent concurrent syncs that interleave in tmux
+  const syncInFlightRef = useRef(false)
+  const pendingSyncValueRef = useRef(null)
+
+  const doSyncToTmux = async (value) => {
+    if (syncInFlightRef.current) {
+      pendingSyncValueRef.current = value
+      return
+    }
+    if (value === lastSentInput.current) {
+      setSyncing(false)
+      return
+    }
+    syncInFlightRef.current = true
+    try {
+      await fetch(api(`api/agent/${agentId}/input`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: value, submit: false })
+      })
+      lastSentInput.current = value
+    } catch (err) {
+      console.error('Sync error:', err)
+    } finally {
+      syncInFlightRef.current = false
+      // Process queued value if any
+      const pending = pendingSyncValueRef.current
+      if (pending !== null && pending !== value) {
+        pendingSyncValueRef.current = null
+        doSyncToTmux(pending)
+      } else {
+        pendingSyncValueRef.current = null
+        setSyncing(false)
+      }
+    }
+  }
+
   // Handle input change - sync to tmux with debounce
   const handleInputChange = (e) => {
     const newValue = e.target.value
@@ -192,20 +229,8 @@ function Terminal({ agentId, focused }) {
 
     if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
 
-    syncTimeoutRef.current = setTimeout(async () => {
-      if (newValue !== lastSentInput.current) {
-        try {
-          await fetch(api(`api/agent/${agentId}/input`), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: newValue, submit: false })
-          })
-          lastSentInput.current = newValue
-        } catch (err) {
-          console.error('Sync error:', err)
-        }
-      }
-      setSyncing(false)
+    syncTimeoutRef.current = setTimeout(() => {
+      doSyncToTmux(newValue)
     }, 150)
   }
 
