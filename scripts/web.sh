@@ -64,10 +64,14 @@ do_start() {
         fi
     fi
 
+    # Simple auth fallback (used when Keycloak client is not configured)
+    SIMPLE_AUTH="${SIMPLE_AUTH:-octave:changeme:admin,operator:changeme:operator,viewer:changeme:viewer}"
+
     # Start uvicorn
     log_info "Starting dashboard..."
     cd "$WEB_DIR/backend"
-    MA_PREFIX=$MA_PREFIX python3 -m uvicorn server:app --host 127.0.0.1 --port 8000 \
+    MA_PREFIX=$MA_PREFIX SIMPLE_AUTH="$SIMPLE_AUTH" \
+        python3 -m uvicorn server:app --host 127.0.0.1 --port 8000 \
         >> "$LOG_DIR/dashboard.log" 2>&1 &
     DASHBOARD_PID=$!
     echo "$DASHBOARD_PID" > "$PID_FILE"

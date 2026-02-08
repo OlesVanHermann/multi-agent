@@ -133,24 +133,29 @@ async def health():
     }
 
 
-def _is_agent_working(agent_id: str) -> bool:
-    """Check if Claude Code is actively working by looking for 'esc to interrupt' in tmux."""
+def _get_busy_agents() -> set:
+    """Check ALL agent tmux sessions for 'esc to interrupt' in ONE subprocess."""
     try:
-        result = subprocess.run(
-            ["tmux", "capture-pane", "-t", f"{MA_PREFIX}-agent-{agent_id}:0.0", "-p", "-S", "-5"],
-            capture_output=True, text=True, timeout=2
+        script = (
+            f'for s in $(tmux ls -F "#{{session_name}}" 2>/dev/null | grep "^{MA_PREFIX}-agent-"); do '
+            f'id="${{s#{MA_PREFIX}-agent-}}"; '
+            f'if tmux capture-pane -t "$s:0.0" -p -S -3 2>/dev/null | grep -q "esc to interrupt"; then '
+            f'echo "$id"; fi; done'
         )
-        if result.returncode == 0 and "esc to interrupt" in result.stdout:
-            return True
+        result = subprocess.run(
+            ["bash", "-c", script],
+            capture_output=True, text=True, timeout=15
+        )
+        return set(result.stdout.strip().split('\n')) - {''}
     except Exception:
-        pass
-    return False
+        return set()
 
 
 @app.get("/api/agents")
 async def list_agents():
     """List all agents with active tmux sessions"""
     agents = []
+    busy_set = _get_busy_agents()  # ONE subprocess for all agents
 
     # Get active tmux sessions (agent-XXX format)
     try:
@@ -182,9 +187,12 @@ async def list_agents():
                                     if time.time() - hb_last_seen <= 15:
                                         status = data.get("status", "active")
                                         last_seen = hb_last_seen
-                                    # else: stale heartbeat, tmux exists → "active"
                             except Exception:
                                 pass
+
+                        # Override: tmux shows "esc to interrupt" = busy
+                        if agent_id in busy_set:
+                            status = "busy"
 
                         agents.append(AgentStatus(
                             id=agent_id,
@@ -512,9 +520,19 @@ async def proxy_keycloak(request: Request, path: str):
                     method="POST", url=url, headers=headers, content=body,
                     params=request.query_params, timeout=5.0
                 )
+                # Accept Keycloak response if client is configured
+                # Fall through to simple auth on invalid_client (realm/client not set up)
                 if response.status_code < 500:
-                    return Response(content=response.content, status_code=response.status_code,
-                                    headers=dict(response.headers))
+                    try:
+                        resp_body = response.json()
+                        if resp_body.get("error") == "invalid_client":
+                            pass  # Fall through to simple auth
+                        else:
+                            return Response(content=response.content, status_code=response.status_code,
+                                            headers=dict(response.headers))
+                    except Exception:
+                        return Response(content=response.content, status_code=response.status_code,
+                                        headers=dict(response.headers))
         except Exception:
             pass  # Keycloak not available, use simple auth
 
@@ -647,10 +665,11 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
 
             await asyncio.sleep(poll)
 
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, ConnectionResetError):
         pass
     except Exception as e:
-        print(f"WS agent/{agent_id}: {e}")
+        if str(e):  # Skip empty exceptions (normal disconnects)
+            print(f"WS agent/{agent_id}: {e}")
 
 
 @app.websocket("/ws/messages")
@@ -705,11 +724,12 @@ async def websocket_messages(websocket: WebSocket):
                 print(f"WebSocket stream error: {e}")
                 await asyncio.sleep(0.5)
 
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, ConnectionResetError):
         manager.disconnect(websocket)
     except Exception as e:
-        print(f"WebSocket error: {e}")
         manager.disconnect(websocket)
+        if str(e):
+            print(f"WS messages: {e}")
 
 
 @app.websocket("/ws/status")
@@ -724,6 +744,7 @@ async def websocket_status(websocket: WebSocket):
     try:
         while True:
             agents = []
+            busy_set = _get_busy_agents()  # ONE subprocess for all agents
 
             # Get active tmux sessions
             try:
@@ -746,13 +767,15 @@ async def websocket_status(websocket: WebSocket):
                                         data = await redis_pool.hgetall(f"{MA_PREFIX}:agent:{agent_id}")
                                         if data:
                                             hb_last_seen = int(data.get("last_seen", 0))
-                                            # Only trust heartbeat if fresh (< 15s)
                                             if time.time() - hb_last_seen <= 15:
                                                 status = data.get("status", "active")
                                                 last_seen = hb_last_seen
-                                            # else: stale heartbeat, tmux exists → "active"
                                     except Exception:
                                         pass
+
+                                # Override: tmux shows "esc to interrupt" = busy
+                                if agent_id in busy_set:
+                                    status = "busy"
 
                                 agents.append({
                                     "id": agent_id,
@@ -772,10 +795,11 @@ async def websocket_status(websocket: WebSocket):
 
             await asyncio.sleep(poll)
 
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, ConnectionResetError):
         pass
     except Exception as e:
-        print(f"WS status: {e}")
+        if str(e):
+            print(f"WS status: {e}")
 
 
 # === Static Files (Frontend) ===
