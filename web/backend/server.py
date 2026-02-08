@@ -147,7 +147,7 @@ def _get_agent_states() -> dict:
             f'id="${{s#{MA_PREFIX}-agent-}}"; '
             f'busy=0; compacted=0; '
             f'if tmux capture-pane -t "$s:0.0" -p -S -3 2>/dev/null | grep -q "esc to interrupt"; then busy=1; fi; '
-            f'if tmux capture-pane -t "$s:0.0" -p -S -200 2>/dev/null | grep -qi "auto-compact"; then compacted=1; fi; '
+            f'if tmux capture-pane -t "$s:0.0" -p -J -S -200 2>/dev/null | grep -qi "auto-compact"; then compacted=1; fi; '
             f'echo "$id:$busy:$compacted"; '
             f'done'
         )
