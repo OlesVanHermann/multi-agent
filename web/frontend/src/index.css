@@ -286,7 +286,7 @@ body {
   color: var(--green);
 }
 
-.terminal-input input {
+.terminal-input textarea {
   flex: 1;
   background: transparent;
   border: none;
@@ -294,9 +294,13 @@ body {
   font-family: inherit;
   font-size: inherit;
   outline: none;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.4;
+  max-height: 6em;
 }
 
-.terminal-input input::placeholder {
+.terminal-input textarea::placeholder {
   color: var(--text-secondary);
 }
 

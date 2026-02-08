@@ -306,11 +306,16 @@ function Terminal({ agentId, focused }) {
       </pre>
       <div className="terminal-input">
         <span className="prompt">❯</span>
-        <input
+        <textarea
           ref={inputRef}
-          type="text"
+          rows={1}
           value={input}
-          onChange={handleInputChange}
+          onChange={(e) => {
+            handleInputChange(e)
+            // Auto-resize: reset then grow to fit content
+            e.target.style.height = 'auto'
+            e.target.style.height = e.target.scrollHeight + 'px'
+          }}
           onKeyDown={handleKeyDown}
           placeholder={`Co-edit with tmux...`}
           disabled={sending}
