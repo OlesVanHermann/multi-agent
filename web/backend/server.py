@@ -146,7 +146,7 @@ def _get_agent_states() -> dict:
             f'for s in $(tmux ls -F "#{{session_name}}" 2>/dev/null | grep "^{MA_PREFIX}-agent-"); do '
             f'id="${{s#{MA_PREFIX}-agent-}}"; '
             f'busy=0; compacted=0; '
-            f'if tmux capture-pane -t "$s:0.0" -p -J 2>/dev/null | tail -1 | grep -q "esc to interrupt"; then busy=1; fi; '
+            f'if tmux capture-pane -t "$s:0.0" -p -J 2>/dev/null | grep "bypass permissions" | tail -1 | grep -q "esc to interrupt"; then busy=1; fi; '
             f'if tmux capture-pane -t "$s:0.0" -p -J -S -200 2>/dev/null | grep -qi "auto-compact"; then compacted=1; fi; '
             f'echo "$id:$busy:$compacted"; '
             f'done'
