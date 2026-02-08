@@ -30,7 +30,7 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 do_start() {
     mkdir -p "$LOG_DIR"
 
-    if lsof -i :8000 &>/dev/null 2>&1; then
+    if lsof -iTCP:8000 -sTCP:LISTEN &>/dev/null 2>&1; then
         log_ok "Dashboard already running on :8000"
         return
     fi
@@ -74,7 +74,7 @@ do_start() {
     cd "$BASE_DIR"
     sleep 2
 
-    if lsof -i :8000 &>/dev/null 2>&1; then
+    if lsof -iTCP:8000 -sTCP:LISTEN &>/dev/null 2>&1; then
         log_ok "Dashboard started on http://127.0.0.1:8000 (PID: $DASHBOARD_PID)"
     else
         log_warn "Dashboard may not have started. Check $LOG_DIR/dashboard.log"

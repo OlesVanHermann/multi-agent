@@ -65,8 +65,8 @@ do_quick() {
     fi
 
     header "Dashboard"
-    if lsof -i :8000 &>/dev/null 2>&1; then
-        PID=$(lsof -ti :8000 2>/dev/null | head -1)
+    if lsof -iTCP:8000 -sTCP:LISTEN &>/dev/null 2>&1; then
+        PID=$(lsof -iTCP:8000 -sTCP:LISTEN -t 2>/dev/null | head -1)
         ok "Dashboard" ":8000 (PID: $PID)"
     else
         fail "Dashboard" "not running"
@@ -156,11 +156,11 @@ do_full() {
 
     # ── 2. Dashboard backend ──
     header "2. Backend API"
-    if ! lsof -i :8000 &>/dev/null 2>&1; then
+    if ! lsof -iTCP:8000 -sTCP:LISTEN &>/dev/null 2>&1; then
         fail "uvicorn" "not running on :8000"
         ERRORS=$((ERRORS + 1))
     else
-        PIDS=$(lsof -ti :8000 2>/dev/null | sort -u)
+        PIDS=$(lsof -iTCP:8000 -sTCP:LISTEN -t 2>/dev/null | sort -u)
         PID_COUNT=$(echo "$PIDS" | wc -l | tr -d ' ')
         PID=$(echo "$PIDS" | head -1)
         if [ "$PID_COUNT" -gt 1 ]; then
