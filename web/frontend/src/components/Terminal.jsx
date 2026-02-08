@@ -307,8 +307,16 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
     }
   }
 
+  // Click anywhere in terminal → focus input (unless selecting text)
+  const handleTerminalClick = (e) => {
+    // Don't steal focus from buttons or if user is selecting text
+    if (e.target.closest('button') || e.target.closest('textarea')) return
+    if (window.getSelection()?.toString()) return
+    inputRef.current?.focus()
+  }
+
   return (
-    <div className="terminal">
+    <div className="terminal" onClick={handleTerminalClick}>
       <div className="terminal-header">
         <span className={`status-dot ${connected ? 'green' : 'red'}`}></span>
         Agent {agentId} {connected ? '(live)' : '(disconnected)'}
