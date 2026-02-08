@@ -298,11 +298,6 @@ class TmuxAgent:
 
                             self._log(f"<- Response from {from_id} ({len(response_text)} chars){' ['+chunk_info+']' if chunk_info else ''}")
 
-                            # Skip empty responses
-                            if not response_text.strip():
-                                self._log(f"<- Skipping empty response from {from_id}")
-                                continue
-
                             # Forward FULL response to Claude in tmux so Master can see it
                             header = f"[RESPONSE FROM AGENT {from_id}]"
                             if chunk_info:
