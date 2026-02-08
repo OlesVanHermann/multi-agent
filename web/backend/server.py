@@ -191,6 +191,50 @@ async def _trigger_prompt_reload(agent_id: str):
         print(f"Failed to trigger reload for {agent_id}: {e}")
 
 
+async def _resolve_agent_status(agent_id: str, tmux_state: dict, messages_since_reload: int) -> str:
+    """Determine agent context status with sticky compacting state.
+
+    Once auto-compact is detected, the state persists in Redis until the
+    agent digests the reloaded prompt (messages_since_reload drops to 0).
+    """
+    compacting_key = f"{MA_PREFIX}:agent:{agent_id}:compacting"
+
+    # If tmux shows auto-compact NOW, latch the sticky flag
+    if tmux_state.get('compacted') and redis_pool:
+        try:
+            await redis_pool.set(compacting_key, "1", ex=600)  # TTL 10min safety
+        except Exception:
+            pass
+
+    # Check sticky flag
+    is_compacting = False
+    if redis_pool:
+        try:
+            is_compacting = await redis_pool.get(compacting_key) is not None
+        except Exception:
+            pass
+
+    # Prompt digested → clear sticky flag, back to normal
+    if is_compacting and messages_since_reload == 0:
+        if redis_pool:
+            try:
+                await redis_pool.delete(compacting_key)
+            except Exception:
+                pass
+        is_compacting = False
+
+    # Return status (priority: compacted > warning > busy)
+    if is_compacting:
+        asyncio.ensure_future(_trigger_prompt_reload(agent_id))
+        return "context_compacted"
+    elif messages_since_reload >= CONTEXT_WARNING_THRESHOLD:
+        return "context_warning"
+    elif tmux_state.get('busy'):
+        return "busy"
+
+    return ""  # no override
+
+
 @app.get("/api/agents")
 async def list_agents():
     """List all agents with active tmux sessions"""
@@ -232,16 +276,11 @@ async def list_agents():
                             except Exception:
                                 pass
 
-                        # Determine status from tmux state
+                        # Determine status from tmux state (sticky compacting)
                         state = agent_states.get(agent_id, {})
-                        if state.get('compacted'):
-                            status = "context_compacted"
-                            # Auto-trigger prompt reload
-                            asyncio.ensure_future(_trigger_prompt_reload(agent_id))
-                        elif messages_since_reload >= CONTEXT_WARNING_THRESHOLD:
-                            status = "context_warning"
-                        elif state.get('busy'):
-                            status = "busy"
+                        override = await _resolve_agent_status(agent_id, state, messages_since_reload)
+                        if override:
+                            status = override
 
                         agents.append(AgentStatus(
                             id=agent_id,
@@ -824,15 +863,11 @@ async def websocket_status(websocket: WebSocket):
                                     except Exception:
                                         pass
 
-                                # Determine status from tmux state
+                                # Determine status from tmux state (sticky compacting)
                                 state = agent_states.get(agent_id, {})
-                                if state.get('compacted'):
-                                    status = "context_compacted"
-                                    asyncio.ensure_future(_trigger_prompt_reload(agent_id))
-                                elif messages_since_reload >= CONTEXT_WARNING_THRESHOLD:
-                                    status = "context_warning"
-                                elif state.get('busy'):
-                                    status = "busy"
+                                override = await _resolve_agent_status(agent_id, state, messages_since_reload)
+                                if override:
+                                    status = override
 
                                 agents.append({
                                     "id": agent_id,
