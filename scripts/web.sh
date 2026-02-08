@@ -95,6 +95,7 @@ do_stop() {
 
 do_rebuild() {
     do_stop
+    sleep 1
     log_info "Force rebuilding frontend..."
     if command -v npm &>/dev/null; then
         cd "$WEB_DIR/frontend"
