@@ -590,10 +590,12 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
             result = subprocess.run(
                 ["tmux", "capture-pane", "-t", target, "-p", "-J", "-S", "-500"],
                 capture_output=True,
-                text=True
+                text=True,
+                timeout=5
             )
 
             if result.returncode != 0:
+                print(f"WS agent/{agent_id}: capture-pane failed: {result.stderr.strip()}")
                 await websocket.send_json({
                     "type": "error",
                     "message": f"Agent {agent_id} session not found"
@@ -606,7 +608,8 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
             result_ansi = subprocess.run(
                 ["tmux", "capture-pane", "-t", target, "-p", "-e", "-S", "-20"],
                 capture_output=True,
-                text=True
+                text=True,
+                timeout=5
             )
             current_input = _extract_current_input(result_ansi.stdout)
 
@@ -633,9 +636,11 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
             await asyncio.sleep(0.3)  # 300ms refresh for better input sync
 
     except WebSocketDisconnect:
-        pass
+        print(f"WS agent/{agent_id}: client disconnected")
     except Exception as e:
-        print(f"Agent WebSocket error: {e}")
+        import traceback
+        print(f"WS agent/{agent_id}: ERROR: {e}")
+        traceback.print_exc()
 
 
 @app.websocket("/ws/messages")
@@ -758,9 +763,11 @@ async def websocket_status(websocket: WebSocket):
             await asyncio.sleep(15)  # Update every 15 seconds for stability
 
     except WebSocketDisconnect:
-        pass
+        print("WS status: client disconnected")
     except Exception as e:
-        print(f"Status WebSocket error: {e}")
+        import traceback
+        print(f"WS status: ERROR: {e}")
+        traceback.print_exc()
 
 
 # === Static Files (Frontend) ===
