@@ -99,9 +99,8 @@ chmod +x upgrade.sh
 ```
 
 Le script :
-- Crée un **backup complet** avant toute modification
-- Met à jour **uniquement** les fichiers framework (`core/`, `scripts/`, `docs/`)
-- **Préserve** vos fichiers projet (`prompts/`, `pool-requests/`, `project/`)
+- Met à jour **uniquement** les fichiers framework (`core/`, `scripts/`, `web/`, `docs/`)
+- **Préserve** vos fichiers projet (`prompts/`, `pool-requests/`, `project/`, `project-config.md`)
 
 Voir [UPGRADE.md](UPGRADE.md) et [upgrades/](upgrades/) pour les détails par version.
 
@@ -130,20 +129,36 @@ export CLAUDE_CONFIG_DIR=~/.claude-profiles/mon-profil
 ### Commandes de base
 
 ```bash
-# Envoyer un message à un agent
-./scripts/send.sh 300 "Analyse le fichier README.md"
+# ── Infrastructure ──
+./scripts/infra.sh start          # Docker, Redis, Keycloak, Dashboard, Agent 000
+./scripts/infra.sh stop           # Tout arrêter (agents + infra)
 
-# Voir les réponses
-./scripts/watch.sh 300
+# ── Agents ──
+./scripts/agent.sh start all     # Lancer tous les agents (auto-détecte depuis prompts/)
+./scripts/agent.sh start 300     # Lancer un agent spécifique
+./scripts/agent.sh stop all      # Arrêter les agents (sauf 000 et 9XX)
+./scripts/agent.sh stop 300      # Arrêter un agent
 
-# Healthcheck tous les agents
-python3 core/agent-bridge/healthcheck.py
+# ── Dashboard web ──
+./scripts/web.sh start           # Build frontend (si besoin) + uvicorn :8000
+./scripts/web.sh stop            # Arrêter uvicorn
+./scripts/web.sh rebuild         # Stop + force rebuild frontend + start
 
-# Monitor temps réel
-python3 scripts/monitor.py
+# ── Communication ──
+./scripts/send.sh 300 "message"  # Envoyer un message à un agent
+./scripts/watch.sh 300           # Voir les réponses en temps réel
 
-# Tout arrêter (agents + infra)
-./scripts/infra.sh stop
+# ── Proxy (optionnel) ──
+./scripts/proxy.sh start         # Reverse proxy 0.0.0.0:80 → 127.0.0.1:8000
+./scripts/proxy.sh stop          # Arrêter le proxy
+
+# ── Monitoring ──
+python3 core/agent-bridge/healthcheck.py   # Healthcheck tous les agents
+
+# ── Hub (framework dev) ──
+./scripts/hub-receive.sh                   # Lister les patches par projet
+./scripts/hub-cherry-pick.sh <branch>      # Cherry-pick une branche patch
+./scripts/hub-release.sh [patch|minor|major]  # Test + tag + push GitHub
 ```
 
 ### Commandes interactives (mode non-headless)
@@ -172,9 +187,13 @@ multi-agent/
 ├── scripts/
 │   ├── infra.sh             # start/stop infrastructure + Agent 000
 │   ├── agent.sh             # start/stop agents workers
-│   ├── send.sh              # Envoyer message
-│   ├── watch.sh             # Voir logs
-│   └── monitor.py           # Monitoring
+│   ├── web.sh               # start/stop/rebuild dashboard
+│   ├── proxy.sh             # reverse proxy :80 → :8000
+│   ├── send.sh              # Envoyer message à un agent
+│   ├── watch.sh             # Voir réponses en temps réel
+│   ├── hub-receive.sh       # Lister patches reçus
+│   ├── hub-cherry-pick.sh   # Cherry-pick patches
+│   └── hub-release.sh       # Test + tag + push GitHub
 │
 ├── prompts/                 # Prompts système des agents
 ├── examples/                # Exemples de configuration

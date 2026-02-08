@@ -1,7 +1,8 @@
 #!/bin/bash
 # web.sh - Start/stop web dashboard (backend + frontend build)
-# Usage: ./scripts/web.sh start
-#        ./scripts/web.sh stop
+# Usage: ./scripts/web.sh start     # Build frontend (if needed) + start uvicorn
+#        ./scripts/web.sh stop      # Stop uvicorn
+#        ./scripts/web.sh rebuild   # Stop + force rebuild frontend + start
 
 set -e
 
@@ -92,16 +93,35 @@ do_stop() {
     pkill -f "uvicorn server:app" 2>/dev/null && log_ok "Killed uvicorn processes" || true
 }
 
+do_rebuild() {
+    do_stop
+    log_info "Force rebuilding frontend..."
+    if command -v npm &>/dev/null; then
+        cd "$WEB_DIR/frontend"
+        rm -rf dist
+        npm install --silent 2>/dev/null
+        npm run build 2>/dev/null
+        cd "$BASE_DIR"
+        log_ok "Frontend rebuilt"
+    else
+        log_error "npm not found — cannot build frontend"
+        exit 1
+    fi
+    do_start
+}
+
 show_help() {
-    echo "Usage: $0 <start|stop>"
+    echo "Usage: $0 <start|stop|rebuild>"
     echo ""
-    echo "  $0 start   Build frontend (if needed) + start uvicorn on :8000"
-    echo "  $0 stop    Stop uvicorn"
+    echo "  $0 start     Build frontend (if needed) + start uvicorn on :8000"
+    echo "  $0 stop      Stop uvicorn"
+    echo "  $0 rebuild   Stop + force rebuild frontend + start"
 }
 
 case "$1" in
-    start)  do_start ;;
-    stop)   do_stop ;;
+    start)   do_start ;;
+    stop)    do_stop ;;
+    rebuild) do_rebuild ;;
     -h|--help|help|"") show_help ;;
     *)      log_error "Unknown action: $1"; show_help; exit 1 ;;
 esac
