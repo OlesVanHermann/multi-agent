@@ -61,6 +61,7 @@ class TmuxAgent:
 
         # Tracking
         self.tasks_completed = 0
+        self.messages_since_reload = 0
         self.last_output_lines = 0
 
         # Queue
@@ -260,6 +261,7 @@ class TmuxAgent:
                 "last_seen": int(time.time()),
                 "queue_size": self.prompt_queue.qsize(),
                 "tasks_completed": self.tasks_completed,
+                "messages_since_reload": self.messages_since_reload,
                 "mode": "tmux-interactive"
             })
         except redis.ConnectionError:
@@ -285,6 +287,9 @@ class TmuxAgent:
                                 'source': 'redis'
                             })
                             self._log(f"<- Queued from {data.get('from_agent', '?')}: {data.get('prompt', '')[:50]}...")
+                        elif msg_type == 'reload_prompt':
+                            self._log("Received reload_prompt — reloading agent personality")
+                            self._reload_prompt()
                         elif msg_type == 'response':
                             from_id = data.get('from_agent', '?')
                             response_text = data.get('response', '')
@@ -420,6 +425,7 @@ class TmuxAgent:
 
             self._log(f"Response sent ({len(response)} chars)")
             self.tasks_completed += 1
+            self.messages_since_reload += 1
 
             with self.state_lock:
                 self.current_task = None
@@ -489,6 +495,19 @@ class TmuxAgent:
             self.running = False
             self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", "status", "stopped")
             self.logfile.close()
+
+    def _reload_prompt(self):
+        """Reload agent prompt file to restore personality after context compaction"""
+        prompt_file = self._find_prompt_file()
+        if prompt_file:
+            self._log(f"RELOAD: {prompt_file}")
+            self.messages_since_reload = 0
+            self.prompt_queue.put({
+                'prompt': f"lis {prompt_file}",
+                'from_agent': 'compaction_reload',
+                'msg_id': f"reload_{int(time.time())}",
+            })
+            self._set_redis_status()
 
     def _find_prompt_file(self):
         """Find prompt file for this agent"""

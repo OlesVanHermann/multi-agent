@@ -188,6 +188,15 @@ body {
 .agent-cell.lightgreen { background: var(--lightgreen); color: #000; }
 .agent-cell.darkgray { background: #333; color: #666; }
 
+.agent-cell.pulsing {
+  animation: pulse-red 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-red {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 /* Terminal */
 .terminal {
   flex: 1;

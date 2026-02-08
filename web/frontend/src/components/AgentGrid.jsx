@@ -59,6 +59,8 @@ function AgentGrid({ agents, selectedAgent, controlAgent, onAgentClick }) {
       case 'idle': return 'gray'
       case 'stale': return 'gray'
       case 'starting': return 'blue'
+      case 'context_warning': return 'orange'
+      case 'context_compacted': return 'red'
       case 'error':
       case 'blocked': return 'orange'
       case 'stopped': return 'darkgray'
@@ -100,11 +102,12 @@ function AgentGrid({ agents, selectedAgent, controlAgent, onAgentClick }) {
           {group.map(agent => {
             const color = getStatusColor(agent.status)
             const isSelected = agent.id === selectedAgent || agent.id === controlAgent
+            const isPulsing = agent.status === 'context_compacted'
 
             return (
               <div
                 key={agent.id}
-                className={`agent-cell ${color} ${isSelected ? 'selected' : ''}`}
+                className={`agent-cell ${color} ${isSelected ? 'selected' : ''} ${isPulsing ? 'pulsing' : ''}`}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => onAgentClick(agent.id)}
                 onMouseEnter={() => setHoveredAgent(agent.id)}

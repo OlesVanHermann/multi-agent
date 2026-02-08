@@ -27,7 +27,7 @@ function App() {
   const { user, logout, isOperator } = useAuth()
   const [agents, setAgents] = useState([])
   const [selectedAgent, setSelectedAgent] = useState(null)
-  const [controlPlane, setControlPlane] = useState('100') // Master by default
+  const [controlPlane, setControlPlane] = useState('000') // Super-Master by default
   const [activePanel, setActivePanel] = useState('control') // 'control' or 'agent'
   const [lastUpdate, setLastUpdate] = useState(null)
   const [redisOk, setRedisOk] = useState(false)
@@ -139,6 +139,8 @@ function App() {
   const activeCount = agents.filter(a =>
     a.status === 'active' || a.status === 'busy' || a.status === 'idle'
   ).length
+  const warningCount = agents.filter(a => a.status === 'context_warning').length
+  const compactedCount = agents.filter(a => a.status === 'context_compacted').length
 
   return (
     <div className="app">
@@ -212,6 +214,8 @@ function App() {
       <StatusBar
         agentCount={agents.length}
         activeCount={activeCount}
+        warningCount={warningCount}
+        compactedCount={compactedCount}
         redisOk={redisOk}
         lastUpdate={lastUpdate}
       />

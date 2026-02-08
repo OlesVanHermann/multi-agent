@@ -55,6 +55,7 @@ KEYCLOAK_URL = os.environ.get("KEYCLOAK_URL", "http://localhost:8080")
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 MA_PREFIX = os.environ.get("MA_PREFIX", "ma")
+CONTEXT_WARNING_THRESHOLD = int(os.environ.get("CONTEXT_WARNING_THRESHOLD", "50"))
 
 # Redis connection pool
 redis_pool: Optional[redis.Redis] = None
@@ -133,29 +134,68 @@ async def health():
     }
 
 
-def _get_busy_agents() -> set:
-    """Check ALL agent tmux sessions for 'esc to interrupt' in ONE subprocess."""
+def _get_agent_states() -> dict:
+    """Check ALL agent tmux sessions in ONE subprocess.
+
+    Returns dict[agent_id] = {'busy': bool, 'compacted': bool}
+    - busy: last 3 lines contain 'esc to interrupt'
+    - compacted: last 200 lines contain 'auto-compact' (context compaction message)
+    """
     try:
         script = (
             f'for s in $(tmux ls -F "#{{session_name}}" 2>/dev/null | grep "^{MA_PREFIX}-agent-"); do '
             f'id="${{s#{MA_PREFIX}-agent-}}"; '
-            f'if tmux capture-pane -t "$s:0.0" -p -S -3 2>/dev/null | grep -q "esc to interrupt"; then '
-            f'echo "$id"; fi; done'
+            f'busy=0; compacted=0; '
+            f'if tmux capture-pane -t "$s:0.0" -p -S -3 2>/dev/null | grep -q "esc to interrupt"; then busy=1; fi; '
+            f'if tmux capture-pane -t "$s:0.0" -p -S -200 2>/dev/null | grep -qi "auto-compact"; then compacted=1; fi; '
+            f'echo "$id:$busy:$compacted"; '
+            f'done'
         )
         result = subprocess.run(
             ["bash", "-c", script],
             capture_output=True, text=True, timeout=15
         )
-        return set(result.stdout.strip().split('\n')) - {''}
+        states = {}
+        for line in result.stdout.strip().split('\n'):
+            if ':' not in line:
+                continue
+            parts = line.split(':')
+            if len(parts) >= 3:
+                agent_id = parts[0]
+                states[agent_id] = {
+                    'busy': parts[1] == '1',
+                    'compacted': parts[2] == '1',
+                }
+        return states
     except Exception:
-        return set()
+        return {}
+
+
+async def _trigger_prompt_reload(agent_id: str):
+    """Send reload_prompt to an agent with 60s debounce."""
+    if not redis_pool:
+        return
+    debounce_key = f"{MA_PREFIX}:agent:{agent_id}:last_reload"
+    try:
+        last = await redis_pool.get(debounce_key)
+        if last and time.time() - float(last) < 60:
+            return  # debounce: too soon
+        await redis_pool.set(debounce_key, str(time.time()), ex=120)
+        await redis_pool.xadd(f"{MA_PREFIX}:agent:{agent_id}:inbox", {
+            'type': 'reload_prompt',
+            'from_agent': 'server',
+            'timestamp': str(int(time.time())),
+        })
+        print(f"Triggered prompt reload for agent {agent_id}")
+    except Exception as e:
+        print(f"Failed to trigger reload for {agent_id}: {e}")
 
 
 @app.get("/api/agents")
 async def list_agents():
     """List all agents with active tmux sessions"""
     agents = []
-    busy_set = _get_busy_agents()  # ONE subprocess for all agents
+    agent_states = _get_agent_states()  # ONE subprocess for all agents
 
     # Get active tmux sessions (agent-XXX format)
     try:
@@ -174,6 +214,7 @@ async def list_agents():
                         last_seen = int(time.time())
                         queue_size = 0
                         tasks_completed = 0
+                        messages_since_reload = 0
 
                         if redis_pool:
                             try:
@@ -182,6 +223,7 @@ async def list_agents():
                                     hb_last_seen = int(data.get("last_seen", 0))
                                     queue_size = int(data.get("queue_size", 0))
                                     tasks_completed = int(data.get("tasks_completed", 0))
+                                    messages_since_reload = int(data.get("messages_since_reload", 0))
 
                                     # Only trust heartbeat if fresh (< 15s)
                                     if time.time() - hb_last_seen <= 15:
@@ -190,8 +232,15 @@ async def list_agents():
                             except Exception:
                                 pass
 
-                        # Override: tmux shows "esc to interrupt" = busy
-                        if agent_id in busy_set:
+                        # Determine status from tmux state
+                        state = agent_states.get(agent_id, {})
+                        if state.get('compacted'):
+                            status = "context_compacted"
+                            # Auto-trigger prompt reload
+                            asyncio.ensure_future(_trigger_prompt_reload(agent_id))
+                        elif messages_since_reload >= CONTEXT_WARNING_THRESHOLD:
+                            status = "context_warning"
+                        elif state.get('busy'):
                             status = "busy"
 
                         agents.append(AgentStatus(
@@ -744,7 +793,7 @@ async def websocket_status(websocket: WebSocket):
     try:
         while True:
             agents = []
-            busy_set = _get_busy_agents()  # ONE subprocess for all agents
+            agent_states = _get_agent_states()  # ONE subprocess for all agents
 
             # Get active tmux sessions
             try:
@@ -761,20 +810,28 @@ async def websocket_status(websocket: WebSocket):
                                 # Default: tmux exists = agent is active
                                 status = "active"
                                 last_seen = int(time.time())
+                                messages_since_reload = 0
 
                                 if redis_pool:
                                     try:
                                         data = await redis_pool.hgetall(f"{MA_PREFIX}:agent:{agent_id}")
                                         if data:
                                             hb_last_seen = int(data.get("last_seen", 0))
+                                            messages_since_reload = int(data.get("messages_since_reload", 0))
                                             if time.time() - hb_last_seen <= 15:
                                                 status = data.get("status", "active")
                                                 last_seen = hb_last_seen
                                     except Exception:
                                         pass
 
-                                # Override: tmux shows "esc to interrupt" = busy
-                                if agent_id in busy_set:
+                                # Determine status from tmux state
+                                state = agent_states.get(agent_id, {})
+                                if state.get('compacted'):
+                                    status = "context_compacted"
+                                    asyncio.ensure_future(_trigger_prompt_reload(agent_id))
+                                elif messages_since_reload >= CONTEXT_WARNING_THRESHOLD:
+                                    status = "context_warning"
+                                elif state.get('busy'):
                                     status = "busy"
 
                                 agents.append({
