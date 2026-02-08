@@ -392,7 +392,7 @@ class TmuxAgent:
             # Notify sender if it was another agent
             from_agent = task.get('from_agent')
 
-            if from_agent and from_agent not in ['manual', 'cli', 'auto_init', 'unknown', 'legacy', 'compaction_reload'] and response.strip():
+            if from_agent and from_agent not in ['manual', 'cli', 'auto_init', 'unknown', 'legacy', 'compaction_reload']:
                 try:
                     # Send FULL response - no truncation
                     # For very long responses, split into chunks
