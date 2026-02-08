@@ -756,8 +756,9 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
     except (WebSocketDisconnect, ConnectionResetError):
         pass
     except Exception as e:
-        if str(e):  # Skip empty exceptions (normal disconnects)
-            print(f"WS agent/{agent_id}: {e}")
+        import traceback
+        print(f"Agent WebSocket error: {type(e).__name__}: {e}")
+        traceback.print_exc()
 
 
 @app.websocket("/ws/messages")
@@ -816,8 +817,9 @@ async def websocket_messages(websocket: WebSocket):
         manager.disconnect(websocket)
     except Exception as e:
         manager.disconnect(websocket)
-        if str(e):
-            print(f"WS messages: {e}")
+        import traceback
+        print(f"Messages WebSocket error: {type(e).__name__}: {e}")
+        traceback.print_exc()
 
 
 @app.websocket("/ws/status")
@@ -890,8 +892,9 @@ async def websocket_status(websocket: WebSocket):
     except (WebSocketDisconnect, ConnectionResetError):
         pass
     except Exception as e:
-        if str(e):
-            print(f"WS status: {e}")
+        import traceback
+        print(f"Status WebSocket error: {type(e).__name__}: {e}")
+        traceback.print_exc()
 
 
 # === Static Files (Frontend) ===
