@@ -138,6 +138,9 @@ def get_my_agent_id():
             capture_output=True, text=True, timeout=2
         )
         session_name = result.stdout.strip()
+        # Support both "ma-agent-XXX" and "agent-XXX" session naming
+        if session_name.startswith("ma-agent-"):
+            return session_name.split("ma-agent-")[1]
         if session_name.startswith("agent-"):
             return session_name.replace("agent-", "")
     except:
