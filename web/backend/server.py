@@ -235,6 +235,7 @@ async def get_agent(agent_id: str):
 
 class UpdateInput(BaseModel):
     text: str
+    previous: str = ""
     submit: bool = False
 
 
@@ -353,17 +354,28 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
         if result.returncode != 0:
             raise HTTPException(status_code=404, detail=f"Agent {agent_id} session not found")
 
-        # Clear current line: C-e (end) then C-u (kill to start)
-        # Both needed for text that wraps across multiple visual lines
-        subprocess.run(
-            ["tmux", "send-keys", "-t", target, "C-e", "C-u"],
-            check=True
-        )
+        # Incremental diff: only send backspaces + new chars
+        prev = data.previous or ""
+        new = data.text or ""
 
-        # Send the new text (literal mode: -l prevents interpreting key names)
-        if data.text:
+        # Find common prefix
+        i = 0
+        while i < len(prev) and i < len(new) and prev[i] == new[i]:
+            i += 1
+
+        # Backspace to remove divergent old chars
+        bs = len(prev) - i
+        if bs > 0:
             subprocess.run(
-                ["tmux", "send-keys", "-t", target, "-l", data.text],
+                ["tmux", "send-keys", "-t", target] + ["BSpace"] * bs,
+                check=True
+            )
+
+        # Type new chars
+        new_chars = new[i:]
+        if new_chars:
+            subprocess.run(
+                ["tmux", "send-keys", "-t", target, "-l", new_chars],
                 check=True
             )
 

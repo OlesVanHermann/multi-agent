@@ -200,7 +200,7 @@ function Terminal({ agentId, focused }) {
       await fetch(api(`api/agent/${agentId}/input`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: value, submit: false })
+        body: JSON.stringify({ text: value, previous: lastSentInput.current, submit: false })
       })
       lastSentInput.current = value
     } catch (err) {
@@ -267,7 +267,7 @@ function Terminal({ agentId, focused }) {
         await fetch(api(`api/agent/${agentId}/input`), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: message, submit: true })
+          body: JSON.stringify({ text: message, previous: lastSentInput.current, submit: true })
         })
       } else {
         // Empty input: just send Enter
