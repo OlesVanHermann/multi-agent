@@ -131,17 +131,7 @@ if [ "$DRY_RUN" = true ]; then
 fi
 
 # ============================================================
-# 3. Arrêter les agents
-# ============================================================
-if [ -f "./scripts/infra.sh" ]; then
-    ./scripts/infra.sh stop 2>/dev/null && log_ok "Infrastructure arrêtée" || true
-elif [ -f "./scripts/stop.sh" ]; then
-    ./scripts/stop.sh 2>/dev/null || true
-fi
-pkill -f "agent.py" 2>/dev/null || true
-
-# ============================================================
-# 4. Appliquer la mise à jour
+# 3. Appliquer la mise à jour
 # ============================================================
 log_info "Mise à jour..."
 
@@ -161,7 +151,7 @@ for file in "${FRAMEWORK_FILES[@]}"; do
 done
 
 # ============================================================
-# 5. Dépendances
+# 4. Dépendances
 # ============================================================
 log_info "Installation des dépendances..."
 $PIP_CMD install -q -r requirements.txt 2>/dev/null || \
