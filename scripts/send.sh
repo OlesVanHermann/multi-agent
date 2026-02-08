@@ -1,7 +1,7 @@
 #!/bin/bash
 # send.sh - Envoie un message à un agent via Redis Streams
 # Usage: ./send.sh <to_agent> <message>
-#        ./send.sh 300 "go scaleway.com"
+#        ./send.sh 300 "go example.com"
 #
 # Auto-detects sender from tmux session name (agent-100 -> from_agent=100)
 
@@ -20,7 +20,7 @@ shift 2>/dev/null || true
 
 if [ -z "$TO_AGENT" ]; then
     echo "Usage: $0 <to_agent> <message>"
-    echo "       $0 300 'go scaleway.com'"
+    echo "       $0 300 'go example.com'"
     exit 1
 fi
 
@@ -49,7 +49,7 @@ FROM_AGENT=${FROM_AGENT:-cli}
 
 if [ -z "$TO_AGENT" ]; then
     echo "Usage: $0 <from_agent> <to_agent> <message>"
-    echo "       $0 100 300 'go scaleway.com'"
+    echo "       $0 100 300 'go example.com'"
     exit 1
 fi
 
