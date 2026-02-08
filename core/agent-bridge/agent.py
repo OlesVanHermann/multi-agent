@@ -184,48 +184,48 @@ class TmuxAgent:
         """Wait for Claude to finish responding and return the output"""
         start_time = time.time()
         baseline = self._capture_pane(200)
-        baseline_lines = len(baseline.strip().split('\n'))
+        baseline_hash = hash(baseline)
 
         last_content = ""
         stable_count = 0
         response_started = False
+        last_printed = 0
 
         while time.time() - start_time < timeout:
             time.sleep(POLL_INTERVAL)
 
             current = self._capture_pane(200)
-            current_lines = current.strip().split('\n')
 
             # Check if content changed
             if current != last_content:
                 last_content = current
                 stable_count = 0
-                response_started = True
+                if hash(current) != baseline_hash:
+                    response_started = True
 
                 # Print new content in real-time
-                new_lines = current_lines[baseline_lines:]
-                if new_lines:
-                    for line in new_lines[-5:]:  # Show last 5 new lines
+                current_lines = current.strip().split('\n')
+                if len(current_lines) > last_printed:
+                    for line in current_lines[last_printed:][-5:]:
                         if line.strip():
                             print(f"  {line}", flush=True)
+                    last_printed = len(current_lines)
             else:
                 stable_count += 1
 
             # Check for prompt marker (Claude is done)
+            current_lines = current.strip().split('\n')
             last_line = current_lines[-1].strip() if current_lines else ""
             for marker in PROMPT_MARKERS:
                 if last_line.endswith(marker) or last_line == marker:
                     if response_started and stable_count >= 2:
-                        # Extract response (everything between baseline and prompt)
-                        response_lines = current_lines[baseline_lines:-1]
-                        response = '\n'.join(response_lines).strip()
+                        # Return full captured content (not baseline-relative)
+                        response = '\n'.join(current_lines[:-1]).strip()
                         return response
 
             # If stable for a while and we got content, consider it done
             if stable_count > 10 and response_started:
-                response_lines = current_lines[baseline_lines:]
-                response = '\n'.join(response_lines).strip()
-                # Remove trailing prompt line if present
+                response = '\n'.join(current_lines).strip()
                 for marker in PROMPT_MARKERS:
                     if response.endswith(marker):
                         response = response[:-len(marker)].strip()
