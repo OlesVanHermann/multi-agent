@@ -5,6 +5,9 @@
 
 set -e
 
+# Raise open files limit (each agent = tmux session + claude + bridge)
+ulimit -n 10240 2>/dev/null || true
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$SCRIPT_DIR/.."
 BRIDGE_SCRIPT="$BASE_DIR/core/agent-bridge/agent.py"
