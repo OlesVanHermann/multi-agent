@@ -13,7 +13,17 @@ Use crawl3.py when a site returns 429 with crawl2.py.
 
 Usage:
     python3 crawl3.py <domain>                              # Single domain (1s delay)
-    python3 crawl3.py <d1> <d2> <d3> ... [--agent-id=XXX]  # Multi-domain round-robin
+    python3 crawl3.py <d1> <d2> ... <d100> [--agent-id=XXX] # Multi-domain (max 100)
+
+Multi-domain mode splits domains into batches of max 4 (round-robin per batch).
+Batches are processed sequentially: batch 1 finishes, tabs close, batch 2 starts.
+
+    Sites  Batches  Distribution
+    1-4    1        [n]
+    5      2        [3, 2]
+    8      2        [4, 4]
+    13     4        [4, 3, 3, 3]
+    100    25       [4, 4, ..., 4]
 
 Transport: chrome-bridge.py (Extension + Native Messaging Host).
 """
@@ -455,52 +465,42 @@ class DomainCrawler:
 
 
 # =============================================================================
-# MAIN
+# BATCH DISTRIBUTION
 # =============================================================================
 
-def main():
-    args = [a for a in sys.argv[1:] if not a.startswith('--')]
-    flags = [a for a in sys.argv[1:] if a.startswith('--')]
+MAX_PER_BATCH = 4  # Max domains per round-robin batch (Chrome tabs)
+MAX_DOMAINS = 100  # Max total domains per process
 
-    if len(args) < 1:
-        print("Usage: python3 crawl3.py <domain> [<domain2> ... <domain10>] [options]")
-        print()
-        print("Single domain:  python3 crawl3.py example.com  (1s delay between pages)")
-        print("Multi-domain:   python3 crawl3.py d1.com d2.com d3.com  (round-robin)")
-        print()
-        print("Options:")
-        print("  --subdomains      Include subdomains")
-        print("  --agent-id=XXX    Force agent ID")
-        print()
-        print(f"Mode: crawl3 (no language filter, delay={DELAY_BETWEEN_PAGES}s single-domain)")
-        print("Transport: chrome-bridge.py (Extension + Native Messaging Host)")
-        return
 
-    domains = args[:10]
-    include_subdomains = '--subdomains' in flags
-    forced_agent_id = None
-    for flag in flags:
-        if flag.startswith('--agent-id='):
-            forced_agent_id = flag.split('=', 1)[1]
+def split_into_batches(domains, max_per_batch=MAX_PER_BATCH):
+    """Split domains into balanced batches of max_per_batch.
 
-    agent_id = detect_agent_id(forced_agent_id)
-    multi = len(domains) > 1
+    Uses ceil(n/max_per_batch) batches with even distribution:
+        5 → [3, 2]    8 → [4, 4]    13 → [4, 3, 3, 3]    100 → [4]*25
+    """
+    n = len(domains)
+    if n <= max_per_batch:
+        return [domains]
+    num_batches = (n + max_per_batch - 1) // max_per_batch
+    batches = []
+    idx = 0
+    for i in range(num_batches):
+        size = n // num_batches + (1 if i < n % num_batches else 0)
+        batches.append(domains[idx:idx + size])
+        idx += size
+    return batches
 
-    if not _bridge.check_chrome_running():
-        print("Chrome bridge not reachable!")
-        print("  Tester: curl http://127.0.0.1:9222/health")
-        return
 
-    # Create crawlers
-    extra_sleep = DomainCrawler.SLEEP_BY_COUNT.get(len(domains), 0.0)
-    # Single-domain: add inter-page delay (the crawl3 specialty)
-    # Multi-domain: round-robin provides natural delay, no extra inter-page delay
-    inter_page_delay = DELAY_BETWEEN_PAGES if not multi else 0
-    print(f"Initialisation ({len(domains)} domaine(s), sleep={extra_sleep}s, inter_page={inter_page_delay}s)...")
+# =============================================================================
+# CRAWL ONE BATCH (round-robin across max 4 domains)
+# =============================================================================
 
+def crawl_batch(batch_domains, agent_id, include_subdomains, domain_offset, inter_page_delay):
+    """Crawl a batch of domains in round-robin. Returns list of crawlers with stats."""
+    extra_sleep = DomainCrawler.SLEEP_BY_COUNT.get(len(batch_domains), 0.0)
     crawlers = []
-    for i, domain in enumerate(domains):
-        suffix = f"_{i}" if multi else ""
+    for i, domain in enumerate(batch_domains):
+        suffix = f"_{domain_offset + i}"
         c = DomainCrawler(domain, include_subdomains, suffix, extra_sleep, inter_page_delay)
         if not c.validate():
             continue
@@ -511,32 +511,19 @@ def main():
             print(f"  [{domain}] SKIP: failed to create Chrome tab")
 
     if not crawlers:
-        print("No valid domains to crawl.")
-        return
+        return []
 
-    mode = f"round-robin ({len(crawlers)} domaines)" if multi else f"single (delay={DELAY_BETWEEN_PAGES}s)"
-    print(f"\nMode: {mode}")
-    print(f"Agent: {agent_id or '?'}")
-
-    # =========================================================================
-    # PHASE 1: DISCOVERY
-    # =========================================================================
-    print(f"\n--- Phase 1: Discovery ---")
+    # Discovery
     for c in crawlers:
         discovered = c.discover()
         c.refresh_pending()
         total = len(list(c.html_dir.glob("*.html")))
         print(f"  [{c.domain}] {total} fichiers, {len(c.pending)} a telecharger, +{discovered} nouvelles URLs")
 
-    # =========================================================================
-    # PHASE 2: ROUND-ROBIN CRAWL
-    # =========================================================================
-    print(f"\n--- Phase 2: Crawl ---")
+    # Round-robin crawl
     page_count = 0
-
     while any(c.has_pending() for c in crawlers):
         progress = False
-
         for c in crawlers:
             if c.has_pending():
                 if c.process_one():
@@ -555,17 +542,89 @@ def main():
             if not any(c.has_pending() for c in crawlers):
                 break
 
+    # Close Chrome tabs (free resources for next batch)
+    for c in crawlers:
+        if c.tab_id:
+            try:
+                _bridge.close_tab_by_id(c.tab_id)
+            except Exception:
+                pass
+
+    return crawlers
+
+
+# =============================================================================
+# MAIN
+# =============================================================================
+
+def main():
+    args = [a for a in sys.argv[1:] if not a.startswith('--')]
+    flags = [a for a in sys.argv[1:] if a.startswith('--')]
+
+    if len(args) < 1:
+        print(f"Usage: python3 crawl3.py <domain> [<domain2> ... <domain{MAX_DOMAINS}>] [options]")
+        print()
+        print("Single domain:  python3 crawl3.py example.com  (1s delay between pages)")
+        print("Multi-domain:   python3 crawl3.py d1.com d2.com d3.com ... d100.com")
+        print(f"                (batches of {MAX_PER_BATCH} in round-robin, max {MAX_DOMAINS} domains)")
+        print()
+        print("Options:")
+        print("  --subdomains      Include subdomains")
+        print("  --agent-id=XXX    Force agent ID")
+        print()
+        print(f"Mode: crawl3 (no language filter, delay={DELAY_BETWEEN_PAGES}s single-domain)")
+        print("Transport: chrome-bridge.py (Extension + Native Messaging Host)")
+        return
+
+    domains = args[:MAX_DOMAINS]
+    include_subdomains = '--subdomains' in flags
+    forced_agent_id = None
+    for flag in flags:
+        if flag.startswith('--agent-id='):
+            forced_agent_id = flag.split('=', 1)[1]
+
+    agent_id = detect_agent_id(forced_agent_id)
+
+    if not _bridge.check_chrome_running():
+        print("Chrome bridge not reachable!")
+        print("  Tester: curl http://127.0.0.1:9222/health")
+        return
+
+    # Single-domain: add inter-page delay (the crawl3 specialty)
+    # Multi-domain: round-robin provides natural delay, no extra inter-page delay
+    inter_page_delay = DELAY_BETWEEN_PAGES if len(domains) == 1 else 0
+
+    batches = split_into_batches(domains)
+    batch_sizes = [len(b) for b in batches]
+    print(f"Initialisation ({len(domains)} domaine(s), {len(batches)} batch(es): {batch_sizes})")
+    print(f"Agent: {agent_id or '?'}")
+
+    # =========================================================================
+    # CRAWL BATCHES SEQUENTIALLY
+    # =========================================================================
+    all_crawlers = []
+    domain_offset = 0
+
+    for batch_idx, batch in enumerate(batches):
+        print(f"\n{'='*60}")
+        print(f"BATCH {batch_idx + 1}/{len(batches)}: {', '.join(batch)} (RR x{len(batch)})")
+        print(f"{'='*60}")
+
+        crawlers = crawl_batch(batch, agent_id, include_subdomains, domain_offset, inter_page_delay)
+        all_crawlers.extend(crawlers)
+        domain_offset += len(batch)
+
     # =========================================================================
     # SUMMARY
     # =========================================================================
     print(f"\n{'='*60}")
-    print(f"CRAWL TERMINE")
+    print(f"CRAWL TERMINE ({len(domains)} domaines, {len(batches)} batches)")
     print(f"{'='*60}")
-    for c in crawlers:
+    for c in all_crawlers:
         final = len([f for f in c.html_dir.glob("*.html") if f.stat().st_size > 0])
         print(f"  [{c.domain}] ok={c.total_ok} erreurs={c.total_errors} HTML valides={final}")
-    total_ok = sum(c.total_ok for c in crawlers)
-    total_err = sum(c.total_errors for c in crawlers)
+    total_ok = sum(c.total_ok for c in all_crawlers)
+    total_err = sum(c.total_errors for c in all_crawlers)
     print(f"  TOTAL: ok={total_ok} erreurs={total_err}")
 
 
