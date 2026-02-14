@@ -374,6 +374,11 @@ class DomainCrawler:
         if self.is_failed(sha) or self.is_downloaded(sha):
             return True
 
+        # Skip binary/non-HTML URLs (pdf, zip, images etc.)
+        if re.search(r'\.(pdf|zip|tar|gz|mp4|mp3|wav|avi|exe|dmg|iso|doc|docx|xls|xlsx|ppt|pptx)(\?|$)', url, re.IGNORECASE):
+            self.mark_failed(sha, url, "skipped_binary")
+            return True
+
         # Inter-page delay (crawl3 rate limiting for single-domain mode)
         if self.inter_page_delay > 0 and self.pages_processed > 0:
             time.sleep(self.inter_page_delay)
@@ -425,7 +430,7 @@ class DomainCrawler:
             if error_reason:
                 self.mark_failed(sha, url, error_reason)
                 self.total_errors += 1
-                print(f"  [{self.domain}] FAILED ({error_reason}): {url[:60]}")
+                print(f"  [{self.domain}] FAILED ({error_reason}): {url}")
             else:
                 html_file = self.html_dir / f"{sha}.html"
                 html_file.write_text(f"<!-- URL: {url} -->\n{html}")
@@ -440,11 +445,11 @@ class DomainCrawler:
                         self.total_new_urls += 1
 
                 self.total_ok += 1
-                print(f"  [{self.domain}] OK ({len(html)//1024}KB, +{len(all_urls)} links): {url[:60]}")
+                print(f"  [{self.domain}] OK ({len(html)//1024}KB, +{len(all_urls)} links): {url}")
         else:
             self.mark_failed(sha, url, "empty_response")
             self.total_errors += 1
-            print(f"  [{self.domain}] FAILED (empty): {url[:60]}")
+            print(f"  [{self.domain}] FAILED (empty): {url}")
 
         return True
 
