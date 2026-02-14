@@ -1,62 +1,21 @@
 #!/usr/bin/env python3
 """
-==============================================================================
 crawl.py -- Website Crawler via Chrome Extension Bridge
-==============================================================================
 
-Full Architecture Overview
---------------------------
-This script is a breadth-first web crawler that uses Chrome (accessed via
-the Chrome Extension CDP Bridge on port 9222) to download and render full
-HTML pages -- including JavaScript-rendered content -- from a target domain.
-It is designed to run inside the multi-agent system, where multiple agents
-may crawl concurrently, each isolated in their own Chrome tab.
+Supports multi-domain round-robin crawling to avoid rate limiting.
+
+Usage:
+    python3 crawl.py <domain>                              # Single domain
+    python3 crawl.py <d1> <d2> <d3> ... [--agent-id=XXX]  # Multi-domain (max 10)
+
+Multi-domain mode downloads one page from each domain in turn (round-robin),
+providing natural inter-request delay per site without artificial sleep.
+
+KEY DIFFERENCE FROM crawl2.py:
+    crawl.py has INCLUDE_PATTERNS = [r'/en/', r'/fr/'] -- only crawl
+    English and French pages. Use crawl2.py for sites without language prefixes.
 
 Transport: chrome-bridge.py (Extension + Native Messaging Host).
-No need for --remote-debugging-port on Chrome.
-
-File Storage System (On-Disk Database)
---------------------------------------
-All crawl data lives under:
-    ~/multi-agent/studies/<domain>/300/
-
-The storage is split into three directories that together form a simple
-on-disk key-value store:
-
-    INDEX/   -- URL-to-SHA mapping files. Each file is named by the SHA-256
-                hash of a URL, and its content is the original URL string.
-
-    html/    -- Downloaded HTML content. Each file is named <sha>.html.
-                - Size 0 (empty): URL is registered but not yet downloaded
-                - Size > 0: URL has been successfully downloaded.
-
-    FAILED/  -- Permanent failure markers. Each file is named by SHA and
-                contains "url|reason|timestamp".
-
-SHA-Based Deduplication System
-------------------------------
-Every URL is deduplicated via SHA-256 hashing.
-
-CDP Tab Isolation Per Agent
----------------------------
-Multiple agents may run this crawler concurrently. Each agent gets its own
-dedicated Chrome tab to avoid interference, managed via Redis keys.
-
-URL Filtering System
---------------------
-INCLUDE_PATTERNS = [r'/en/', r'/fr/'] -- only crawl English and French pages.
-Use crawl2.py for sites without language prefixes.
-
-Usage Examples
---------------
-    python3 crawl.py example.com
-    python3 crawl.py example.com --subdomains
-    python3 crawl.py example.com --agent-id=300
-
-Dependencies
-------------
-    - redis (optional) -- for per-agent tab isolation; works without it
-    - A running Chrome instance with the CDP Bridge extension installed
 """
 
 import hashlib
@@ -76,7 +35,6 @@ from urllib.parse import urljoin, urlparse
 # =============================================================================
 # CHROME BRIDGE IMPORT
 # =============================================================================
-# Import chrome-bridge.py as a module (handles CDP via Extension bridge HTTP)
 
 _bridge_spec = importlib.util.spec_from_file_location(
     "chrome_bridge", Path(__file__).parent / "chrome-bridge.py"
@@ -86,76 +44,14 @@ _bridge_spec.loader.exec_module(_bridge)
 
 
 # =============================================================================
-# Global Configuration Constants
+# CONSTANTS
 # =============================================================================
 
 BASE_DIR = Path.home() / "multi-agent"
 STUDIES_DIR = BASE_DIR / "studies"
 REMOVED_DIR = BASE_DIR / "removed"
 
-STUDY_DIR = None
-HTML_DIR = None
-INDEX_DIR = None
-FAILED_DIR = None
-CONFIG_FILE = None
-ROOT_DOMAIN = None
-INCLUDE_SUBDOMAINS = False
-
-# =============================================================================
-# Agent Identification
-# =============================================================================
-
-AGENT_ID = None
-_redis_conn = None
-
-
-def _get_redis():
-    """Get or create a lazy Redis connection. Returns None if unavailable."""
-    global _redis_conn
-    if _redis_conn is None:
-        try:
-            import redis as _redis_module
-            _redis_conn = _redis_module.Redis(host='localhost', port=6379, decode_responses=True)
-            _redis_conn.ping()
-        except Exception:
-            _redis_conn = False
-    return _redis_conn if _redis_conn else None
-
-
-def _detect_agent_id():
-    """Detect the agent ID for CDP tab isolation.
-
-    Detection priority:
-        1. Already set in global AGENT_ID (e.g., from --agent-id= flag)
-        2. AGENT_ID environment variable
-        3. Auto-detect from tmux session name
-    """
-    global AGENT_ID
-    if AGENT_ID:
-        return AGENT_ID
-    agent_id = os.environ.get("AGENT_ID")
-    if agent_id:
-        AGENT_ID = agent_id
-        return agent_id
-    try:
-        result = subprocess.run(
-            ["tmux", "display-message", "-p", "#S"],
-            capture_output=True, text=True, timeout=2
-        )
-        name = result.stdout.strip()
-        if name.startswith("ma-agent-"):
-            AGENT_ID = name.split("ma-agent-")[1]
-        elif name.startswith("agent-"):
-            AGENT_ID = name.replace("agent-", "")
-    except Exception:
-        pass
-    return AGENT_ID
-
-
-# =============================================================================
-# URL Filtering Patterns
-# =============================================================================
-
+# KEY DIFFERENCE: language filter active
 INCLUDE_PATTERNS = [
     r'/en/',   # Pages anglaises
     r'/fr/',   # Pages francaises
@@ -171,455 +67,462 @@ EXCLUDE_PATTERNS = [
 
 
 # =============================================================================
-# Domain Matching
-# =============================================================================
-
-def is_same_domain(url_netloc: str, root_domain: str) -> bool:
-    if not INCLUDE_SUBDOMAINS:
-        return url_netloc == root_domain or url_netloc == f"www.{root_domain}"
-    return (url_netloc == root_domain or
-            url_netloc.endswith(f".{root_domain}"))
-
-
-# =============================================================================
-# Configuration Loading
-# =============================================================================
-
-def load_config():
-    if CONFIG_FILE.exists():
-        with open(CONFIG_FILE, 'r') as f:
-            return json.load(f)
-    return {"include_patterns": INCLUDE_PATTERNS, "exclude_patterns": EXCLUDE_PATTERNS}
-
-
-# =============================================================================
-# SHA-Based Deduplication Helpers
+# UTILITIES
 # =============================================================================
 
 def url_to_sha(url: str) -> str:
     return hashlib.sha256(url.encode()).hexdigest()
 
 
-def normalize_url(url: str) -> str:
+def detect_agent_id(forced_id=None):
+    """Detect agent ID from flag, env, or tmux session."""
+    if forced_id:
+        return forced_id
+    agent_id = os.environ.get("AGENT_ID")
+    if agent_id:
+        return agent_id
     try:
-        url = url.split('#')[0].split('?')[0]
-        if url.startswith('http://'):
-            url = 'https://' + url[7:]
-        if ROOT_DOMAIN:
+        result = subprocess.run(
+            ["tmux", "display-message", "-p", "#S"],
+            capture_output=True, text=True, timeout=2
+        )
+        name = result.stdout.strip()
+        if name.startswith("ma-agent-"):
+            return name.split("ma-agent-")[1]
+        elif name.startswith("agent-"):
+            return name.replace("agent-", "")
+    except Exception:
+        pass
+    return None
+
+
+# =============================================================================
+# DOMAIN CRAWLER CLASS
+# =============================================================================
+
+class DomainCrawler:
+    """Encapsulates all crawl state for a single domain."""
+
+    # Extra sleep after page load, decreases with more domains (round-robin = natural delay)
+    SLEEP_BY_COUNT = {1: 1.0, 2: 0.5, 3: 0.24, 4: 0.12, 5: 0.06, 6: 0.02}
+
+    def __init__(self, domain, include_subdomains=False, agent_suffix="", extra_sleep=0.5):
+        self.domain = domain
+        self.root_domain = domain.removeprefix("www.")
+        self.include_subdomains = include_subdomains
+        self.agent_suffix = agent_suffix
+        self.extra_sleep = extra_sleep
+
+        # Directories
+        self.study_dir = STUDIES_DIR / domain / "300"
+        self.html_dir = self.study_dir / "html"
+        self.index_dir = self.study_dir / "INDEX"
+        self.failed_dir = self.study_dir / "FAILED"
+        self.config_file = STUDIES_DIR / domain / "config.json"
+
+        # Config
+        self.config = self._load_config()
+
+        # Chrome state
+        self.tab_id = None
+        self.cdp = None
+
+        # Queue: list of (sha, url) + set for O(1) dedup
+        self.pending = []
+        self.pending_shas = set()
+
+        # Counters
+        self.total_ok = 0
+        self.total_errors = 0
+        self.total_new_urls = 0
+        self.active = True
+
+    def _load_config(self):
+        if self.config_file.exists():
+            with open(self.config_file, 'r') as f:
+                return json.load(f)
+        return {"include_patterns": INCLUDE_PATTERNS, "exclude_patterns": EXCLUDE_PATTERNS}
+
+    # =========================================================================
+    # SETUP
+    # =========================================================================
+
+    def validate(self) -> bool:
+        if not self.study_dir.exists():
+            print(f"  SKIP {self.domain}: etude non trouvee dans {STUDIES_DIR}")
+            self.active = False
+            return False
+        self.html_dir.mkdir(parents=True, exist_ok=True)
+        self.index_dir.mkdir(parents=True, exist_ok=True)
+        return True
+
+    def setup_tab(self, base_agent_id) -> bool:
+        agent_key = f"{base_agent_id}{self.agent_suffix}" if base_agent_id else None
+
+        if agent_key:
+            tab_id = _bridge.get_agent_tab(agent_key)
+            if tab_id and _bridge.validate_target(tab_id):
+                self.tab_id = tab_id
+                self.cdp = _bridge.CDP(tab_id)
+                return True
+            elif tab_id:
+                _bridge.cleanup_stale_target(agent_key)
+
+        tab_id = _bridge.create_tab("about:blank")
+        if tab_id:
+            self.tab_id = tab_id
+            self.cdp = _bridge.CDP(tab_id)
+            if agent_key:
+                _bridge.set_agent_tab(agent_key, tab_id)
+            return True
+
+        self.active = False
+        return False
+
+    # =========================================================================
+    # URL HELPERS
+    # =========================================================================
+
+    def normalize_url(self, url: str) -> str:
+        try:
+            url = url.split('#')[0].split('?')[0]
+            if url.startswith('http://'):
+                url = 'https://' + url[7:]
             parsed = urlparse(url)
             netloc = parsed.netloc
             parts = netloc.split('.')
-            if netloc == ROOT_DOMAIN and len(parts) <= 2:
-                url = url.replace(f"://{ROOT_DOMAIN}", f"://www.{ROOT_DOMAIN}", 1)
-        if url.endswith('/') and url.count('/') > 3:
-            url = url.rstrip('/')
-        return url
-    except (ValueError, Exception):
-        return ""
-
-
-# =============================================================================
-# URL Filtering
-# =============================================================================
-
-def should_include_url(url: str, config: dict) -> bool:
-    include = config.get("include_patterns", INCLUDE_PATTERNS)
-    exclude = config.get("exclude_patterns", EXCLUDE_PATTERNS)
-    if include:
-        if not any(re.search(p, url, re.IGNORECASE) for p in include):
-            return False
-    if exclude:
-        if any(re.search(p, url, re.IGNORECASE) for p in exclude):
-            return False
-    return True
-
-
-# =============================================================================
-# HTML Link Extraction
-# =============================================================================
-
-def extract_urls_from_html(html: str, base_url: str, config: dict) -> set:
-    urls = set()
-    href_pattern = r'href=["\']([^"\']+)["\']'
-    parsed_base = urlparse(base_url)
-
-    for match in re.finditer(href_pattern, html, re.IGNORECASE):
-        try:
-            url = match.group(1).strip()
-            if url.startswith(('javascript:', 'mailto:', 'tel:', '#', 'data:')):
-                continue
-            if url.startswith('/'):
-                url = f"{parsed_base.scheme}://{parsed_base.netloc}{url}"
-            elif not url.startswith(('http://', 'https://')):
-                url = urljoin(base_url, url)
-            url = normalize_url(url)
-            if not url:
-                continue
-            url_domain = urlparse(url).netloc
-            if not is_same_domain(url_domain, ROOT_DOMAIN):
-                continue
+            if netloc == self.root_domain and len(parts) <= 2:
+                url = url.replace(f"://{self.root_domain}", f"://www.{self.root_domain}", 1)
+            if url.endswith('/') and url.count('/') > 3:
+                url = url.rstrip('/')
+            return url
         except (ValueError, Exception):
-            continue
-        if should_include_url(url, config):
-            urls.add(url)
+            return ""
 
-    return urls
+    def is_same_domain(self, url_netloc: str) -> bool:
+        if not self.include_subdomains:
+            return url_netloc == self.root_domain or url_netloc == f"www.{self.root_domain}"
+        return url_netloc == self.root_domain or url_netloc.endswith(f".{self.root_domain}")
 
+    def should_include_url(self, url: str) -> bool:
+        include = self.config.get("include_patterns", INCLUDE_PATTERNS)
+        exclude = self.config.get("exclude_patterns", EXCLUDE_PATTERNS)
+        if include:
+            if not any(re.search(p, url, re.IGNORECASE) for p in include):
+                return False
+        if exclude:
+            if any(re.search(p, url, re.IGNORECASE) for p in exclude):
+                return False
+        return True
 
-# =============================================================================
-# Chrome Bridge Tab Management
-# =============================================================================
-
-def get_or_create_tab():
-    """Get or create a dedicated Chrome tab for this agent via the bridge."""
-    agent_id = _detect_agent_id()
-
-    if not _bridge.check_chrome_running():
-        return None
-
-    # Check existing tab in Redis
-    if agent_id:
-        tab_id = _bridge.get_agent_tab(agent_id)
-        if tab_id:
-            if _bridge.validate_target(tab_id):
-                return tab_id
-            else:
-                print(f"⚠ Tab {str(tab_id)[:12]}... obsolete, creation nouveau...", file=sys.stderr)
-                _bridge.cleanup_stale_target(agent_id)
-
-    # Create new tab
-    tab_id = _bridge.create_tab("about:blank")
-    if tab_id and agent_id:
-        _bridge.set_agent_tab(agent_id, tab_id)
-        print(f"✓ Tab dedie cree pour agent {agent_id}", file=sys.stderr)
-    elif not agent_id:
-        print(f"⚠ Agent non identifie - tab sans isolation", file=sys.stderr)
-
-    return tab_id
-
-
-# =============================================================================
-# Page Download via Chrome Bridge
-# =============================================================================
-
-def download_page(url: str, timeout: int = 15) -> str:
-    """Download a single page via the Chrome bridge.
-
-    Uses the CDP class from chrome-bridge.py to navigate and extract HTML.
-    Waits for page load completion by polling document.readyState, then
-    waits an extra 2 seconds for JavaScript rendering.
-    """
-    tab_id = get_or_create_tab()
-    if not tab_id:
-        return ""
-
-    try:
-        cdp = _bridge.CDP(tab_id)
-        cdp.navigate(url)
-
-        # Wait for page to finish loading (poll readyState)
-        for _ in range(timeout):
-            time.sleep(1)
+    def extract_urls_from_html(self, html: str, base_url: str) -> set:
+        urls = set()
+        href_pattern = r'href=["\']([^"\']+)["\']'
+        parsed_base = urlparse(base_url)
+        for match in re.finditer(href_pattern, html, re.IGNORECASE):
             try:
-                state = cdp.evaluate("document.readyState")
-                if state == "complete":
-                    break
-            except Exception:
+                url = match.group(1).strip()
+                if url.startswith(('javascript:', 'mailto:', 'tel:', '#', 'data:')):
+                    continue
+                if url.startswith('/'):
+                    url = f"{parsed_base.scheme}://{parsed_base.netloc}{url}"
+                elif not url.startswith(('http://', 'https://')):
+                    url = urljoin(base_url, url)
+                url = self.normalize_url(url)
+                if not url:
+                    continue
+                url_domain = urlparse(url).netloc
+                if not self.is_same_domain(url_domain):
+                    continue
+            except (ValueError, Exception):
                 continue
+            if self.should_include_url(url):
+                urls.add(url)
+        return urls
 
-        # Extra wait for JS rendering
-        time.sleep(2)
+    # =========================================================================
+    # FILE STATE
+    # =========================================================================
 
-        html = cdp.get_html()
-        return html or ""
-    except Exception as e:
-        print(f"    Error: {e}")
-        return ""
+    def touch_file(self, sha: str):
+        html_file = self.html_dir / f"{sha}.html"
+        if not html_file.exists():
+            html_file.touch()
 
+    def is_downloaded(self, sha: str) -> bool:
+        html_file = self.html_dir / f"{sha}.html"
+        return html_file.exists() and html_file.stat().st_size > 100
 
-# =============================================================================
-# File System Operations
-# =============================================================================
+    def is_failed(self, sha: str) -> bool:
+        return (self.failed_dir / sha).exists()
 
-def touch_file(sha: str):
-    html_file = HTML_DIR / f"{sha}.html"
-    if not html_file.exists():
-        html_file.touch()
+    def mark_failed(self, sha: str, url: str, reason: str = "download_error"):
+        self.failed_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        (self.failed_dir / sha).write_text(f"{url}|{reason}|{timestamp}")
+        html_file = self.html_dir / f"{sha}.html"
+        if html_file.exists() and html_file.stat().st_size == 0:
+            REMOVED_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(html_file), str(REMOVED_DIR / f"{timestamp}_{sha}.html"))
 
-
-def is_empty(sha: str) -> bool:
-    html_file = HTML_DIR / f"{sha}.html"
-    return html_file.exists() and html_file.stat().st_size == 0
-
-
-def is_downloaded(sha: str) -> bool:
-    html_file = HTML_DIR / f"{sha}.html"
-    return html_file.exists() and html_file.stat().st_size > 100
-
-
-def is_failed(sha: str) -> bool:
-    return (FAILED_DIR / sha).exists()
-
-
-def mark_failed(sha: str, url: str, reason: str = "download_error"):
-    FAILED_DIR.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    (FAILED_DIR / sha).write_text(f"{url}|{reason}|{timestamp}")
-    html_file = HTML_DIR / f"{sha}.html"
-    if html_file.exists() and html_file.stat().st_size == 0:
-        REMOVED_DIR.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(html_file), str(REMOVED_DIR / f"{timestamp}_{sha}.html"))
-
-
-def get_empty_files() -> list:
-    empty = []
-    for html_file in HTML_DIR.glob("*.html"):
-        if html_file.stat().st_size == 0:
-            sha = html_file.stem
-            if is_failed(sha):
-                continue
-            index_file = INDEX_DIR / sha
-            if index_file.exists():
-                url = index_file.read_text().strip()
-                empty.append((sha, url))
-    return empty
-
-
-def register_url(url: str):
-    sha = url_to_sha(url)
-    if is_downloaded(sha) or is_failed(sha):
+    def register_url(self, url: str) -> bool:
+        sha = url_to_sha(url)
+        if self.is_downloaded(sha) or self.is_failed(sha):
+            return False
+        self.touch_file(sha)
+        self.index_dir.mkdir(parents=True, exist_ok=True)
+        index_file = self.index_dir / sha
+        if not index_file.exists():
+            index_file.write_text(url)
+            return True
         return False
-    touch_file(sha)
-    INDEX_DIR.mkdir(parents=True, exist_ok=True)
-    index_file = INDEX_DIR / sha
-    if not index_file.exists():
-        index_file.write_text(url)
-    return True
 
+    def register_and_queue(self, url: str) -> bool:
+        sha = url_to_sha(url)
+        if self.is_downloaded(sha) or self.is_failed(sha) or sha in self.pending_shas:
+            return False
+        self.touch_file(sha)
+        self.index_dir.mkdir(parents=True, exist_ok=True)
+        index_file = self.index_dir / sha
+        if not index_file.exists():
+            index_file.write_text(url)
+        self.pending.append((sha, url))
+        self.pending_shas.add(sha)
+        return True
 
-# =============================================================================
-# Main Crawl Logic
-# =============================================================================
+    # =========================================================================
+    # QUEUE MANAGEMENT
+    # =========================================================================
 
-def crawl_batch(config: dict) -> tuple:
-    """Download all queued (empty) files in one batch."""
-    empty_files = get_empty_files()
-    if not empty_files:
-        return 0, 0, 0
+    def refresh_pending(self):
+        self.pending = []
+        self.pending_shas = set()
+        for html_file in self.html_dir.glob("*.html"):
+            if html_file.stat().st_size == 0:
+                sha = html_file.stem
+                if self.is_failed(sha):
+                    continue
+                index_file = self.index_dir / sha
+                if index_file.exists():
+                    url = index_file.read_text().strip()
+                    self.pending.append((sha, url))
+                    self.pending_shas.add(sha)
 
-    ok = 0
-    errors = 0
-    new_urls_found = 0
+    def has_pending(self) -> bool:
+        return self.active and len(self.pending) > 0
 
-    print(f"\n=== Batch: {len(empty_files)} fichiers vides a telecharger ===")
+    # =========================================================================
+    # DISCOVERY
+    # =========================================================================
 
-    for i, (sha, url) in enumerate(empty_files, 1):
-        if is_failed(sha):
-            print(f"[{i}/{len(empty_files)}] SKIP (deja en FAILED): {url[:50]}...")
-            continue
+    def discover(self) -> int:
+        html_files = [f for f in self.html_dir.glob("*.html") if f.stat().st_size > 100]
+        discovered = 0
+        for html_file in html_files:
+            try:
+                content = html_file.read_text(errors='ignore')
+                base_url = self.config.get("base_url", f"https://{self.domain}/")
+                if content.startswith("<!-- URL:"):
+                    base_url = content.split("-->")[0].replace("<!-- URL:", "").strip()
+                new_urls = self.extract_urls_from_html(content, base_url)
+                for url in new_urls:
+                    if self.register_url(url):
+                        discovered += 1
+            except Exception:
+                pass
+        return discovered
 
-        print(f"[{i}/{len(empty_files)}] {url[:70]}...")
+    # =========================================================================
+    # CORE: PROCESS ONE PAGE
+    # =========================================================================
 
-        html = download_page(url)
+    def process_one(self) -> bool:
+        if not self.pending:
+            return False
+
+        sha, url = self.pending.pop(0)
+        self.pending_shas.discard(sha)
+
+        if self.is_failed(sha) or self.is_downloaded(sha):
+            return True
+
+        html = ""
+        try:
+            self.cdp.navigate(url)
+            for _ in range(30):
+                time.sleep(0.3)
+                try:
+                    state = self.cdp.evaluate("document.readyState")
+                    if state == "complete":
+                        break
+                except Exception:
+                    continue
+            if self.extra_sleep > 0:
+                time.sleep(self.extra_sleep)
+            html = self.cdp.get_html() or ""
+        except Exception as e:
+            print(f"  [{self.domain}] Error: {e}")
+            html = ""
 
         if html and len(html) > 500:
             html_lower = html.lower()
-            is_error_page = False
-            error_reason = None
-
-            # Extract <title> from <head> only (avoid false positives
-            # from i18n JSON, JS bundles, SVG component titles)
             _head_m = re.search(r'<head[^>]*>(.*?)</head>', html_lower, re.DOTALL)
             _head_s = _head_m.group(1) if _head_m else html_lower[:5000]
             _title_m = re.search(r'<title[^>]*>(.*?)</title>', _head_s, re.DOTALL)
             _page_title = _title_m.group(1).strip() if _title_m else ''
 
-            if '404' in _page_title or 'not found' in _page_title:
-                is_error_page = True
-                error_reason = "404_not_found"
-            elif '403' in _page_title or 'forbidden' in _page_title:
-                is_error_page = True
-                error_reason = "403_forbidden"
-            elif '500' in _page_title or 'internal server error' in _page_title:
-                is_error_page = True
-                error_reason = "500_server_error"
-            elif '502' in _page_title or 'bad gateway' in _page_title:
-                is_error_page = True
-                error_reason = "502_bad_gateway"
-            elif '503' in _page_title or 'service unavailable' in _page_title:
-                is_error_page = True
-                error_reason = "503_unavailable"
+            error_reason = None
+            for code, patterns in [
+                ("404_not_found", ['404', 'not found']),
+                ("403_forbidden", ['403', 'forbidden']),
+                ("500_server_error", ['500', 'internal server error']),
+                ("502_bad_gateway", ['502', 'bad gateway']),
+                ("503_unavailable", ['503', 'service unavailable']),
+            ]:
+                if any(p in _page_title for p in patterns):
+                    error_reason = code
+                    break
 
-            if is_error_page:
-                mark_failed(sha, url, error_reason)
-                errors += 1
-                print(f"    FAILED ({error_reason})")
+            if error_reason:
+                self.mark_failed(sha, url, error_reason)
+                self.total_errors += 1
+                print(f"  [{self.domain}] FAILED ({error_reason}): {url[:60]}")
             else:
-                html_file = HTML_DIR / f"{sha}.html"
+                html_file = self.html_dir / f"{sha}.html"
                 html_file.write_text(f"<!-- URL: {url} -->\n{html}")
 
-                new_urls = extract_urls_from_html(html, url, config)
+                new_urls = self.extract_urls_from_html(html, url)
+                new_count = 0
                 for new_url in new_urls:
-                    if register_url(new_url):
-                        new_urls_found += 1
+                    if self.register_and_queue(new_url):
+                        new_count += 1
+                        self.total_new_urls += 1
 
-                ok += 1
-                print(f"    OK ({len(html)//1024}KB, +{len(new_urls)} links)")
+                self.total_ok += 1
+                print(f"  [{self.domain}] OK ({len(html)//1024}KB, +{len(new_urls)} links): {url[:60]}")
         else:
-            mark_failed(sha, url, "empty_response")
-            errors += 1
-            print(f"    FAILED (empty_response)")
+            self.mark_failed(sha, url, "empty_response")
+            self.total_errors += 1
+            print(f"  [{self.domain}] FAILED (empty): {url[:60]}")
 
-    return ok, errors, new_urls_found
+        return True
 
 
 # =============================================================================
-# Entry Point
+# MAIN
 # =============================================================================
 
 def main():
-    global STUDY_DIR, HTML_DIR, INDEX_DIR, FAILED_DIR, CONFIG_FILE
-    global ROOT_DOMAIN, INCLUDE_SUBDOMAINS, AGENT_ID
-
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
     flags = [a for a in sys.argv[1:] if a.startswith('--')]
 
     if len(args) < 1:
-        print("Usage: python3 crawl.py <domaine> [--subdomains] [--agent-id=XXX]")
-        print("Exemple: python3 crawl.py example.com")
-        print("         python3 crawl.py example.com --subdomains")
-        print("         python3 crawl.py example.com --agent-id=300")
-        print("\nOptions:")
-        print("  --subdomains      Inclure les sous-domaines (docs.X, help.X, etc.)")
-        print("  --agent-id=XXX    Forcer l'agent ID (sinon auto-detect tmux/env)")
-        print("\nTransport: chrome-bridge.py (Extension + Native Messaging Host)")
-        print("\nEtudes disponibles:")
+        print("Usage: python3 crawl.py <domain> [<domain2> ... <domain10>] [options]")
+        print()
+        print("Single domain:  python3 crawl.py example.com")
+        print("Multi-domain:   python3 crawl.py d1.com d2.com d3.com")
+        print("                (round-robin, max 10 domains, no sleep needed)")
+        print()
+        print("Options:")
+        print("  --subdomains      Include subdomains (docs.X, help.X, etc.)")
+        print("  --agent-id=XXX    Force agent ID (default: auto-detect tmux/env)")
+        print()
+        print("Mode: crawl (language filter: /en/ /fr/)")
+        print("Transport: chrome-bridge.py (Extension + Native Messaging Host)")
+        print()
+        print("Etudes disponibles:")
         for d in STUDIES_DIR.iterdir():
             if d.is_dir() and not d.name.startswith('.'):
                 print(f"  - {d.name}")
         return
 
-    domain = args[0]
-    INCLUDE_SUBDOMAINS = '--subdomains' in flags
-
+    domains = args[:10]
+    include_subdomains = '--subdomains' in flags
+    forced_agent_id = None
     for flag in flags:
         if flag.startswith('--agent-id='):
-            AGENT_ID = flag.split('=', 1)[1]
+            forced_agent_id = flag.split('=', 1)[1]
 
-    ROOT_DOMAIN = domain.removeprefix("www.")
+    agent_id = detect_agent_id(forced_agent_id)
 
-    STUDY_DIR = STUDIES_DIR / domain / "300"
-    HTML_DIR = STUDY_DIR / "html"
-    INDEX_DIR = STUDY_DIR / "INDEX"
-    FAILED_DIR = STUDY_DIR / "FAILED"
-    CONFIG_FILE = STUDIES_DIR / domain / "config.json"
-
-    if not STUDY_DIR.exists():
-        print(f"Erreur: Etude '{domain}' non trouvee dans {STUDIES_DIR}")
-        return
-
-    print(f"Domaine: {domain}")
-    print(f"Repertoire: {STUDY_DIR}")
-    if INCLUDE_SUBDOMAINS:
-        print(f"Mode: sous-domaines actifs (*.{ROOT_DOMAIN})")
-
-    agent_id = _detect_agent_id()
-    if agent_id:
-        print(f"Agent: {agent_id} (tab isole via Redis)")
-    else:
-        print(f"⚠ Agent non identifie (utiliser --agent-id=XXX ou AGENT_ID env)")
-
-    tab_id = get_or_create_tab()
-    if not tab_id:
-        print(f"Chrome bridge not reachable!")
-        print()
-        print("Verifier que:")
-        print("  1. Chrome est lance normalement")
-        print("  2. L'extension CDP Bridge est installee et active")
-        print("  3. Le native host est installe (./install.sh)")
-        print()
+    if not _bridge.check_chrome_running():
+        print("Chrome bridge not reachable!")
         print("  Tester: curl http://127.0.0.1:9222/health")
         return
 
-    print(f"Chrome connected via bridge (tab dedie agent {agent_id or '?'})")
+    # Create crawlers
+    extra_sleep = DomainCrawler.SLEEP_BY_COUNT.get(len(domains), 0.0)
+    print(f"Initialisation ({len(domains)} domaine(s), sleep={extra_sleep}s)...")
+    crawlers = []
+    for i, domain in enumerate(domains):
+        suffix = f"_{i}" if len(domains) > 1 else ""
+        c = DomainCrawler(domain, include_subdomains, suffix, extra_sleep)
+        if not c.validate():
+            continue
+        if c.setup_tab(agent_id):
+            crawlers.append(c)
+            print(f"  [{domain}] Ready (tab={str(c.tab_id)[:12]}...)")
+        else:
+            print(f"  [{domain}] SKIP: failed to create Chrome tab")
 
-    HTML_DIR.mkdir(parents=True, exist_ok=True)
-    INDEX_DIR.mkdir(parents=True, exist_ok=True)
+    if not crawlers:
+        print("No valid domains to crawl.")
+        return
 
-    config = load_config()
-
-    # =========================================================================
-    # Phase 1: Discovery Scan
-    # =========================================================================
-    print(f"\nScan des HTML existants...")
-    html_files = [f for f in HTML_DIR.glob("*.html") if f.stat().st_size > 100]
-    print(f"Fichiers HTML a scanner: {len(html_files)}")
-
-    discovered = 0
-    for html_file in html_files:
-        try:
-            content = html_file.read_text(errors='ignore')
-            base_url = config.get("base_url", f"https://{config.get('domain', 'example.com')}")
-            if content.startswith("<!-- URL:"):
-                base_url = content.split("-->")[0].replace("<!-- URL:", "").strip()
-
-            new_urls = extract_urls_from_html(content, base_url, config)
-            for url in new_urls:
-                if register_url(url):
-                    discovered += 1
-        except Exception:
-            pass
-
-    print(f"Nouvelles URLs decouvertes: {discovered}")
-
-    total_files = len(list(HTML_DIR.glob("*.html")))
-    empty_files = len([f for f in HTML_DIR.glob("*.html") if f.stat().st_size == 0])
-    print(f"\nTotal fichiers: {total_files}")
-    print(f"Fichiers vides (a telecharger): {empty_files}")
+    multi = len(crawlers) > 1
+    mode = f"round-robin ({len(crawlers)} domaines, filtre /en/ /fr/)" if multi else "single (filtre /en/ /fr/)"
+    print(f"\nMode: {mode}")
+    print(f"Agent: {agent_id or '?'}")
 
     # =========================================================================
-    # Phase 2: Download Loop
+    # PHASE 1: DISCOVERY
     # =========================================================================
-    iteration = 0
-    total_ok = 0
-    total_errors = 0
-
-    while True:
-        iteration += 1
-        print(f"\n{'='*60}")
-        print(f"ITERATION {iteration}")
-        print(f"{'='*60}")
-
-        ok, errors, new_urls = crawl_batch(config)
-        total_ok += ok
-        total_errors += errors
-
-        print(f"\nResultat iteration {iteration}:")
-        print(f"  Telecharges: {ok}")
-        print(f"  Erreurs: {errors}")
-        print(f"  Nouvelles URLs decouvertes: {new_urls}")
-
-        remaining = len([f for f in HTML_DIR.glob("*.html") if f.stat().st_size == 0])
-        print(f"  Fichiers vides restants: {remaining}")
-
-        if remaining == 0:
-            print("\nPlus de fichiers vides, crawl termine!")
-            break
-
-        if ok == 0 and errors == 0:
-            print("\nAucun progres, arret.")
-            break
+    print(f"\n--- Phase 1: Discovery ---")
+    for c in crawlers:
+        discovered = c.discover()
+        c.refresh_pending()
+        total = len(list(c.html_dir.glob("*.html")))
+        print(f"  [{c.domain}] {total} fichiers, {len(c.pending)} a telecharger, +{discovered} nouvelles URLs")
 
     # =========================================================================
-    # Final Summary
+    # PHASE 2: ROUND-ROBIN CRAWL
+    # =========================================================================
+    print(f"\n--- Phase 2: Crawl ---")
+    page_count = 0
+
+    while any(c.has_pending() for c in crawlers):
+        progress = False
+
+        for c in crawlers:
+            if c.has_pending():
+                if c.process_one():
+                    progress = True
+                    page_count += 1
+
+        if page_count % 50 == 0 and page_count > 0:
+            total_pending = sum(len(c.pending) for c in crawlers)
+            active = sum(1 for c in crawlers if c.has_pending())
+            print(f"\n--- Progress: {page_count} pages, {active} domaines actifs, {total_pending} en attente ---")
+
+        if not progress:
+            for c in crawlers:
+                if c.active:
+                    c.refresh_pending()
+            if not any(c.has_pending() for c in crawlers):
+                break
+
+    # =========================================================================
+    # SUMMARY
     # =========================================================================
     print(f"\n{'='*60}")
     print(f"CRAWL TERMINE")
     print(f"{'='*60}")
-    print(f"Total telecharges: {total_ok}")
-    print(f"Total erreurs: {total_errors}")
-    final_count = len([f for f in HTML_DIR.glob("*.html") if f.stat().st_size > 0])
-    print(f"Fichiers HTML valides: {final_count}")
+    for c in crawlers:
+        final = len([f for f in c.html_dir.glob("*.html") if f.stat().st_size > 0])
+        print(f"  [{c.domain}] ok={c.total_ok} erreurs={c.total_errors} HTML valides={final}")
+    total_ok = sum(c.total_ok for c in crawlers)
+    total_err = sum(c.total_errors for c in crawlers)
+    print(f"  TOTAL: ok={total_ok} erreurs={total_err}")
 
 
 if __name__ == "__main__":
