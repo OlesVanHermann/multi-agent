@@ -9,6 +9,7 @@ import re
 import asyncio
 import time
 import subprocess
+import concurrent.futures
 from typing import Optional
 from contextlib import asynccontextmanager
 
@@ -24,6 +25,24 @@ import hmac
 
 import redis.asyncio as redis
 import httpx
+
+# Dedicated thread pool for subprocess calls (tmux).
+# Default asyncio pool is only 20 threads — easily saturated by WS handlers
+# each doing 2x subprocess.run per tick. 64 threads handles up to ~30 concurrent
+# WS connections without starvation.
+_tmux_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=64, thread_name_prefix="tmux"
+)
+
+
+async def _run_subprocess(cmd, **kwargs):
+    """Run subprocess in dedicated thread pool. Never blocks the asyncio default pool."""
+    kwargs.setdefault("capture_output", True)
+    kwargs.setdefault("timeout", 5)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        _tmux_executor, lambda: subprocess.run(cmd, **kwargs)
+    )
 
 # Simple auth fallback (only used when Keycloak is unavailable)
 # Empty by default — all auth goes through Keycloak
@@ -106,9 +125,8 @@ async def _refresh_cache_once():
             f'echo "$id:$busy:$compacted"; '
             f'done'
         )
-        result = await asyncio.to_thread(
-            subprocess.run, ["bash", "-c", script],
-            capture_output=True, text=True, timeout=30
+        result = await _run_subprocess(
+            ["bash", "-c", script], text=True, timeout=30
         )
         for line in result.stdout.strip().split('\n'):
             if ':' not in line:
@@ -125,10 +143,8 @@ async def _refresh_cache_once():
     # --- Agent list (tmux sessions + Redis enrichment) ---
     agents = []
     try:
-        result = await asyncio.to_thread(
-            subprocess.run,
-            ["tmux", "list-sessions", "-F", "#{session_name}"],
-            capture_output=True, text=True, timeout=5
+        result = await _run_subprocess(
+            ["tmux", "list-sessions", "-F", "#{session_name}"], text=True
         )
         if result.returncode == 0:
             for line in result.stdout.strip().split("\n"):
@@ -454,19 +470,13 @@ async def send_to_agent(agent_id: str, msg: SendMessage):
 
     try:
         # Check if session exists
-        result = await asyncio.to_thread(
-            subprocess.run,
-            ["tmux", "has-session", "-t", session_name],
-            capture_output=True
-        )
+        result = await _run_subprocess(["tmux", "has-session", "-t", session_name])
         if result.returncode != 0:
             raise HTTPException(status_code=404, detail=f"Agent {agent_id} session not found")
 
         # Send message via tmux send-keys
-        await asyncio.to_thread(
-            subprocess.run,
-            ["tmux", "send-keys", "-t", target, msg.message, "Enter"],
-            check=True
+        await _run_subprocess(
+            ["tmux", "send-keys", "-t", target, msg.message, "Enter"], check=True
         )
 
         return {
@@ -487,11 +497,7 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
 
     try:
         # Check if session exists
-        result = await asyncio.to_thread(
-            subprocess.run,
-            ["tmux", "has-session", "-t", session_name],
-            capture_output=True
-        )
+        result = await _run_subprocess(["tmux", "has-session", "-t", session_name])
         if result.returncode != 0:
             raise HTTPException(status_code=404, detail=f"Agent {agent_id} session not found")
 
@@ -507,27 +513,21 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
         # Backspace to remove divergent old chars
         bs = len(prev) - i
         if bs > 0:
-            await asyncio.to_thread(
-                subprocess.run,
-                ["tmux", "send-keys", "-t", target] + ["BSpace"] * bs,
-                check=True
+            await _run_subprocess(
+                ["tmux", "send-keys", "-t", target] + ["BSpace"] * bs, check=True
             )
 
         # Type new chars
         new_chars = new[i:]
         if new_chars:
-            await asyncio.to_thread(
-                subprocess.run,
-                ["tmux", "send-keys", "-t", target, "-l", new_chars],
-                check=True
+            await _run_subprocess(
+                ["tmux", "send-keys", "-t", target, "-l", new_chars], check=True
             )
 
         # Submit if requested
         if data.submit:
-            await asyncio.to_thread(
-                subprocess.run,
-                ["tmux", "send-keys", "-t", target, "Enter"],
-                check=True
+            await _run_subprocess(
+                ["tmux", "send-keys", "-t", target, "Enter"], check=True
             )
 
         return {
@@ -551,21 +551,15 @@ async def send_keys_to_agent(agent_id: str, data: SendKeys):
     target = f"{session_name}:0.0"
 
     try:
-        result = await asyncio.to_thread(
-            subprocess.run,
-            ["tmux", "has-session", "-t", session_name],
-            capture_output=True
-        )
+        result = await _run_subprocess(["tmux", "has-session", "-t", session_name])
         if result.returncode != 0:
             raise HTTPException(status_code=404, detail=f"Agent {agent_id} session not found")
 
         for key in data.keys:
             if key not in ALLOWED_KEYS:
                 raise HTTPException(status_code=400, detail=f"Key not allowed: {key}")
-            await asyncio.to_thread(
-                subprocess.run,
-                ["tmux", "send-keys", "-t", target, key],
-                check=True
+            await _run_subprocess(
+                ["tmux", "send-keys", "-t", target, key], check=True
             )
 
         return {
@@ -586,27 +580,19 @@ async def get_agent_output(agent_id: str, lines: int = 500):
 
     try:
         # Check if session exists
-        result = await asyncio.to_thread(
-            subprocess.run,
-            ["tmux", "has-session", "-t", session_name],
-            capture_output=True
-        )
+        result = await _run_subprocess(["tmux", "has-session", "-t", session_name])
         if result.returncode != 0:
             raise HTTPException(status_code=404, detail=f"Agent {agent_id} session not found")
 
         # Capture pane content (plain for display)
-        result = await asyncio.to_thread(
-            subprocess.run,
-            ["tmux", "capture-pane", "-t", target, "-p", "-J", "-S", f"-{lines}"],
-            capture_output=True, text=True
+        result = await _run_subprocess(
+            ["tmux", "capture-pane", "-t", target, "-p", "-J", "-S", f"-{lines}"], text=True
         )
         output = result.stdout.rstrip('\n ')
 
         # Capture with ANSI codes for input detection (suggestion vs typed)
-        result_ansi = await asyncio.to_thread(
-            subprocess.run,
-            ["tmux", "capture-pane", "-t", target, "-p", "-e", "-S", "-20"],
-            capture_output=True, text=True
+        result_ansi = await _run_subprocess(
+            ["tmux", "capture-pane", "-t", target, "-p", "-e", "-S", "-20"], text=True
         )
         current_input = _extract_current_input(result_ansi.stdout)
 
@@ -761,10 +747,8 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
     try:
         while True:
             # Capture pane content (plain for display)
-            result = await asyncio.to_thread(
-                subprocess.run,
-                ["tmux", "capture-pane", "-t", target, "-p", "-J", "-S", "-500"],
-                capture_output=True, text=True, timeout=5
+            result = await _run_subprocess(
+                ["tmux", "capture-pane", "-t", target, "-p", "-J", "-S", "-500"], text=True
             )
 
             if result.returncode != 0:
@@ -777,10 +761,8 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
             current_output = result.stdout.rstrip('\n ')
 
             # Capture with ANSI for input detection (suggestion vs typed)
-            result_ansi = await asyncio.to_thread(
-                subprocess.run,
-                ["tmux", "capture-pane", "-t", target, "-p", "-e", "-S", "-20"],
-                capture_output=True, text=True, timeout=5
+            result_ansi = await _run_subprocess(
+                ["tmux", "capture-pane", "-t", target, "-p", "-e", "-S", "-20"], text=True
             )
             current_input = _extract_current_input(result_ansi.stdout)
 
@@ -806,12 +788,11 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
 
             await asyncio.sleep(poll)
 
-    except (WebSocketDisconnect, ConnectionResetError):
+    except Exception:
+        # Any disconnect (WebSocketDisconnect, ConnectionResetError,
+        # IncompleteReadError, ConnectionClosedError, ClientDisconnected)
+        # is normal — the client or proxy closed the connection.
         pass
-    except Exception as e:
-        import traceback
-        print(f"Agent WebSocket error: {type(e).__name__}: {e}")
-        traceback.print_exc()
 
 
 @app.websocket("/ws/messages")
@@ -866,13 +847,8 @@ async def websocket_messages(websocket: WebSocket):
                 print(f"WebSocket stream error: {e}")
                 await asyncio.sleep(0.5)
 
-    except (WebSocketDisconnect, ConnectionResetError):
+    except Exception:
         manager.disconnect(websocket)
-    except Exception as e:
-        manager.disconnect(websocket)
-        import traceback
-        print(f"Messages WebSocket error: {type(e).__name__}: {e}")
-        traceback.print_exc()
 
 
 @app.websocket("/ws/status")
@@ -903,12 +879,8 @@ async def websocket_status(websocket: WebSocket):
 
             await asyncio.sleep(poll)
 
-    except (WebSocketDisconnect, ConnectionResetError):
+    except Exception:
         pass
-    except Exception as e:
-        import traceback
-        print(f"Status WebSocket error: {type(e).__name__}: {e}")
-        traceback.print_exc()
 
 
 # === Static Files (Frontend) ===
