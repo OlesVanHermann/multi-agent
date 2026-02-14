@@ -454,7 +454,8 @@ async def send_to_agent(agent_id: str, msg: SendMessage):
 
     try:
         # Check if session exists
-        result = subprocess.run(
+        result = await asyncio.to_thread(
+            subprocess.run,
             ["tmux", "has-session", "-t", session_name],
             capture_output=True
         )
@@ -462,7 +463,8 @@ async def send_to_agent(agent_id: str, msg: SendMessage):
             raise HTTPException(status_code=404, detail=f"Agent {agent_id} session not found")
 
         # Send message via tmux send-keys
-        subprocess.run(
+        await asyncio.to_thread(
+            subprocess.run,
             ["tmux", "send-keys", "-t", target, msg.message, "Enter"],
             check=True
         )
@@ -485,7 +487,8 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
 
     try:
         # Check if session exists
-        result = subprocess.run(
+        result = await asyncio.to_thread(
+            subprocess.run,
             ["tmux", "has-session", "-t", session_name],
             capture_output=True
         )
@@ -504,7 +507,8 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
         # Backspace to remove divergent old chars
         bs = len(prev) - i
         if bs > 0:
-            subprocess.run(
+            await asyncio.to_thread(
+                subprocess.run,
                 ["tmux", "send-keys", "-t", target] + ["BSpace"] * bs,
                 check=True
             )
@@ -512,14 +516,16 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
         # Type new chars
         new_chars = new[i:]
         if new_chars:
-            subprocess.run(
+            await asyncio.to_thread(
+                subprocess.run,
                 ["tmux", "send-keys", "-t", target, "-l", new_chars],
                 check=True
             )
 
         # Submit if requested
         if data.submit:
-            subprocess.run(
+            await asyncio.to_thread(
+                subprocess.run,
                 ["tmux", "send-keys", "-t", target, "Enter"],
                 check=True
             )
@@ -545,7 +551,8 @@ async def send_keys_to_agent(agent_id: str, data: SendKeys):
     target = f"{session_name}:0.0"
 
     try:
-        result = subprocess.run(
+        result = await asyncio.to_thread(
+            subprocess.run,
             ["tmux", "has-session", "-t", session_name],
             capture_output=True
         )
@@ -555,7 +562,8 @@ async def send_keys_to_agent(agent_id: str, data: SendKeys):
         for key in data.keys:
             if key not in ALLOWED_KEYS:
                 raise HTTPException(status_code=400, detail=f"Key not allowed: {key}")
-            subprocess.run(
+            await asyncio.to_thread(
+                subprocess.run,
                 ["tmux", "send-keys", "-t", target, key],
                 check=True
             )
@@ -578,7 +586,8 @@ async def get_agent_output(agent_id: str, lines: int = 500):
 
     try:
         # Check if session exists
-        result = subprocess.run(
+        result = await asyncio.to_thread(
+            subprocess.run,
             ["tmux", "has-session", "-t", session_name],
             capture_output=True
         )
@@ -586,18 +595,18 @@ async def get_agent_output(agent_id: str, lines: int = 500):
             raise HTTPException(status_code=404, detail=f"Agent {agent_id} session not found")
 
         # Capture pane content (plain for display)
-        result = subprocess.run(
+        result = await asyncio.to_thread(
+            subprocess.run,
             ["tmux", "capture-pane", "-t", target, "-p", "-J", "-S", f"-{lines}"],
-            capture_output=True,
-            text=True
+            capture_output=True, text=True
         )
         output = result.stdout.rstrip('\n ')
 
         # Capture with ANSI codes for input detection (suggestion vs typed)
-        result_ansi = subprocess.run(
+        result_ansi = await asyncio.to_thread(
+            subprocess.run,
             ["tmux", "capture-pane", "-t", target, "-p", "-e", "-S", "-20"],
-            capture_output=True,
-            text=True
+            capture_output=True, text=True
         )
         current_input = _extract_current_input(result_ansi.stdout)
 
@@ -752,11 +761,10 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
     try:
         while True:
             # Capture pane content (plain for display)
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 ["tmux", "capture-pane", "-t", target, "-p", "-J", "-S", "-500"],
-                capture_output=True,
-                text=True,
-                timeout=5
+                capture_output=True, text=True, timeout=5
             )
 
             if result.returncode != 0:
@@ -769,11 +777,10 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
             current_output = result.stdout.rstrip('\n ')
 
             # Capture with ANSI for input detection (suggestion vs typed)
-            result_ansi = subprocess.run(
+            result_ansi = await asyncio.to_thread(
+                subprocess.run,
                 ["tmux", "capture-pane", "-t", target, "-p", "-e", "-S", "-20"],
-                capture_output=True,
-                text=True,
-                timeout=5
+                capture_output=True, text=True, timeout=5
             )
             current_input = _extract_current_input(result_ansi.stdout)
 
