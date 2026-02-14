@@ -87,6 +87,7 @@ do_start() {
 
 do_stop() {
     log_info "Stopping web dashboard..."
+    # 1. Kill by PID file
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
         if kill "$PID" 2>/dev/null; then
@@ -94,7 +95,15 @@ do_stop() {
         fi
         mv "$PID_FILE" "$PID_FILE.old" 2>/dev/null || true
     fi
+    # 2. Kill all uvicorn processes
     pkill -f "uvicorn server:app" 2>/dev/null && log_ok "Killed uvicorn processes" || true
+    # 3. Force-kill anything still holding port 8000
+    local pids
+    pids=$(lsof -ti:8000 2>/dev/null || true)
+    if [ -n "$pids" ]; then
+        kill -9 $pids 2>/dev/null && log_ok "Force-killed stale processes on :8000" || true
+    fi
+    sleep 1
 }
 
 do_rebuild() {
