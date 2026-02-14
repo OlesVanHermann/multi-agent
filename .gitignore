@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+.venv/
+
+# Logs
+logs/*
+!logs/.gitkeep
+*.log
+
+# Sessions (runtime)
+sessions/*
+!sessions/.gitkeep
+
+# State files (runtime)
+pool-requests/state/*
+!pool-requests/state/.gitkeep
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Project specific (user code)
+project/*
+!project/.gitkeep
+!project/README.md
+
+# Redis
+dump.rdb
+
+# Node / Frontend build
+node_modules/
+web/frontend/dist/
+
+# Temp
+*.tmp
+*.temp
+.cache/
+
+# Config locale (créé par 900)
+project-config.md
+
+# Pool requests runtime (garder la structure vide)
+pool-requests/pending/*
+pool-requests/assigned/*
+pool-requests/done/*
+pool-requests/specs/*
+pool-requests/tests/*
+!pool-requests/*/.gitkeep
+web/backend/.pytest_cache/
+web/backend/venv/

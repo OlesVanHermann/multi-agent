@@ -1,0 +1,3 @@
+# Removed files directory
+# Files moved here instead of being deleted (rm -rf)
+# Can be cleaned periodically with: find removed/ -mtime +7 -delete

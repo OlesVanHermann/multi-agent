@@ -1,0 +1,39 @@
+# Multi-Agent System - Python Dependencies
+
+# Redis client with Streams support
+redis>=4.5.0
+
+# PTY for Claude Code interaction (agent-bridge)
+pexpect>=4.8.0
+
+# Web dashboard (backend)
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+websockets>=12.0
+python-multipart>=0.0.6
+httpx>=0.27.0
+python-jose[cryptography]>=3.3.0
+
+# For bridge SSH tunnel (optional)
+paramiko>=3.0.0
+
+# Browser automation (framework scripts)
+playwright>=1.40.0
+
+# DNS toolkit (framework PTR/DNS scripts)
+dnspython>=2.4.0
+
+# PowerPoint generation
+python-pptx>=0.6.21
+
+# WebSocket client (legacy - no longer needed for crawlers, kept for potential use)
+# websocket-client>=1.6.0
+
+# Data validation
+pydantic>=2.5.0
+
+# Testing
+pytest>=7.4.0
+
+# Utilities
+python-dotenv>=1.0.0

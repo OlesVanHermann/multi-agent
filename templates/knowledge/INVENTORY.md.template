@@ -1,0 +1,43 @@
+# INVENTORY - {DOMAIN_NAME}
+
+## Vue d'ensemble
+
+| Métrique | Valeur |
+|----------|--------|
+| Total fonctions | 0 |
+| Implémentées | 0 |
+| En cours | 0 |
+| Restantes | 0 |
+| Coverage | 0% |
+
+---
+
+## Fonctions
+
+| Fonction | Status | Agent | PR | Commit |
+|----------|--------|-------|-----|--------|
+| {function_prefix}_example_1 | ❌ | - | - | - |
+| {function_prefix}_example_2 | ❌ | - | - | - |
+
+---
+
+## Légende
+
+| Status | Signification |
+|--------|---------------|
+| ❌ | Non implémenté |
+| 🔄 | En cours |
+| ✅ | Implémenté et testé |
+| ⚠️ | Implémenté, test échoué |
+
+---
+
+## Notes
+
+- Ce fichier est lu par les agents 000 et 100 pour compter les `❌`
+- Mis à jour automatiquement par les agents après chaque PR terminé
+- Format: `{function_prefix}_{classe}_{methode}`
+
+---
+
+*Généré par Agent 900 (Architect)*

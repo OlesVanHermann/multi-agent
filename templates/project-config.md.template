@@ -1,0 +1,98 @@
+# Configuration Projet
+
+## Informations générales
+
+```
+PROJECT_NAME={nom_du_projet}
+PROJECT_DESCRIPTION={description}
+PROJECT_REPO={url_git_si_applicable}
+```
+
+---
+
+## Chemins
+
+```bash
+# Racine multi-agent (auto-détecté)
+BASE=/chemin/vers/multi-agent
+
+# Pool requests
+POOL=$BASE/pool-requests
+
+# Projet cible (votre code)
+PROJECT=$BASE/project
+
+# Logs
+LOGS=$BASE/logs
+
+# Prompts
+PROMPTS=$BASE/prompts
+```
+
+---
+
+## Agents Développeurs (3XX)
+
+Définir les agents dev nécessaires pour ce projet.
+
+| ID | Nom | Domaine | Repo | Branche | Préfixe fonction |
+|----|-----|---------|------|---------|------------------|
+| 300 | {nom} | {domaine} | {repo_path} | dev-{domaine} | {prefix}_ |
+| 301 | {nom} | {domaine} | {repo_path} | dev-{domaine} | {prefix}_ |
+
+---
+
+## API Documentation (optionnel)
+
+Si le projet utilise une documentation API externe :
+
+```
+API_DOC_ENABLED=true
+API_DOC_PATH=$PROJECT/docs/api
+API_DOC_REPO={url_git}
+```
+
+---
+
+## Git Configuration
+
+```
+# Repo principal (merge destination)
+MAIN_REPO=$PROJECT/{repo_name}
+MAIN_BRANCH=main
+DEV_BRANCH=dev
+
+# Release repo (optionnel)
+RELEASE_REPO=$PROJECT/{release_repo_name}
+RELEASE_REMOTE=origin
+```
+
+---
+
+## Redis
+
+```
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+```
+
+---
+
+## Agents actifs
+
+Cocher les agents à utiliser :
+
+- [x] 000 - Super-Master
+- [x] 100 - Master
+- [ ] 200 - Explorer (si API doc)
+- [ ] 201 - Doc Generator (si API doc)
+- [x] 300-3XX - Developers
+- [x] 400 - Merge
+- [x] 500 - Test
+- [x] 501 - Test Creator
+- [x] 600 - Release
+- [x] 900 - Architect
+
+---
+
+*Créé par Agent 900 - {DATE}*

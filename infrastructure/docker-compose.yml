@@ -1,0 +1,73 @@
+# ===========================================
+# Multi-Agent - MAC Infrastructure
+# ===========================================
+# Redis + Dashboard + Bridge
+# Super-Master = Claude Code process (not container)
+#
+# Usage:
+#   docker compose -f docker-compose.mac.yml up -d
+#   ./multi-agent.sh agent --role super-master
+
+version: '3.8'
+
+services:
+  # ===========================================
+  # REDIS - 127.0.0.1 ONLY
+  # ===========================================
+  redis:
+    image: redis:7-alpine
+    container_name: ma-redis-mac
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ===========================================
+  # BRIDGE - Syncs with VM Redis via SSH
+  # ===========================================
+  bridge:
+    build:
+      context: ../core/bridge
+      dockerfile: Dockerfile
+    container_name: ma-bridge
+    environment:
+      - LOCAL_REDIS=redis://redis:6379
+      - SSH_HOST=${VM_HOST:?Set VM_HOST in .env.mac}
+      - SSH_USER=${VM_USER:-ubuntu}
+      - SSH_PORT=${VM_SSH_PORT:-22}
+      - REMOTE_REDIS_PORT=6379
+    volumes:
+      - ${SSH_KEY_PATH:-~/.ssh/id_rsa}:/root/.ssh/id_rsa:ro
+      - bridge_state:/app/state
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ===========================================
+  # DASHBOARD - 127.0.0.1 ONLY
+  # ===========================================
+  dashboard:
+    build:
+      context: ../core/dashboard
+      dockerfile: Dockerfile
+    container_name: ma-dashboard
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  bridge_state:
