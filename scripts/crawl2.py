@@ -164,13 +164,11 @@ class DomainCrawler:
     # =========================================================================
 
     def validate(self) -> bool:
-        """Check that the study directory exists and create subdirs."""
-        if not self.study_dir.exists():
-            print(f"  SKIP {self.domain}: etude non trouvee dans {STUDIES_DIR}")
-            self.active = False
-            return False
+        """Create study directory and subdirs if needed."""
+        self.study_dir.mkdir(parents=True, exist_ok=True)
         self.html_dir.mkdir(parents=True, exist_ok=True)
         self.index_dir.mkdir(parents=True, exist_ok=True)
+        (self.study_dir / "FAILED").mkdir(parents=True, exist_ok=True)
         return True
 
     def setup_tab(self, base_agent_id) -> bool:
@@ -530,7 +528,7 @@ def split_into_batches(domains, max_per_batch=MAX_PER_BATCH):
 # CRAWL ONE BATCH (round-robin across max 4 domains)
 # =============================================================================
 
-def crawl_batch(batch_domains, agent_id, include_subdomains, domain_offset):
+def crawl_batch(batch_domains, agent_id, include_subdomains, domain_offset, precreated_tabs=None):
     """Crawl a batch of domains in round-robin. Returns list of crawlers with stats."""
     extra_sleep = DomainCrawler.SLEEP_BY_COUNT.get(len(batch_domains), 0.0)
     crawlers = []
@@ -539,7 +537,13 @@ def crawl_batch(batch_domains, agent_id, include_subdomains, domain_offset):
         c = DomainCrawler(domain, include_subdomains, suffix, extra_sleep)
         if not c.validate():
             continue
-        if c.setup_tab(agent_id):
+        # Use pre-created tab if available
+        if precreated_tabs and domain in precreated_tabs:
+            c.tab_id = precreated_tabs[domain]
+            c.cdp = _bridge.CDP(c.tab_id)
+            crawlers.append(c)
+            print(f"  [{domain}] Ready (tab={str(c.tab_id)[:12]}...)")
+        elif c.setup_tab(agent_id):
             crawlers.append(c)
             print(f"  [{domain}] Ready (tab={str(c.tab_id)[:12]}...)")
         else:
@@ -631,6 +635,39 @@ def main():
     print(f"Agent: {agent_id or '?'}")
 
     # =========================================================================
+    # PRE-CREATE ALL TABS SEQUENTIALLY (avoid bridge saturation)
+    # =========================================================================
+    print(f"\nCreation de {len(domains)} tabs Chrome (sequentiel)...")
+    precreated_tabs = {}  # domain -> tab_id
+    domain_offset = 0
+    for batch_idx, batch in enumerate(batches):
+        for i, domain in enumerate(batch):
+            suffix = f"_{domain_offset + i}"
+            agent_key = f"{agent_id}{suffix}" if agent_id else None
+            tab_id = None
+            # Try existing tab from Redis
+            if agent_key:
+                tab_id = _bridge.get_agent_tab(agent_key)
+                if tab_id and _bridge.validate_target(tab_id):
+                    precreated_tabs[domain] = tab_id
+                    print(f"  [{domain}] reuse tab {str(tab_id)[:12]}...")
+                    continue
+                elif tab_id:
+                    _bridge.cleanup_stale_target(agent_key)
+            # Create new tab
+            tab_id = _bridge.create_tab("about:blank")
+            if tab_id:
+                precreated_tabs[domain] = tab_id
+                if agent_key:
+                    _bridge.set_agent_tab(agent_key, tab_id)
+                print(f"  [{domain}] tab {str(tab_id)[:12]}... created")
+            else:
+                print(f"  [{domain}] SKIP: failed to create tab")
+            time.sleep(0.1)  # small delay between tab creations
+        domain_offset += len(batch)
+    print(f"  => {len(precreated_tabs)}/{len(domains)} tabs OK")
+
+    # =========================================================================
     # CRAWL ALL BATCHES IN PARALLEL
     # =========================================================================
     all_results = [None] * len(batches)  # thread-safe: each index written by one thread
@@ -641,7 +678,7 @@ def main():
         print(f"\n{'='*60}")
         print(f"BATCH {idx + 1}/{len(batches)}: {', '.join(batch)} (RR x{len(batch)})")
         print(f"{'='*60}")
-        all_results[idx] = crawl_batch(batch, agent_id, include_subdomains, offset)
+        all_results[idx] = crawl_batch(batch, agent_id, include_subdomains, offset, precreated_tabs)
 
     for batch_idx, batch in enumerate(batches):
         t = threading.Thread(target=run_batch, args=(batch_idx, batch, domain_offset))
