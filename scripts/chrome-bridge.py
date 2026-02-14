@@ -158,25 +158,34 @@ def bridge_request(method, path, data=None, timeout=60):
     if data is not None:
         req_data = json.dumps(data).encode("utf-8")
 
-    req = urllib.request.Request(
-        url,
-        data=req_data,
-        method=method,
-        headers={"Content-Type": "application/json"} if req_data else {}
-    )
-
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body = resp.read()
-            content_type = resp.headers.get("Content-Type", "")
-            if "application/json" in content_type:
-                return json.loads(body.decode("utf-8"))
-            else:
-                return body  # Raw binary (for screenshots, PDFs)
-    except urllib.error.URLError as e:
-        raise BridgeError(f"Bridge not reachable at {url}: {e}")
-    except Exception as e:
-        raise BridgeError(f"Bridge request failed: {e}")
+    max_retries = 3
+    for attempt in range(max_retries):
+        req = urllib.request.Request(
+            url,
+            data=req_data,
+            method=method,
+            headers={"Content-Type": "application/json"} if req_data else {}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                body = resp.read()
+                content_type = resp.headers.get("Content-Type", "")
+                if "application/json" in content_type:
+                    return json.loads(body.decode("utf-8"))
+                else:
+                    return body  # Raw binary (for screenshots, PDFs)
+        except urllib.error.HTTPError as e:
+            if e.code in (500, 502, 503) and attempt < max_retries - 1:
+                time.sleep(1 + attempt)  # 1s, 2s backoff
+                continue
+            raise BridgeError(f"Bridge not reachable at {url}: {e}")
+        except urllib.error.URLError as e:
+            if attempt < max_retries - 1:
+                time.sleep(1 + attempt)
+                continue
+            raise BridgeError(f"Bridge not reachable at {url}: {e}")
+        except Exception as e:
+            raise BridgeError(f"Bridge request failed: {e}")
 
 
 def send_command(action, params=None, timeout=60):

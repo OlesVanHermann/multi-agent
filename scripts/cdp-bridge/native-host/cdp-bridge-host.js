@@ -46,6 +46,8 @@ const { URL } = require("url");
 const PORT = parseInt(process.env.CDP_BRIDGE_PORT || "9222", 10);
 const COMMAND_TIMEOUT_MS = 60000; // 60s timeout per command
 const MAX_NATIVE_MSG_SIZE = 1024 * 1024; // 1MB native messaging limit
+const MAX_CONCURRENT_COMMANDS = 8; // Max commands in-flight to extension at once
+const MAX_QUEUED_COMMANDS = 64; // Max commands waiting in queue
 
 // =============================================================================
 // STATE
@@ -61,6 +63,12 @@ let extensionConnected = false;
 
 /** @type {Buffer} Accumulator for partial stdin reads */
 let stdinBuffer = Buffer.alloc(0);
+
+/** @type {number} Commands currently in-flight to extension */
+let activeCommands = 0;
+
+/** @type {Array<{resolve: Function, reject: Function}>} Queue for throttled commands */
+const commandQueue = [];
 
 // =============================================================================
 // NATIVE MESSAGING — STDIN (receive from extension)
@@ -144,18 +152,51 @@ function sendToExtension(msg) {
 // =============================================================================
 
 /**
+ * Acquire a slot to send a command. Waits if too many in-flight.
+ * Returns a promise that resolves when a slot is available.
+ */
+function acquireSlot() {
+  if (activeCommands < MAX_CONCURRENT_COMMANDS) {
+    activeCommands++;
+    return Promise.resolve();
+  }
+  if (commandQueue.length >= MAX_QUEUED_COMMANDS) {
+    return Promise.reject(new Error(`Queue full (${MAX_QUEUED_COMMANDS} waiting)`));
+  }
+  return new Promise((resolve, reject) => {
+    commandQueue.push({ resolve, reject });
+  });
+}
+
+/**
+ * Release a slot after command completes. Unblocks next queued command.
+ */
+function releaseSlot() {
+  if (commandQueue.length > 0) {
+    const next = commandQueue.shift();
+    next.resolve(); // slot stays active, transferred to next waiter
+  } else {
+    activeCommands--;
+  }
+}
+
+/**
  * Send a command to the extension and return a Promise for the response.
  * Uses auto-incrementing IDs for request-response correlation.
+ * Throttled: max MAX_CONCURRENT_COMMANDS in-flight at once.
  */
-function sendCommand(action, params = {}) {
-  return new Promise((resolve, reject) => {
-    if (!extensionConnected) {
-      return reject(new Error("Extension not connected"));
-    }
+async function sendCommand(action, params = {}) {
+  if (!extensionConnected) {
+    throw new Error("Extension not connected");
+  }
 
+  await acquireSlot();
+
+  return new Promise((resolve, reject) => {
     const id = nextId++;
     const timer = setTimeout(() => {
       pendingRequests.delete(id);
+      releaseSlot();
       reject(new Error(`Command timeout (${COMMAND_TIMEOUT_MS}ms): ${action}`));
     }, COMMAND_TIMEOUT_MS);
 
@@ -178,6 +219,7 @@ function handleExtensionResponse(msg) {
 
   clearTimeout(pending.timer);
   pendingRequests.delete(id);
+  releaseSlot();
 
   if (success) {
     pending.resolve(result);
@@ -239,6 +281,9 @@ const server = http.createServer(async (req, res) => {
         status: "ok",
         extensionConnected,
         pendingRequests: pendingRequests.size,
+        activeCommands,
+        queuedCommands: commandQueue.length,
+        maxConcurrent: MAX_CONCURRENT_COMMANDS,
         uptime: process.uptime()
       });
     }
@@ -334,8 +379,10 @@ const server = http.createServer(async (req, res) => {
     return jsonResponse(res, 404, { error: `Unknown endpoint: ${path}` });
 
   } catch (err) {
-    log("ERROR", `HTTP error: ${err.message}`);
-    return jsonResponse(res, 500, { error: err.message });
+    const isOverload = err.message.includes("Queue full");
+    const status = isOverload ? 503 : 500;
+    if (!isOverload) log("ERROR", `HTTP error: ${err.message}`);
+    return jsonResponse(res, status, { error: err.message });
   }
 });
 

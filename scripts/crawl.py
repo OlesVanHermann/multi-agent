@@ -9,7 +9,7 @@ Usage:
     python3 crawl.py <d1> <d2> ... <d100> [--agent-id=XXX] # Multi-domain (max 100)
 
 Multi-domain mode splits domains into batches of max 4 (round-robin per batch).
-Batches are processed sequentially: batch 1 finishes, tabs close, batch 2 starts.
+All batches run in PARALLEL (threads). Each batch has its own RR loop + Chrome tabs.
 
     Sites  Batches  Distribution
     1-4    1        [n]
@@ -33,6 +33,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -383,6 +384,7 @@ class DomainCrawler:
             return True
 
         html = ""
+        bridge_error = False
         try:
             self.cdp.navigate(url)
             for _ in range(30):
@@ -403,6 +405,7 @@ class DomainCrawler:
             print(f"  [{self.domain}] Error: {e}")
             html = ""
             js_links_raw = "[]"
+            bridge_error = True
 
         if html and len(html) > 500:
             html_lower = html.lower()
@@ -442,6 +445,8 @@ class DomainCrawler:
 
                 self.total_ok += 1
                 print(f"  [{self.domain}] OK ({len(html)//1024}KB, +{len(all_urls)} links): {url}")
+        elif bridge_error:
+            print(f"  [{self.domain}] SKIP (bridge error, will retry): {url}")
         else:
             self.mark_failed(sha, url, "empty_response")
             self.total_errors += 1
@@ -582,19 +587,33 @@ def main():
     print(f"Agent: {agent_id or '?'}")
 
     # =========================================================================
-    # CRAWL BATCHES SEQUENTIALLY
+    # CRAWL ALL BATCHES IN PARALLEL
     # =========================================================================
-    all_crawlers = []
+    all_results = [None] * len(batches)  # thread-safe: each index written by one thread
     domain_offset = 0
+    threads = []
+
+    def run_batch(idx, batch, offset):
+        print(f"\n{'='*60}")
+        print(f"BATCH {idx + 1}/{len(batches)}: {', '.join(batch)} (RR x{len(batch)})")
+        print(f"{'='*60}")
+        all_results[idx] = crawl_batch(batch, agent_id, include_subdomains, offset)
 
     for batch_idx, batch in enumerate(batches):
-        print(f"\n{'='*60}")
-        print(f"BATCH {batch_idx + 1}/{len(batches)}: {', '.join(batch)} (RR x{len(batch)})")
-        print(f"{'='*60}")
-
-        crawlers = crawl_batch(batch, agent_id, include_subdomains, domain_offset)
-        all_crawlers.extend(crawlers)
+        t = threading.Thread(target=run_batch, args=(batch_idx, batch, domain_offset))
+        threads.append(t)
         domain_offset += len(batch)
+
+    for t in threads:
+        t.start()
+
+    for t in threads:
+        t.join()
+
+    all_crawlers = []
+    for result in all_results:
+        if result:
+            all_crawlers.extend(result)
 
     # =========================================================================
     # SUMMARY
