@@ -61,10 +61,137 @@ CONTEXT_WARNING_THRESHOLD = int(os.environ.get("CONTEXT_WARNING_THRESHOLD", "50"
 redis_pool: Optional[redis.Redis] = None
 
 
+# === Background Cache ===
+# All read endpoints serve from this cache. A background task refreshes it.
+CACHE_REFRESH_INTERVAL = int(os.environ.get("CACHE_REFRESH_INTERVAL", "5"))  # seconds
+
+_cache = {
+    "agents": [],       # list of agent dicts
+    "health": {"status": "starting", "redis": False, "timestamp": 0},
+    "timestamp": 0,     # last refresh epoch
+}
+_cache_lock = asyncio.Lock()
+_cache_task: Optional[asyncio.Task] = None
+
+
+async def _refresh_cache_once():
+    """Single cache refresh cycle: tmux + Redis → _cache.
+
+    Runs in background, never blocks API handlers.
+    """
+    global _cache
+
+    now = int(time.time())
+
+    # --- Health ---
+    redis_ok = False
+    if redis_pool:
+        try:
+            await redis_pool.ping()
+            redis_ok = True
+        except Exception:
+            pass
+
+    health = {"status": "ok" if redis_ok else "degraded", "redis": redis_ok, "timestamp": now}
+
+    # --- Agent tmux states (ONE subprocess for all) ---
+    agent_states = {}
+    try:
+        script = (
+            f'for s in $(tmux ls -F "#{{session_name}}" 2>/dev/null | grep "^{MA_PREFIX}-agent-"); do '
+            f'id="${{s#{MA_PREFIX}-agent-}}"; '
+            f'busy=0; compacted=0; '
+            f'if tmux capture-pane -t "$s:0.0" -p -J 2>/dev/null | grep "bypass permissions" | tail -1 | grep -q "esc to interrupt"; then busy=1; fi; '
+            f'if tmux capture-pane -t "$s:0.0" -p -J -S -200 2>/dev/null | grep -qiE "auto-compact|compacting conversation"; then compacted=1; fi; '
+            f'echo "$id:$busy:$compacted"; '
+            f'done'
+        )
+        result = await asyncio.to_thread(
+            subprocess.run, ["bash", "-c", script],
+            capture_output=True, text=True, timeout=30
+        )
+        for line in result.stdout.strip().split('\n'):
+            if ':' not in line:
+                continue
+            parts = line.split(':')
+            if len(parts) >= 3:
+                agent_states[parts[0]] = {
+                    'busy': parts[1] == '1',
+                    'compacted': parts[2] == '1',
+                }
+    except Exception as e:
+        print(f"[cache] tmux states error: {e}")
+
+    # --- Agent list (tmux sessions + Redis enrichment) ---
+    agents = []
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run,
+            ["tmux", "list-sessions", "-F", "#{session_name}"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().split("\n"):
+                if line.startswith(f"{MA_PREFIX}-agent-"):
+                    agent_id = line.replace(f"{MA_PREFIX}-agent-", "")
+                    if agent_id.isdigit():
+                        status = "active"
+                        last_seen = now
+                        queue_size = 0
+                        tasks_completed = 0
+                        messages_since_reload = 0
+
+                        if redis_pool:
+                            try:
+                                data = await redis_pool.hgetall(f"{MA_PREFIX}:agent:{agent_id}")
+                                if data:
+                                    last_seen = int(data.get("last_seen", 0))
+                                    queue_size = int(data.get("queue_size", 0))
+                                    tasks_completed = int(data.get("tasks_completed", 0))
+                                    messages_since_reload = int(data.get("messages_since_reload", 0))
+                                    status = data.get("status", "active")
+                            except Exception:
+                                pass
+
+                        state = agent_states.get(agent_id, {})
+                        override = await _resolve_agent_status(agent_id, state, messages_since_reload)
+                        if override:
+                            status = override
+
+                        agents.append({
+                            "id": agent_id,
+                            "status": status,
+                            "last_seen": last_seen,
+                            "queue_size": queue_size,
+                            "tasks_completed": tasks_completed,
+                            "mode": "tmux",
+                        })
+    except Exception as e:
+        print(f"[cache] agent list error: {e}")
+
+    agents.sort(key=lambda a: int(a["id"]))
+
+    # --- Write cache atomically ---
+    async with _cache_lock:
+        _cache["agents"] = agents
+        _cache["health"] = health
+        _cache["timestamp"] = now
+
+
+async def _cache_loop():
+    """Background loop that refreshes the cache every CACHE_REFRESH_INTERVAL seconds."""
+    while True:
+        try:
+            await _refresh_cache_once()
+        except Exception as e:
+            print(f"[cache] refresh error: {e}")
+        await asyncio.sleep(CACHE_REFRESH_INTERVAL)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown events"""
-    global redis_pool
+    global redis_pool, _cache_task
     redis_pool = redis.Redis(
         host=REDIS_HOST,
         port=REDIS_PORT,
@@ -76,7 +203,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"WARNING: Redis connection failed: {e}")
 
+    # Start background cache refresh
+    _cache_task = asyncio.create_task(_cache_loop())
+    print(f"Background cache started (refresh every {CACHE_REFRESH_INTERVAL}s)")
+
     yield
+
+    # Stop background cache
+    if _cache_task:
+        _cache_task.cancel()
+        try:
+            await _cache_task
+        except asyncio.CancelledError:
+            pass
 
     if redis_pool:
         await redis_pool.close()
@@ -118,74 +257,11 @@ class SendMessage(BaseModel):
 
 @app.get("/api/health")
 async def health():
-    """Health check"""
-    redis_ok = False
-    if redis_pool:
-        try:
-            await redis_pool.ping()
-            redis_ok = True
-        except Exception:
-            pass
-
-    return {
-        "status": "ok" if redis_ok else "degraded",
-        "redis": redis_ok,
-        "timestamp": int(time.time())
-    }
+    """Health check — reads from background cache"""
+    return _cache["health"]
 
 
-# Cache for _get_agent_states to avoid hammering tmux every few seconds
-_agent_states_cache = {"data": {}, "timestamp": 0}
-_agent_states_cache_ttl = 3  # seconds
-
-
-def _get_agent_states() -> dict:
-    """Check ALL agent tmux sessions in ONE subprocess (cached).
-
-    Returns dict[agent_id] = {'busy': bool, 'compacted': bool}
-    - busy: last 3 lines contain 'esc to interrupt'
-    - compacted: last 200 lines contain 'auto-compact' (context compaction message)
-
-    Uses 3-second cache to avoid overwhelming tmux with concurrent WebSocket polls.
-    """
-    # Return cached data if fresh
-    now = time.time()
-    if now - _agent_states_cache["timestamp"] < _agent_states_cache_ttl:
-        return _agent_states_cache["data"]
-
-    # Recalculate
-    try:
-        script = (
-            f'for s in $(tmux ls -F "#{{session_name}}" 2>/dev/null | grep "^{MA_PREFIX}-agent-"); do '
-            f'id="${{s#{MA_PREFIX}-agent-}}"; '
-            f'busy=0; compacted=0; '
-            f'if tmux capture-pane -t "$s:0.0" -p -J 2>/dev/null | grep "bypass permissions" | tail -1 | grep -q "esc to interrupt"; then busy=1; fi; '
-            f'if tmux capture-pane -t "$s:0.0" -p -J -S -200 2>/dev/null | grep -qiE "auto-compact|compacting conversation"; then compacted=1; fi; '
-            f'echo "$id:$busy:$compacted"; '
-            f'done'
-        )
-        result = subprocess.run(
-            ["bash", "-c", script],
-            capture_output=True, text=True, timeout=15
-        )
-        states = {}
-        for line in result.stdout.strip().split('\n'):
-            if ':' not in line:
-                continue
-            parts = line.split(':')
-            if len(parts) >= 3:
-                agent_id = parts[0]
-                states[agent_id] = {
-                    'busy': parts[1] == '1',
-                    'compacted': parts[2] == '1',
-                }
-
-        # Update cache
-        _agent_states_cache["data"] = states
-        _agent_states_cache["timestamp"] = now
-        return states
-    except Exception:
-        return {}
+# _get_agent_states removed — replaced by background _cache_loop
 
 
 async def _trigger_prompt_reload(agent_id: str):
@@ -264,69 +340,12 @@ async def _resolve_agent_status(agent_id: str, tmux_state: dict, messages_since_
 
 @app.get("/api/agents")
 async def list_agents():
-    """List all agents with active tmux sessions"""
-    agents = []
-    agent_states = _get_agent_states()  # ONE subprocess for all agents
-
-    # Get active tmux sessions (agent-XXX format)
-    try:
-        result = subprocess.run(
-            ["tmux", "list-sessions", "-F", "#{session_name}"],
-            capture_output=True,
-            text=True
-        )
-        if result.returncode == 0:
-            for line in result.stdout.strip().split("\n"):
-                if line.startswith(f"{MA_PREFIX}-agent-"):
-                    agent_id = line.replace(f"{MA_PREFIX}-agent-", "")
-                    if agent_id.isdigit():
-                        # Default: tmux session exists = agent is active
-                        status = "active"
-                        last_seen = int(time.time())
-                        queue_size = 0
-                        tasks_completed = 0
-                        messages_since_reload = 0
-
-                        if redis_pool:
-                            try:
-                                data = await redis_pool.hgetall(f"{MA_PREFIX}:agent:{agent_id}")
-                                if data:
-                                    hb_last_seen = int(data.get("last_seen", 0))
-                                    queue_size = int(data.get("queue_size", 0))
-                                    tasks_completed = int(data.get("tasks_completed", 0))
-                                    messages_since_reload = int(data.get("messages_since_reload", 0))
-
-                                    # Always use Redis status (it's the last known state)
-                                    # Heartbeat just tells us how old this state is
-                                    status = data.get("status", "active")
-                                    last_seen = hb_last_seen
-                            except Exception:
-                                pass
-
-                        # Determine status from tmux state (sticky compacting)
-                        state = agent_states.get(agent_id, {})
-                        override = await _resolve_agent_status(agent_id, state, messages_since_reload)
-                        if override:
-                            status = override
-
-                        agents.append(AgentStatus(
-                            id=agent_id,
-                            status=status,
-                            last_seen=last_seen,
-                            queue_size=queue_size,
-                            tasks_completed=tasks_completed,
-                            mode="tmux"
-                        ))
-    except Exception as e:
-        print(f"Error listing tmux sessions: {e}")
-
-    # Sort by agent ID
-    agents.sort(key=lambda a: int(a.id))
-
+    """List all agents — reads from background cache (instant)"""
+    agents = _cache["agents"]
     return {
-        "agents": [a.model_dump() for a in agents],
+        "agents": agents,
         "count": len(agents),
-        "timestamp": int(time.time())
+        "timestamp": _cache["timestamp"]
     }
 
 
@@ -851,68 +870,29 @@ async def websocket_messages(websocket: WebSocket):
 
 @app.websocket("/ws/status")
 async def websocket_status(websocket: WebSocket):
-    """WebSocket endpoint for agent status updates (polling tmux sessions)"""
+    """WebSocket endpoint for agent status updates — reads from background cache"""
     await websocket.accept()
 
-    # Poll interval from query param (default 10s)
-    poll = float(websocket.query_params.get("poll", "10"))
-    poll = max(2, min(poll, 60))  # Clamp 2-60s
+    # Poll interval from query param (default 5s, min = cache interval)
+    poll = float(websocket.query_params.get("poll", "5"))
+    poll = max(CACHE_REFRESH_INTERVAL, min(poll, 60))  # Clamp to cache interval minimum
+
+    last_sent = ""  # JSON string of last sent data to avoid sending duplicates
 
     try:
         while True:
-            agents = []
-            agent_states = _get_agent_states()  # ONE subprocess for all agents
-
-            # Get active tmux sessions
-            try:
-                result = subprocess.run(
-                    ["tmux", "list-sessions", "-F", "#{session_name}"],
-                    capture_output=True,
-                    text=True
-                )
-                if result.returncode == 0:
-                    for line in result.stdout.strip().split("\n"):
-                        if line.startswith(f"{MA_PREFIX}-agent-"):
-                            agent_id = line.replace(f"{MA_PREFIX}-agent-", "")
-                            if agent_id.isdigit():
-                                # Default: tmux exists = agent is active
-                                status = "active"
-                                last_seen = int(time.time())
-                                messages_since_reload = 0
-
-                                if redis_pool:
-                                    try:
-                                        data = await redis_pool.hgetall(f"{MA_PREFIX}:agent:{agent_id}")
-                                        if data:
-                                            hb_last_seen = int(data.get("last_seen", 0))
-                                            messages_since_reload = int(data.get("messages_since_reload", 0))
-                                            # Always use Redis status (it's the last known state)
-                                            status = data.get("status", "active")
-                                            last_seen = hb_last_seen
-                                    except Exception:
-                                        pass
-
-                                # Determine status from tmux state (sticky compacting)
-                                state = agent_states.get(agent_id, {})
-                                override = await _resolve_agent_status(agent_id, state, messages_since_reload)
-                                if override:
-                                    status = override
-
-                                agents.append({
-                                    "id": agent_id,
-                                    "status": status,
-                                    "last_seen": last_seen,
-                                })
-            except Exception as e:
-                print(f"Error listing tmux sessions: {e}")
-
-            agents.sort(key=lambda a: int(a["id"]))
-
-            await websocket.send_json({
+            agents = _cache["agents"]
+            payload = {
                 "type": "status_update",
-                "agents": agents,
-                "timestamp": int(time.time())
-            })
+                "agents": [{"id": a["id"], "status": a["status"], "last_seen": a["last_seen"]} for a in agents],
+                "timestamp": _cache["timestamp"]
+            }
+            payload_str = json.dumps(payload, sort_keys=True)
+
+            # Only send if data changed
+            if payload_str != last_sent:
+                await websocket.send_json(payload)
+                last_sent = payload_str
 
             await asyncio.sleep(poll)
 
