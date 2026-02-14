@@ -114,8 +114,8 @@ process.stdin.on("end", () => {
     req.reject(new Error("Extension disconnected"));
   }
   pendingRequests.clear();
-  // Exit — Chrome will respawn us when the extension reconnects
-  process.exit(0);
+  // Keep HTTP server alive — extension can reconnect later
+  log("INFO", "HTTP server stays alive, waiting for extension reconnection...");
 });
 
 process.stdin.on("error", (err) => {
