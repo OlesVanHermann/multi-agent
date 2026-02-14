@@ -22,14 +22,11 @@ import hashlib
 import importlib.util
 import json
 import os
-import random
 import re
 import shutil
 import subprocess
 import sys
 import time
-import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -560,65 +557,33 @@ def main():
         print(f"  [{c.domain}] {total} fichiers, {len(c.pending)} a telecharger, +{discovered} nouvelles URLs")
 
     # =========================================================================
-    # PHASE 2: CRAWL (parallel if >= 4 domains, round-robin otherwise)
+    # PHASE 2: ROUND-ROBIN CRAWL
     # =========================================================================
+    print(f"\n--- Phase 2: Crawl ---")
+    page_count = 0
 
-    if len(crawlers) >= 4:
-        # --- PARALLEL MODE: one thread per domain, random sleep ---
-        print(f"\n--- Phase 2: Crawl PARALLEL ({len(crawlers)} threads) ---")
-        _counter = [0]
-        _lock = threading.Lock()
+    while any(c.has_pending() for c in crawlers):
+        progress = False
 
-        def _worker(c):
-            while True:
-                if not c.has_pending():
-                    c.refresh_pending()
-                    if not c.has_pending():
-                        break
-                c.process_one()
-                with _lock:
-                    _counter[0] += 1
-                    if _counter[0] % 50 == 0:
-                        total_p = sum(len(x.pending) for x in crawlers)
-                        active = sum(1 for x in crawlers if x.has_pending())
-                        print(f"\n--- Progress: {_counter[0]} pages, {active} domaines actifs, {total_p} en attente ---")
-                time.sleep(random.uniform(0.2, 0.9))
+        for c in crawlers:
+            if c.has_pending():
+                if c.process_one():
+                    progress = True
+                    page_count += 1
 
-        with ThreadPoolExecutor(max_workers=len(crawlers)) as pool:
-            futures = {pool.submit(_worker, c): c for c in crawlers}
-            for future in as_completed(futures):
-                c = futures[future]
-                try:
-                    future.result()
-                except Exception as e:
-                    print(f"  [{c.domain}] Thread error: {e}")
+        # Progress report every 50 pages
+        if page_count % 50 == 0 and page_count > 0:
+            total_pending = sum(len(c.pending) for c in crawlers)
+            active = sum(1 for c in crawlers if c.has_pending())
+            print(f"\n--- Progress: {page_count} pages, {active} domaines actifs, {total_pending} en attente ---")
 
-        page_count = _counter[0]
-    else:
-        # --- SEQUENTIAL ROUND-ROBIN (1-3 domains) ---
-        print(f"\n--- Phase 2: Crawl round-robin ---")
-        page_count = 0
-
-        while any(c.has_pending() for c in crawlers):
-            progress = False
-
+        if not progress:
+            # Final refresh before giving up
             for c in crawlers:
-                if c.has_pending():
-                    if c.process_one():
-                        progress = True
-                        page_count += 1
-
-            if page_count % 50 == 0 and page_count > 0:
-                total_pending = sum(len(c.pending) for c in crawlers)
-                active = sum(1 for c in crawlers if c.has_pending())
-                print(f"\n--- Progress: {page_count} pages, {active} domaines actifs, {total_pending} en attente ---")
-
-            if not progress:
-                for c in crawlers:
-                    if c.active:
-                        c.refresh_pending()
-                if not any(c.has_pending() for c in crawlers):
-                    break
+                if c.active:
+                    c.refresh_pending()
+            if not any(c.has_pending() for c in crawlers):
+                break
 
     # =========================================================================
     # SUMMARY
