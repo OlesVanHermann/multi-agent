@@ -98,9 +98,35 @@ start_all() {
     log_ok "Started $count agents"
 }
 
+ensure_infra() {
+    # Check-only: verify infra is up, start ONLY what's missing. Never stop/restart.
+    local ok=true
+
+    # Redis
+    if ! redis-cli ping &>/dev/null 2>&1; then
+        log_error "Redis not running. Start infra first: ./scripts/infra.sh start"
+        ok=false
+    fi
+
+    # Dashboard
+    if ! lsof -iTCP:8000 -sTCP:LISTEN &>/dev/null 2>&1; then
+        log_info "Dashboard not running, starting..."
+        "$SCRIPT_DIR/web.sh" start
+    fi
+
+    # Agent 000
+    if ! tmux has-session -t "${MA_PREFIX}-agent-000" 2>/dev/null; then
+        log_warn "Agent 000 not running. Start infra first: ./scripts/infra.sh start"
+    fi
+
+    if [ "$ok" = false ]; then
+        exit 1
+    fi
+}
+
 do_start() {
-    # Ensure infrastructure is running
-    "$SCRIPT_DIR/infra.sh" start
+    # Check infra is up (no stop/restart, no flush)
+    ensure_infra
 
     local target=$1
     if [ -z "$target" ]; then

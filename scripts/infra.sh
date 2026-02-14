@@ -82,16 +82,13 @@ do_start() {
         sleep 2
         if redis-cli ping &>/dev/null 2>&1; then
             log_ok "Redis started (Docker)"
+            # Flush only on fresh start (not when already running)
+            log_info "Flushing Redis database..."
+            redis-cli FLUSHALL &>/dev/null && log_ok "Redis database cleared"
         else
             log_error "Failed to start Redis"
             exit 1
         fi
-    fi
-
-    # Flush Redis to start clean
-    if redis-cli ping &>/dev/null 2>&1; then
-        log_info "Flushing Redis database..."
-        redis-cli FLUSHALL &>/dev/null && log_ok "Redis database cleared"
     fi
 
     # Keycloak
