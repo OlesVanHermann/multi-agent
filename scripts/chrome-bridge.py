@@ -315,12 +315,12 @@ class CDP:
         }, timeout=timeout)
         return result
 
-    def evaluate(self, expression):
+    def evaluate(self, expression, timeout=60):
         """Execute JavaScript and return the result value."""
         result = send_command("evaluate", {
             "tabId": self.tab_id,
             "expression": expression
-        })
+        }, timeout=timeout)
         return result.get("value") if isinstance(result, dict) else result
 
     # ─── Navigation ───────────────────────────────────────────────────
@@ -348,7 +348,23 @@ class CDP:
     # ─── Page Content ─────────────────────────────────────────────────
 
     def get_html(self):
-        return self.evaluate("document.documentElement.outerHTML")
+        """Get full page HTML. Uses chunked transfer for large pages (>800KB)."""
+        # First check size to decide if chunking is needed
+        size = self.evaluate("document.documentElement.outerHTML.length")
+        if not size or int(size) < 800_000:
+            return self.evaluate("document.documentElement.outerHTML", timeout=120)
+        # Large page — store in window._html and transfer in 500KB chunks
+        # Use IIFE to avoid returning the 2MB+ string as assignment result
+        self.evaluate("void(window._html = document.documentElement.outerHTML)")
+        total = int(self.evaluate("window._html.length"))
+        chunk_size = 500_000
+        parts = []
+        for offset in range(0, total, chunk_size):
+            chunk = self.evaluate(f"window._html.substring({offset}, {offset + chunk_size})")
+            if chunk:
+                parts.append(chunk)
+        self.evaluate("delete window._html")
+        return "".join(parts)
 
     def get_text(self):
         return self.evaluate("document.body.innerText")

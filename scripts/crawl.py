@@ -215,6 +215,30 @@ class DomainCrawler:
                 return False
         return True
 
+    def _parse_js_links(self, js_links_raw: str) -> set:
+        """Parse links extracted via JS querySelectorAll('a[href]').
+        Uses ONLY global EXCLUDE_PATTERNS, ignores config.json include_patterns
+        (which may target a different locale like ionos.fr vs ionos.com)."""
+        urls = set()
+        try:
+            links = json.loads(js_links_raw)
+        except (json.JSONDecodeError, TypeError):
+            return urls
+        for link in links:
+            link = self.normalize_url(link)
+            if not link:
+                continue
+            try:
+                url_domain = urlparse(link).netloc
+            except Exception:
+                continue
+            if not self.is_same_domain(url_domain):
+                continue
+            if EXCLUDE_PATTERNS and any(re.search(p, link, re.IGNORECASE) for p in EXCLUDE_PATTERNS):
+                continue
+            urls.add(link)
+        return urls
+
     def extract_urls_from_html(self, html: str, base_url: str) -> set:
         urls = set()
         href_pattern = r'href=["\']([^"\']+)["\']'
@@ -357,12 +381,16 @@ class DomainCrawler:
                         break
                 except Exception:
                     continue
-            if self.extra_sleep > 0:
-                time.sleep(self.extra_sleep)
+            # Wait for JS frameworks to hydrate (SPA need 1-2s after readyState)
+            time.sleep(max(self.extra_sleep, 2.0))
+            js_links_raw = self.cdp.evaluate(
+                'JSON.stringify(Array.from(document.querySelectorAll("a[href]")).map(a=>a.href))'
+            ) or "[]"
             html = self.cdp.get_html() or ""
         except Exception as e:
             print(f"  [{self.domain}] Error: {e}")
             html = ""
+            js_links_raw = "[]"
 
         if html and len(html) > 500:
             html_lower = html.lower()
@@ -392,14 +420,16 @@ class DomainCrawler:
                 html_file.write_text(f"<!-- URL: {url} -->\n{html}")
 
                 new_urls = self.extract_urls_from_html(html, url)
+                js_urls = self._parse_js_links(js_links_raw)
+                all_urls = new_urls | js_urls
                 new_count = 0
-                for new_url in new_urls:
+                for new_url in all_urls:
                     if self.register_and_queue(new_url):
                         new_count += 1
                         self.total_new_urls += 1
 
                 self.total_ok += 1
-                print(f"  [{self.domain}] OK ({len(html)//1024}KB, +{len(new_urls)} links): {url[:60]}")
+                print(f"  [{self.domain}] OK ({len(html)//1024}KB, +{len(all_urls)} links): {url[:60]}")
         else:
             self.mark_failed(sha, url, "empty_response")
             self.total_errors += 1
