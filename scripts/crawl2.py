@@ -384,19 +384,26 @@ def crawl_batch(config: dict) -> tuple:
             is_error_page = False
             error_reason = None
 
-            if '<title>404' in html_lower or 'page not found' in html_lower or 'not found</title>' in html_lower:
+            # Extract <title> from <head> only (avoid false positives
+            # from i18n JSON, JS bundles, SVG component titles)
+            _head_m = re.search(r'<head[^>]*>(.*?)</head>', html_lower, re.DOTALL)
+            _head_s = _head_m.group(1) if _head_m else html_lower[:5000]
+            _title_m = re.search(r'<title[^>]*>(.*?)</title>', _head_s, re.DOTALL)
+            _page_title = _title_m.group(1).strip() if _title_m else ''
+
+            if '404' in _page_title or 'not found' in _page_title:
                 is_error_page = True
                 error_reason = "404_not_found"
-            elif '<title>403' in html_lower or 'forbidden</title>' in html_lower or 'access denied' in html_lower:
+            elif '403' in _page_title or 'forbidden' in _page_title:
                 is_error_page = True
                 error_reason = "403_forbidden"
-            elif '<title>500' in html_lower or 'internal server error' in html_lower:
+            elif '500' in _page_title or 'internal server error' in _page_title:
                 is_error_page = True
                 error_reason = "500_server_error"
-            elif '<title>502' in html_lower or 'bad gateway' in html_lower:
+            elif '502' in _page_title or 'bad gateway' in _page_title:
                 is_error_page = True
                 error_reason = "502_bad_gateway"
-            elif '<title>503' in html_lower or 'service unavailable' in html_lower:
+            elif '503' in _page_title or 'service unavailable' in _page_title:
                 is_error_page = True
                 error_reason = "503_unavailable"
 
