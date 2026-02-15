@@ -114,16 +114,13 @@ async def _refresh_cache_once():
 
     health = {"status": "ok" if redis_ok else "degraded", "redis": redis_ok, "timestamp": now}
 
-    # --- Agent tmux states (parallel: xargs -P, single capture per agent) ---
+    # --- Agent tmux states (sequential for loop, single capture per agent) ---
     agent_states = {}
     try:
-        # xargs -P 64 parallelizes capture-pane across agents.
         # Single capture -S -30 per agent (not 2x -S -200) = 30x less data.
         script = (
-            'tmux ls -F "#{session_name}" 2>/dev/null'
-            ' | grep "^' + MA_PREFIX + '-agent-"'
-            ' | xargs -P 64 -I{} bash -c \''
-            's="{}"; id="${s#' + MA_PREFIX + '-agent-}"; '
+            'for s in $(tmux ls -F "#{session_name}" 2>/dev/null | grep "^' + MA_PREFIX + '-agent-"); do '
+            'id="${s#' + MA_PREFIX + '-agent-}"; '
             'out=$(tmux capture-pane -t "$s:0.0" -p -J -S -30 2>/dev/null); '
             'busy=0; compacted=0; ctx=-1; done_compacting=0; prompt_loaded=0; '
             'if echo "$out" | grep "bypass permissions" | tail -1 | grep -q "esc to interrupt"; then busy=1; fi; '
@@ -132,7 +129,8 @@ async def _refresh_cache_once():
             'if [ "$done_compacting" -eq 1 ] && echo "$out" | grep -q "prompts/${id}-"; then prompt_loaded=1; fi; '
             'pct=$(echo "$out" | grep -oE "auto-compact: [0-9]+%" | tail -1 | grep -oE "[0-9]+"); '
             'if [ -n "$pct" ]; then ctx=$pct; fi; '
-            'echo "$id:$busy:$compacted:$ctx:$done_compacting:$prompt_loaded"\''
+            'echo "$id:$busy:$compacted:$ctx:$done_compacting:$prompt_loaded"; '
+            'done'
         )
         result = await _run_subprocess(
             ["bash", "-c", script], text=True, timeout=60
