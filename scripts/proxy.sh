@@ -55,10 +55,14 @@ do_start() {
     # Supports HTTP, WebSocket, and any protocol transparently
     PROXY_PY="$LOG_DIR/.proxy.py"
     cat > "$PROXY_PY" << 'PYEOF'
-import asyncio, sys, signal
+import asyncio, sys, signal, traceback
+from datetime import datetime
 
 BACKEND_HOST, BACKEND_PORT = sys.argv[1], int(sys.argv[2])
 LISTEN_HOST, LISTEN_PORT = sys.argv[3], int(sys.argv[4])
+
+def log(msg):
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
 
 async def pipe(reader, writer):
     try:
@@ -68,8 +72,11 @@ async def pipe(reader, writer):
                 break
             writer.write(data)
             await writer.drain()
-    except (ConnectionResetError, BrokenPipeError, OSError):
-        pass
+    except (ConnectionResetError, BrokenPipeError, OSError) as e:
+        log(f"Pipe error (expected): {type(e).__name__}")
+    except Exception as e:
+        log(f"Pipe unexpected error: {type(e).__name__}: {e}")
+        traceback.print_exc()
     finally:
         try:
             writer.close()
@@ -78,29 +85,76 @@ async def pipe(reader, writer):
             pass
 
 async def handle(client_reader, client_writer):
+    peer = client_writer.get_extra_info('peername')
     try:
         backend_reader, backend_writer = await asyncio.wait_for(
             asyncio.open_connection(BACKEND_HOST, BACKEND_PORT), timeout=10
         )
         backend_writer.transport.set_write_buffer_limits(high=262144)
         client_writer.transport.set_write_buffer_limits(high=262144)
-    except Exception:
+        await asyncio.gather(
+            pipe(client_reader, backend_writer),
+            pipe(backend_reader, client_writer),
+        )
+    except asyncio.TimeoutError:
+        log(f"Backend timeout for {peer}")
         client_writer.close()
-        return
-    await asyncio.gather(
-        pipe(client_reader, backend_writer),
-        pipe(backend_reader, client_writer),
-    )
+    except ConnectionRefusedError:
+        log(f"Backend refused connection for {peer}")
+        client_writer.close()
+    except Exception as e:
+        log(f"Handle error for {peer}: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        client_writer.close()
+
+server = None
+shutdown_event = None
 
 async def main():
-    server = await asyncio.start_server(handle, LISTEN_HOST, LISTEN_PORT, backlog=256)
-    print(f"TCP proxy {LISTEN_HOST}:{LISTEN_PORT} -> {BACKEND_HOST}:{BACKEND_PORT}", flush=True)
-    async with server:
-        await server.serve_forever()
+    global server, shutdown_event
+    try:
+        shutdown_event = asyncio.Event()
+        server = await asyncio.start_server(handle, LISTEN_HOST, LISTEN_PORT, backlog=256)
+        log(f"TCP proxy {LISTEN_HOST}:{LISTEN_PORT} -> {BACKEND_HOST}:{BACKEND_PORT}")
+
+        # Wait for shutdown signal
+        async with server:
+            await shutdown_event.wait()
+            log("Shutting down server...")
+            server.close()
+            await server.wait_closed()
+    except Exception as e:
+        log(f"FATAL: Server crashed: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        raise
+
+def handle_signal(signum):
+    log(f"Received signal {signum}, initiating graceful shutdown...")
+    if shutdown_event:
+        loop.call_soon_threadsafe(shutdown_event.set)
 
 loop = asyncio.new_event_loop()
-loop.add_signal_handler(signal.SIGTERM, loop.stop)
-loop.run_until_complete(main())
+asyncio.set_event_loop(loop)
+for sig in (signal.SIGTERM, signal.SIGINT):
+    loop.add_signal_handler(sig, lambda s=sig: handle_signal(s))
+
+try:
+    loop.run_until_complete(main())
+except KeyboardInterrupt:
+    log("Interrupted by user")
+except Exception as e:
+    log(f"FATAL: Loop crashed: {type(e).__name__}: {e}")
+    traceback.print_exc()
+finally:
+    # Cancel all pending tasks
+    pending = asyncio.all_tasks(loop)
+    for task in pending:
+        task.cancel()
+    # Wait for all tasks to complete cancellation
+    if pending:
+        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+    loop.close()
+    log("Proxy stopped")
 PYEOF
 
     if [ "$LISTEN_PORT" -lt 1024 ] && [ "$(uname)" = "Linux" ]; then
