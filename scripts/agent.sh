@@ -83,19 +83,104 @@ start_single() {
     log_ok "Agent $agent_id started: $SESSION_NAME"
 }
 
+wait_claude_ready() {
+    # Wait until Claude CLI is ready in a tmux session (shows ❯ prompt)
+    local session=$1
+    local max_wait=${2:-30}  # max seconds to wait
+    local elapsed=0
+    while [ $elapsed -lt $max_wait ]; do
+        local pane_content
+        pane_content=$(tmux capture-pane -t "$session:0" -p 2>/dev/null)
+        # Claude is ready when we see the input prompt marker
+        if echo "$pane_content" | grep -qE '❯|Try "'; then
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    return 1  # timeout
+}
+
 start_all() {
     log_info "Auto-detecting agents from prompts/..."
-    local count=0
+
+    # Collect all agent IDs
+    local agents=()
     for prompt_file in "$PROMPTS_DIR"/[0-9][0-9][0-9]-*.md; do
         [ -f "$prompt_file" ] || continue
         local filename=$(basename "$prompt_file" .md)
         local agent_id="${filename%%-*}"
-        start_single "$agent_id"
-        count=$((count + 1))
-        sleep 1
+        is_protected "$agent_id" && continue
+        # Skip duplicates (e.g. 390-rapport.md + 390-PLAN-MAXIMAL.md)
+        [[ " ${agents[*]} " == *" $agent_id "* ]] && continue
+        # Skip already running
+        local SESSION_NAME="${MA_PREFIX}-agent-$agent_id"
+        if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+            log_warn "$SESSION_NAME already exists, skipping"
+            continue
+        fi
+        agents+=("$agent_id")
     done
+
+    local total=${#agents[@]}
+    if [ "$total" -eq 0 ]; then
+        log_warn "No agents to start"
+        return
+    fi
+
+    local BATCH_SIZE=10
+    local batch_num=0
+
+    for ((i=0; i<total; i+=BATCH_SIZE)); do
+        local batch=("${agents[@]:i:BATCH_SIZE}")
+        batch_num=$((batch_num + 1))
+        log_info "Batch $batch_num: ${batch[*]}"
+
+        # Phase 1: create all tmux sessions + launch claude
+        for agent_id in "${batch[@]}"; do
+            local SESSION="${MA_PREFIX}-agent-$agent_id"
+            mkdir -p "$LOG_DIR/$agent_id"
+            tmux new-session -d -s "$SESSION"
+            tmux send-keys -t "$SESSION" "cd '$BASE_DIR' && claude" Enter
+        done
+
+        # Phase 2: wait for Claude to be ready in ALL sessions, then configure
+        log_info "  Waiting for Claude to start in ${#batch[@]} sessions..."
+        for agent_id in "${batch[@]}"; do
+            local SESSION="${MA_PREFIX}-agent-$agent_id"
+            if wait_claude_ready "$SESSION" 30; then
+                # Read model
+                local MODEL=""
+                if [ -f "$PROMPTS_DIR/${agent_id}.model" ]; then
+                    MODEL=$(cat "$PROMPTS_DIR/${agent_id}.model" | tr -d '[:space:]')
+                elif [ -f "$PROMPTS_DIR/default.model" ]; then
+                    MODEL=$(cat "$PROMPTS_DIR/default.model" | tr -d '[:space:]')
+                fi
+
+                # Send /model if needed
+                if [ -n "$MODEL" ]; then
+                    tmux send-keys -t "$SESSION" "/model $MODEL" Enter
+                    sleep 1
+                    tmux send-keys -t "$SESSION" Enter
+                    sleep 1
+                fi
+
+                # Start bridge in second window
+                tmux new-window -t "$SESSION" -n bridge
+                tmux send-keys -t "$SESSION:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX=$MA_PREFIX python3 '$BRIDGE_SCRIPT' $agent_id 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
+                tmux select-window -t "$SESSION:0"
+
+                log_ok "  Agent $agent_id ready"
+            else
+                log_error "  Agent $agent_id: Claude did not start within 30s"
+            fi
+        done
+
+        log_ok "Batch $batch_num done: ${#batch[@]} agents"
+    done
+
     echo ""
-    log_ok "Started $count agents"
+    log_ok "Started $total agents ($batch_num batches of max $BATCH_SIZE)"
 }
 
 ensure_infra() {
