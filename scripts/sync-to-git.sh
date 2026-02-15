@@ -141,10 +141,12 @@ echo ""
 cd "$MA_GIT"
 
 echo -e "${CYAN}[2/4] Creating branch $BRANCH...${NC}"
-# Start from latest main
+# Stash any synced files, checkout main, then create branch
+git stash --quiet 2>/dev/null || true
 git checkout main --quiet 2>/dev/null || true
 git pull "$HUB_REMOTE" main --quiet 2>/dev/null || true
 git checkout -B "$BRANCH" main --quiet
+git stash pop --quiet 2>/dev/null || true
 
 echo -e "${CYAN}[3/4] Committing changes...${NC}"
 git add -A

@@ -51,60 +51,56 @@ do_start() {
     log_info "Starting proxy $LISTEN_HOST:$LISTEN_PORT → $BACKEND_HOST:$BACKEND_PORT..."
 
     # Write proxy script to a temp file (avoids quoting issues)
-    # TCP-level proxy: forwards raw bytes bidirectionally
+    # Asyncio TCP proxy: single-threaded, non-blocking, handles thousands of connections
     # Supports HTTP, WebSocket, and any protocol transparently
     PROXY_PY="$LOG_DIR/.proxy.py"
     cat > "$PROXY_PY" << 'PYEOF'
-import socket, threading, sys, signal, selectors
+import asyncio, sys, signal
 
-BACKEND = (sys.argv[1], int(sys.argv[2]))
-LISTEN  = (sys.argv[3], int(sys.argv[4]))
+BACKEND_HOST, BACKEND_PORT = sys.argv[1], int(sys.argv[2])
+LISTEN_HOST, LISTEN_PORT = sys.argv[3], int(sys.argv[4])
 
-signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-
-def pipe(src, dst):
-    """Forward data from src to dst until EOF."""
+async def pipe(reader, writer):
     try:
         while True:
-            data = src.recv(65536)
+            data = await reader.read(65536)
             if not data:
                 break
-            dst.sendall(data)
-    except Exception:
+            writer.write(data)
+            await writer.drain()
+    except (ConnectionResetError, BrokenPipeError, OSError):
         pass
     finally:
-        try: dst.shutdown(socket.SHUT_WR)
-        except Exception: pass
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except Exception:
+            pass
 
-def handle(client, addr):
-    """Handle one client connection: connect to backend, pipe both ways."""
+async def handle(client_reader, client_writer):
     try:
-        backend = socket.create_connection(BACKEND, timeout=10)
-        backend.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        t1 = threading.Thread(target=pipe, args=(client, backend), daemon=True)
-        t2 = threading.Thread(target=pipe, args=(backend, client), daemon=True)
-        t1.start()
-        t2.start()
-        t1.join()
-        t2.join()
+        backend_reader, backend_writer = await asyncio.wait_for(
+            asyncio.open_connection(BACKEND_HOST, BACKEND_PORT), timeout=10
+        )
+        backend_writer.transport.set_write_buffer_limits(high=262144)
+        client_writer.transport.set_write_buffer_limits(high=262144)
     except Exception:
-        pass
-    finally:
-        try: client.close()
-        except Exception: pass
-        try: backend.close()
-        except Exception: pass
+        client_writer.close()
+        return
+    await asyncio.gather(
+        pipe(client_reader, backend_writer),
+        pipe(backend_reader, client_writer),
+    )
 
-server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-server.bind(LISTEN)
-server.listen(128)
-print(f"TCP proxy {LISTEN[0]}:{LISTEN[1]} -> {BACKEND[0]}:{BACKEND[1]}", flush=True)
+async def main():
+    server = await asyncio.start_server(handle, LISTEN_HOST, LISTEN_PORT, backlog=256)
+    print(f"TCP proxy {LISTEN_HOST}:{LISTEN_PORT} -> {BACKEND_HOST}:{BACKEND_PORT}", flush=True)
+    async with server:
+        await server.serve_forever()
 
-while True:
-    client, addr = server.accept()
-    threading.Thread(target=handle, args=(client, addr), daemon=True).start()
+loop = asyncio.new_event_loop()
+loop.add_signal_handler(signal.SIGTERM, loop.stop)
+loop.run_until_complete(main())
 PYEOF
 
     if [ "$LISTEN_PORT" -lt 1024 ] && [ "$(uname)" = "Linux" ]; then
