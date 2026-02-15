@@ -375,6 +375,9 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
             done_compacting = state.get('done_compacting', False)
             already_sent = reload_flags[i] is not None
 
+            if ctx >= 0 or is_compacting or done_compacting:
+                print(f"[context] Agent {aid}: ctx={ctx}% compacting={is_compacting} done={done_compacting}")
+
             if is_compacting and not done_compacting:
                 # Red: compacting in progress ("Compacting conversation..." visible)
                 # Just set flag, DON'T send "deviens agent" yet (wait for compacting to finish)
@@ -399,19 +402,23 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
 
         # Step 3: After compacting finished, check if prompt was retained
         # Uses prompt_loaded flag from the SAME tmux capture (no 2nd capture needed)
+        # Key insight: if agent is BUSY after compacting → it retained its prompt
         clear_ids = []
         for i, (aid, state) in enumerate(agents_data):
             done_compacting = state.get('done_compacting', False)
             prompt_loaded = state.get('prompt_loaded', False)
+            is_busy = state.get('busy', False)
             had_flag = reload_flags[i] is not None
             if had_flag and done_compacting:
-                if prompt_loaded:
-                    # prompt file found in tmux output after "Conversation compacted"
+                if prompt_loaded or is_busy:
+                    # Either: prompt file visible in output, OR agent is actively working
+                    # Both mean the prompt was retained — no reload needed
                     clear_ids.append(aid)
-                    print(f"[reload] Agent {aid}: prompt retained after compacting, no reload needed")
+                    reason = "prompt file in output" if prompt_loaded else "agent busy (working)"
+                    print(f"[reload] Agent {aid}: {reason} after compacting, no reload needed")
                 else:
-                    # Claude lost its prompt — send "deviens agent"
-                    print(f"[reload] Agent {aid}: prompt NOT in compacted summary, sending deviens agent")
+                    # Agent idle + prompt file NOT visible → lost its prompt
+                    print(f"[reload] Agent {aid}: idle + prompt NOT in summary, sending deviens agent")
                     asyncio.ensure_future(_trigger_prompt_reload(aid))
                     clear_ids.append(aid)
 
