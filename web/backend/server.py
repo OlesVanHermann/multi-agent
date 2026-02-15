@@ -83,7 +83,9 @@ redis_pool: Optional[redis.Redis] = None
 
 # === Background Cache ===
 # All read endpoints serve from this cache. A background task refreshes it.
-CACHE_REFRESH_INTERVAL = int(os.environ.get("CACHE_REFRESH_INTERVAL", "15"))  # seconds
+CACHE_REFRESH_INTERVAL = int(os.environ.get("CACHE_REFRESH_INTERVAL", "15"))  # seconds (normal)
+CACHE_FAST_INTERVAL = 3  # seconds (when agent near compacting end)
+COMPACTING_WAIT_SECS = 80  # wait this long before fast-polling for compacting end
 
 _cache = {
     "agents": [],       # list of agent dicts
@@ -215,13 +217,28 @@ async def _refresh_cache_once():
 
 
 async def _cache_loop():
-    """Background loop that refreshes the cache every CACHE_REFRESH_INTERVAL seconds."""
+    """Background loop with adaptive polling: fast (3s) when agents near compacting end, normal (15s) otherwise."""
     while True:
         try:
             await _refresh_cache_once()
         except Exception as e:
             print(f"[cache] refresh error: {e}")
-        await asyncio.sleep(CACHE_REFRESH_INTERVAL)
+        # Adaptive interval: check if any agent needs fast polling
+        interval = CACHE_REFRESH_INTERVAL
+        try:
+            if redis_pool:
+                # Scan for any reload_sent timestamps where elapsed >= COMPACTING_WAIT_SECS
+                keys = await redis_pool.keys(f"{MA_PREFIX}:agent:*:reload_sent")
+                for key in keys:
+                    ts = await redis_pool.get(key)
+                    if ts:
+                        elapsed = time.time() - float(ts)
+                        if elapsed >= COMPACTING_WAIT_SECS:
+                            interval = CACHE_FAST_INTERVAL
+                            break
+        except Exception:
+            pass
+        await asyncio.sleep(interval)
 
 
 @asynccontextmanager
@@ -366,65 +383,78 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
             pipe.get(f"{MA_PREFIX}:agent:{aid}:reload_sent")
         reload_flags = await pipe.execute()
 
-        # Step 2: Classify agents by context state
+        # Step 2: Classify agents + set compacting timestamp flag
+        now = time.time()
         for i, (aid, state) in enumerate(agents_data):
             ctx = state.get('context_pct', -1)
             is_compacting = state.get('compacted', False)
             done_compacting = state.get('done_compacting', False)
-            already_sent = reload_flags[i] is not None
+            flag_ts = float(reload_flags[i]) if reload_flags[i] else 0
 
             if ctx >= 0 or is_compacting or done_compacting:
-                print(f"[context] Agent {aid}: ctx={ctx}% compacting={is_compacting} done={done_compacting}")
+                elapsed = int(now - flag_ts) if flag_ts else 0
+                print(f"[context] Agent {aid}: ctx={ctx}% compacting={is_compacting} done={done_compacting} flag={elapsed}s")
 
             if is_compacting and not done_compacting:
-                # Red: compacting in progress ("Compacting conversation..." visible)
-                # Just set flag, DON'T send "deviens agent" yet (wait for compacting to finish)
+                # Red: compacting in progress
                 overrides[aid] = "context_compacted"
-                if not already_sent:
-                    pipe2 = redis_pool.pipeline()
-                    pipe2.set(f"{MA_PREFIX}:agent:{aid}:reload_sent", "1", ex=600)
-                    await pipe2.execute()
+                if not flag_ts:
+                    # Set timestamp flag (when compacting started)
+                    await redis_pool.set(f"{MA_PREFIX}:agent:{aid}:reload_sent", str(now), ex=600)
+            elif ctx == 0 and not done_compacting:
+                # Red: context at 0%, compacting imminent — also set flag
+                overrides[aid] = "context_compacted"
+                if not flag_ts:
+                    await redis_pool.set(f"{MA_PREFIX}:agent:{aid}:reload_sent", str(now), ex=600)
             elif done_compacting:
-                # "Conversation compacted" visible → compacting finished → GREEN
+                # "Conversation compacted" visible → compacting finished
                 if state.get('busy'):
                     overrides[aid] = "busy"
                 # else: no override = green (idle)
-            elif ctx == 0:
-                # Red: context at 0%, compacting imminent
-                overrides[aid] = "context_compacted"
             elif 1 <= ctx <= 5:
                 # Orange: context running low (1-5%)
                 overrides[aid] = "context_warning"
             elif state.get('busy'):
                 overrides[aid] = "busy"
 
-        # Step 3: After compacting finished, check if prompt was retained
-        # First check 30-line capture; if not found, do a deep 100-line capture
+        # Step 3: After compacting finished, verify prompt retention
+        # Conditions: flag exists + not compacting anymore + ctx != 0 (context refreshed) + waited >= 80s
         clear_ids = []
         for i, (aid, state) in enumerate(agents_data):
-            done_compacting = state.get('done_compacting', False)
+            flag_ts = float(reload_flags[i]) if reload_flags[i] else 0
+            if not flag_ts:
+                continue
+            ctx = state.get('context_pct', -1)
+            is_compacting = state.get('compacted', False)
             prompt_loaded = state.get('prompt_loaded', False)
-            had_flag = reload_flags[i] is not None
-            if had_flag and done_compacting:
-                if prompt_loaded:
-                    # Prompt file visible in 30-line capture — definitely retained
+            elapsed = now - flag_ts
+
+            # Still compacting or at ctx=0 waiting → skip
+            if is_compacting or ctx == 0:
+                continue
+            # Not enough time elapsed → skip (compacting takes ~90-120s)
+            if elapsed < COMPACTING_WAIT_SECS:
+                continue
+
+            # Compacting is done (flag set, not compacting, ctx refreshed, waited enough)
+            if prompt_loaded:
+                clear_ids.append(aid)
+                print(f"[reload] Agent {aid}: prompt in output after compacting ({int(elapsed)}s), no reload needed")
+            else:
+                # Deep capture (100 lines) to check further back
+                session = f"{MA_PREFIX}-agent-{aid}"
+                deep = await _run_subprocess(
+                    ["tmux", "capture-pane", "-t", f"{session}:0.0", "-p", "-J", "-S", "-100"],
+                    text=True, timeout=5
+                )
+                deep_text = deep.stdout if deep and deep.stdout else ""
+                if f"prompts/{aid}-" in deep_text:
                     clear_ids.append(aid)
-                    print(f"[reload] Agent {aid}: prompt file in output after compacting, no reload needed")
+                    print(f"[reload] Agent {aid}: prompt in deep capture ({int(elapsed)}s), no reload needed")
                 else:
-                    # Not in 30-line window — do deeper capture (100 lines)
-                    session = f"{MA_PREFIX}-agent-{aid}"
-                    deep = await _run_subprocess(
-                        ["tmux", "capture-pane", "-t", f"{session}:0.0", "-p", "-J", "-S", "-100"],
-                        text=True, timeout=5
-                    )
-                    deep_text = deep.stdout if deep and deep.stdout else ""
-                    if f"prompts/{aid}-" in deep_text:
-                        clear_ids.append(aid)
-                        print(f"[reload] Agent {aid}: prompt found in deep capture (100 lines), no reload needed")
-                    else:
-                        print(f"[reload] Agent {aid}: prompt NOT found in deep capture, sending deviens agent")
-                        asyncio.ensure_future(_trigger_prompt_reload(aid))
-                        clear_ids.append(aid)
+                    print(f"[reload] Agent {aid}: prompt NOT found ({int(elapsed)}s), sending deviens agent")
+                    asyncio.ensure_future(_trigger_prompt_reload(aid))
+                    clear_ids.append(aid)
 
         if clear_ids:
             pipe = redis_pool.pipeline()
