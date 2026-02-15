@@ -382,15 +382,37 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
             for aid in trigger_ids:
                 asyncio.ensure_future(_trigger_prompt_reload(aid))
 
-        # Step 4: Clear reload_sent for agents that recovered (context no longer critical)
+        # Step 4: Verify reload for agents that recovered (context no longer critical)
         clear_ids = []
+        verify_ids = []
         for i, (aid, state) in enumerate(agents_data):
             ctx = state.get('context_pct', -1)
             is_compacting = state.get('compacted', False)
             had_flag = reload_flags[i] is not None
             if had_flag and not is_compacting and ctx == -1:
                 # Context % no longer shown = recovered after compacting
-                clear_ids.append(aid)
+                # Verify the reload was actually processed
+                verify_ids.append(aid)
+
+        # Check tmux for "deviens agent" in recent output (was it processed?)
+        for aid in verify_ids:
+            session = f"{MA_PREFIX}-agent-{aid}"
+            try:
+                result = await _run_subprocess(
+                    ["tmux", "capture-pane", "-t", f"{session}:0", "-p", "-S", "-15"],
+                    text=True, timeout=5
+                )
+                output = result.stdout if result.returncode == 0 else ""
+                if "deviens agent" in output or "DÉMARRAGE" in output or "agent.md" in output:
+                    # Reload was processed, clear the flag
+                    clear_ids.append(aid)
+                else:
+                    # Reload was lost during compacting, resend
+                    print(f"[reload] Agent {aid} recovered but prompt not loaded, resending")
+                    asyncio.ensure_future(_trigger_prompt_reload(aid))
+            except Exception:
+                clear_ids.append(aid)  # Don't block on errors
+
         if clear_ids:
             pipe = redis_pool.pipeline()
             for aid in clear_ids:
