@@ -10,6 +10,7 @@ import asyncio
 import time
 import subprocess
 import concurrent.futures
+from pathlib import Path
 from typing import Optional
 from contextlib import asynccontextmanager
 
@@ -74,7 +75,7 @@ KEYCLOAK_URL = os.environ.get("KEYCLOAK_URL", "http://localhost:8080")
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 MA_PREFIX = os.environ.get("MA_PREFIX", "ma")
-CONTEXT_WARNING_THRESHOLD = int(os.environ.get("CONTEXT_WARNING_THRESHOLD", "50"))
+BASE_DIR = Path(os.environ.get("MA_BASE", Path.home() / "multi-agent"))
 
 # Redis connection pool
 redis_pool: Optional[redis.Redis] = None
@@ -124,10 +125,12 @@ async def _refresh_cache_once():
             ' | xargs -P 64 -I{} bash -c \''
             's="{}"; id="${s#' + MA_PREFIX + '-agent-}"; '
             'out=$(tmux capture-pane -t "$s:0.0" -p -J -S -30 2>/dev/null); '
-            'busy=0; compacted=0; '
+            'busy=0; compacted=0; ctx=-1; '
             'if echo "$out" | grep "bypass permissions" | tail -1 | grep -q "esc to interrupt"; then busy=1; fi; '
-            'if echo "$out" | grep -qiE "auto-compact|compacting conversation"; then compacted=1; fi; '
-            'echo "$id:$busy:$compacted"\''
+            'if echo "$out" | grep -qiE "compacting conversation"; then compacted=1; fi; '
+            'pct=$(echo "$out" | grep -oE "auto-compact: [0-9]+%" | tail -1 | grep -oE "[0-9]+"); '
+            'if [ -n "$pct" ]; then ctx=$pct; fi; '
+            'echo "$id:$busy:$compacted:$ctx"\''
         )
         result = await _run_subprocess(
             ["bash", "-c", script], text=True, timeout=60
@@ -136,10 +139,12 @@ async def _refresh_cache_once():
             if ':' not in line:
                 continue
             parts = line.split(':')
-            if len(parts) >= 3:
+            if len(parts) >= 4:
+                ctx_pct = int(parts[3]) if parts[3].lstrip('-').isdigit() else -1
                 agent_states[parts[0]] = {
                     'busy': parts[1] == '1',
                     'compacted': parts[2] == '1',
+                    'context_pct': ctx_pct,  # -1 = not visible, 0-5 = shown by Claude
                 }
     except Exception as e:
         print(f"[cache] tmux states error: {e}")
@@ -174,8 +179,7 @@ async def _refresh_cache_once():
 
     # --- Batch resolve agent statuses (3-5 pipeline round-trips instead of 3N-5N) ---
     status_overrides = await _resolve_agent_statuses_batch(
-        [(aid, agent_states.get(aid, {}),
-          int(agent_redis_data.get(aid, {}).get("messages_since_reload", 0)))
+        [(aid, agent_states.get(aid, {}))
          for aid in agent_ids]
     )
 
@@ -293,33 +297,50 @@ async def health():
 
 
 async def _trigger_prompt_reload(agent_id: str):
-    """Send reload_prompt to an agent with 60s debounce."""
-    if not redis_pool:
-        return
+    """Send 'deviens agent' via tmux send-keys after compacting (1x, debounced 60s)."""
     debounce_key = f"{MA_PREFIX}:agent:{agent_id}:last_reload"
     try:
-        last = await redis_pool.get(debounce_key)
-        if last and time.time() - float(last) < 60:
-            return  # debounce: too soon
-        await redis_pool.set(debounce_key, str(time.time()), ex=120)
-        await redis_pool.xadd(f"{MA_PREFIX}:agent:{agent_id}:inbox", {
-            'type': 'reload_prompt',
-            'from_agent': 'server',
-            'timestamp': str(int(time.time())),
-        })
-        print(f"Triggered prompt reload for agent {agent_id}")
+        if redis_pool:
+            last = await redis_pool.get(debounce_key)
+            if last and time.time() - float(last) < 60:
+                return  # debounce: too soon
+            await redis_pool.set(debounce_key, str(time.time()), ex=120)
+
+        # Find prompt file for this agent
+        prompts_dir = BASE_DIR / "prompts"
+        prompt_files = sorted(prompts_dir.glob(f"{agent_id}-*.md"))
+        if not prompt_files:
+            print(f"[reload] No prompt file found for agent {agent_id}")
+            return
+
+        prompt_path = prompt_files[0]
+        session = f"{MA_PREFIX}-agent-{agent_id}"
+        cmd = f"deviens agent {prompt_path}"
+
+        result = await _run_subprocess(
+            ["tmux", "send-keys", "-t", f"{session}:0", cmd, "Enter"],
+            text=True, timeout=5
+        )
+        if result.returncode == 0:
+            print(f"[reload] Sent 'deviens agent' to {agent_id} ({prompt_path.name})")
+        else:
+            print(f"[reload] Failed tmux send-keys for {agent_id}: {result.stderr}")
     except Exception as e:
-        print(f"Failed to trigger reload for {agent_id}: {e}")
+        print(f"[reload] Error for {agent_id}: {e}")
 
 
 async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
     """Batch resolve agent statuses using Redis pipelines.
 
-    agents_data: list of (agent_id, tmux_state, messages_since_reload)
-    Returns: dict of agent_id -> status override string
+    agents_data: list of (agent_id, tmux_state)
+    tmux_state has: busy (bool), compacted (bool), context_pct (int: -1=hidden, 0-5=shown)
 
-    Uses pipelines: 3-5 Redis round-trips for ALL agents instead of
-    3-5 per agent (1000 agents = 5 round-trips, not 5000).
+    Status logic based on context_pct from Claude status line:
+      - context_pct 1-5%  → context_warning (orange)
+      - context_pct 0% or compacting in progress → context_compacted (red) + send reload 1x
+      - context_pct not visible (-1) → use busy flag only
+
+    Returns: dict of agent_id -> status override string
     """
     if not redis_pool or not agents_data:
         return {}
@@ -327,64 +348,54 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
     overrides = {}
 
     try:
-        # Step 1: SET compacting flag for agents showing compacted in tmux
-        compacted_ids = [aid for aid, state, _ in agents_data if state.get('compacted')]
-        if compacted_ids:
-            pipe = redis_pool.pipeline()
-            for aid in compacted_ids:
-                pipe.set(f"{MA_PREFIX}:agent:{aid}:compacting", "1", ex=600)
-            await pipe.execute()
-
-        # Step 2: GET compacting flag for ALL agents (single pipeline)
+        # Step 1: GET reload_sent flags for ALL agents (single pipeline)
         pipe = redis_pool.pipeline()
-        for aid, _, _ in agents_data:
-            pipe.get(f"{MA_PREFIX}:agent:{aid}:compacting")
-        compacting_results = await pipe.execute()
+        for aid, _ in agents_data:
+            pipe.get(f"{MA_PREFIX}:agent:{aid}:reload_sent")
+        reload_flags = await pipe.execute()
 
-        # Step 3: Classify agents
-        clear_ids = []
-        reload_check_ids = []
+        # Step 2: Classify agents and collect reload triggers
+        trigger_ids = []
 
-        for i, (aid, state, msgs) in enumerate(agents_data):
-            is_compacting = compacting_results[i] is not None
+        for i, (aid, state) in enumerate(agents_data):
+            ctx = state.get('context_pct', -1)
+            is_compacting = state.get('compacted', False)
+            already_reloaded = reload_flags[i] is not None
 
-            if is_compacting and msgs == 0:
-                clear_ids.append(aid)
-                is_compacting = False
-
-            if is_compacting:
-                reload_check_ids.append(aid)
+            if is_compacting or ctx == 0:
+                # Red: compacting in progress or context at 0%
                 overrides[aid] = "context_compacted"
-            elif msgs >= CONTEXT_WARNING_THRESHOLD:
+                if not already_reloaded:
+                    trigger_ids.append(aid)
+            elif 1 <= ctx <= 5:
+                # Orange: context running low (1-5%)
                 overrides[aid] = "context_warning"
             elif state.get('busy'):
                 overrides[aid] = "busy"
 
-        # Step 4: DELETE flags for recovered agents
+        # Step 3: Trigger reload for newly compacted agents (1x only)
+        if trigger_ids:
+            pipe = redis_pool.pipeline()
+            for aid in trigger_ids:
+                pipe.set(f"{MA_PREFIX}:agent:{aid}:reload_sent", "1", ex=600)
+            await pipe.execute()
+            for aid in trigger_ids:
+                asyncio.ensure_future(_trigger_prompt_reload(aid))
+
+        # Step 4: Clear reload_sent for agents that recovered (context no longer critical)
+        clear_ids = []
+        for i, (aid, state) in enumerate(agents_data):
+            ctx = state.get('context_pct', -1)
+            is_compacting = state.get('compacted', False)
+            had_flag = reload_flags[i] is not None
+            if had_flag and not is_compacting and ctx == -1:
+                # Context % no longer shown = recovered after compacting
+                clear_ids.append(aid)
         if clear_ids:
             pipe = redis_pool.pipeline()
             for aid in clear_ids:
-                pipe.delete(f"{MA_PREFIX}:agent:{aid}:compacting")
                 pipe.delete(f"{MA_PREFIX}:agent:{aid}:reload_sent")
             await pipe.execute()
-
-        # Step 5: Check & trigger reload for compacted agents
-        if reload_check_ids:
-            pipe = redis_pool.pipeline()
-            for aid in reload_check_ids:
-                pipe.get(f"{MA_PREFIX}:agent:{aid}:reload_sent")
-            reload_results = await pipe.execute()
-
-            trigger_ids = []
-            pipe = redis_pool.pipeline()
-            for j, aid in enumerate(reload_check_ids):
-                if reload_results[j] is None:
-                    pipe.set(f"{MA_PREFIX}:agent:{aid}:reload_sent", "1", ex=600)
-                    trigger_ids.append(aid)
-            if trigger_ids:
-                await pipe.execute()
-                for aid in trigger_ids:
-                    asyncio.ensure_future(_trigger_prompt_reload(aid))
 
     except Exception as e:
         print(f"[cache] batch status resolve error: {e}")

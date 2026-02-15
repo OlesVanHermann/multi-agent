@@ -66,6 +66,27 @@ REMOVED_DIR = BASE_DIR / "removed"
 # Multi-domain mode uses round-robin natural delay instead.
 DELAY_BETWEEN_PAGES = 1
 
+# Language priority scoring: URLs containing these path segments get higher scores.
+# Higher score = downloaded first. URLs with no language match get LANG_DEFAULT_SCORE.
+# Set to {} to disable language prioritization (all URLs equal priority).
+LANG_SCORES = {
+    '/fr/': 10, '/fr_FR/': 10, '/fr-fr/': 10, '/fr-FR/': 10,
+    '/en/': 8,  '/en_US/': 8,  '/en-us/': 8,  '/en-US/': 8, '/en_GB/': 8, '/en-gb/': 8,
+    '/us/': 7,
+    '/de/': 2,  '/de_DE/': 2,  '/de-de/': 2,
+    '/es/': 2,  '/es_ES/': 2,  '/es-es/': 2,
+    '/it/': 2,  '/it_IT/': 2,  '/it-it/': 2,
+    '/pt/': 2,  '/pt_BR/': 2,  '/pt-br/': 2,  '/br/': 2,
+    '/nl/': 2,  '/nl_NL/': 2,  '/nl-nl/': 2,
+    '/at/': 2,  '/pl/': 2, '/tr/': 2, '/ro/': 2, '/hu/': 2,
+    '/id/': 2,  '/th/': 2, '/ja/': 2, '/ko/': 2, '/zh/': 2,
+    '/ar/': 2,  '/hi/': 2, '/vi/': 2, '/uk/': 2, '/cs/': 2,
+    '/sv/': 2,  '/da/': 2, '/fi/': 2, '/nb/': 2, '/el/': 2,
+    '/lt/': 2,  '/lv/': 2, '/sk/': 2, '/sl/': 2, '/bg/': 2,
+    '/hr/': 2,  '/et/': 2, '/he/': 2, '/ms/': 2,
+}
+LANG_DEFAULT_SCORE = 5  # Score for URLs without any language prefix (homepage, /pricing/, etc.)
+
 INCLUDE_PATTERNS = []  # Empty = accept all URLs (same as crawl2.py)
 
 EXCLUDE_PATTERNS = [
@@ -85,6 +106,17 @@ EXCLUDE_PATTERNS = [
 
 def url_to_sha(url: str) -> str:
     return hashlib.sha256(url.encode()).hexdigest()
+
+
+def url_lang_score(url: str) -> int:
+    """Return language priority score for a URL. Higher = downloaded first."""
+    if not LANG_SCORES:
+        return LANG_DEFAULT_SCORE
+    path = urlparse(url).path
+    for prefix, score in LANG_SCORES.items():
+        if prefix in path:
+            return score
+    return LANG_DEFAULT_SCORE
 
 
 def detect_agent_id(forced_id=None):
@@ -323,7 +355,17 @@ class DomainCrawler:
         index_file = self.index_dir / sha
         if not index_file.exists():
             index_file.write_text(url)
-        self.pending.append((sha, url))
+        score = url_lang_score(url)
+        # Insert sorted: high score first (bisect on negated score)
+        entry = (score, sha, url)
+        lo, hi = 0, len(self.pending)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if self.pending[mid][0] >= score:
+                lo = mid + 1
+            else:
+                hi = mid
+        self.pending.insert(lo, entry)
         self.pending_shas.add(sha)
         return True
 
@@ -342,8 +384,11 @@ class DomainCrawler:
                 index_file = self.index_dir / sha
                 if index_file.exists():
                     url = index_file.read_text().strip()
-                    self.pending.append((sha, url))
+                    score = url_lang_score(url)
+                    self.pending.append((score, sha, url))
                     self.pending_shas.add(sha)
+        # Sort by score descending (high priority first)
+        self.pending.sort(key=lambda x: x[0], reverse=True)
 
     def has_pending(self) -> bool:
         return self.active and len(self.pending) > 0
@@ -377,7 +422,7 @@ class DomainCrawler:
         if not self.pending:
             return False
 
-        sha, url = self.pending.pop(0)
+        _score, sha, url = self.pending.pop(0)
         self.pending_shas.discard(sha)
 
         if self.is_failed(sha) or self.is_downloaded(sha):
