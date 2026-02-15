@@ -172,7 +172,7 @@ do_start() {
         fi
 
         tmux new-session -d -s "$SESSION_NAME"
-        tmux send-keys -t "$SESSION_NAME" "cd '$BASE_DIR' && claude" Enter
+        tmux send-keys -t "$SESSION_NAME" "cd '$BASE_DIR' && claude --dangerously-skip-permissions" Enter
         sleep 4
 
         # Select model (Enter to type, sleep, Enter to confirm menu)

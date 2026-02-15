@@ -63,7 +63,7 @@ start_single() {
     fi
 
     tmux new-session -d -s "$SESSION_NAME"
-    tmux send-keys -t "$SESSION_NAME" "cd '$BASE_DIR' && claude" Enter
+    tmux send-keys -t "$SESSION_NAME" "cd '$BASE_DIR' && claude --dangerously-skip-permissions" Enter
     sleep 4
 
     # Select model (Enter to type, sleep, Enter to confirm menu)
@@ -141,7 +141,7 @@ start_all() {
             local SESSION="${MA_PREFIX}-agent-$agent_id"
             mkdir -p "$LOG_DIR/$agent_id"
             tmux new-session -d -s "$SESSION"
-            tmux send-keys -t "$SESSION" "cd '$BASE_DIR' && claude" Enter
+            tmux send-keys -t "$SESSION" "cd '$BASE_DIR' && claude --dangerously-skip-permissions" Enter
         done
 
         # Phase 2: wait for Claude to be ready in ALL sessions, then configure
