@@ -125,12 +125,14 @@ async def _refresh_cache_once():
             ' | xargs -P 64 -I{} bash -c \''
             's="{}"; id="${s#' + MA_PREFIX + '-agent-}"; '
             'out=$(tmux capture-pane -t "$s:0.0" -p -J -S -30 2>/dev/null); '
-            'busy=0; compacted=0; ctx=-1; '
+            'busy=0; compacted=0; ctx=-1; done_compacting=0; prompt_loaded=0; '
             'if echo "$out" | grep "bypass permissions" | tail -1 | grep -q "esc to interrupt"; then busy=1; fi; '
             'if echo "$out" | grep -qiE "compacting conversation"; then compacted=1; fi; '
+            'if echo "$out" | grep -qi "Conversation compacted"; then done_compacting=1; fi; '
+            'if [ "$done_compacting" -eq 1 ] && echo "$out" | grep -q "prompts/${id}-"; then prompt_loaded=1; fi; '
             'pct=$(echo "$out" | grep -oE "auto-compact: [0-9]+%" | tail -1 | grep -oE "[0-9]+"); '
             'if [ -n "$pct" ]; then ctx=$pct; fi; '
-            'echo "$id:$busy:$compacted:$ctx"\''
+            'echo "$id:$busy:$compacted:$ctx:$done_compacting:$prompt_loaded"\''
         )
         result = await _run_subprocess(
             ["bash", "-c", script], text=True, timeout=60
@@ -141,10 +143,14 @@ async def _refresh_cache_once():
             parts = line.split(':')
             if len(parts) >= 4:
                 ctx_pct = int(parts[3]) if parts[3].lstrip('-').isdigit() else -1
+                done_compacting = parts[4] == '1' if len(parts) >= 5 else False
+                prompt_loaded = parts[5] == '1' if len(parts) >= 6 else False
                 agent_states[parts[0]] = {
                     'busy': parts[1] == '1',
                     'compacted': parts[2] == '1',
                     'context_pct': ctx_pct,  # -1 = not visible, 0-5 = shown by Claude
+                    'done_compacting': done_compacting,
+                    'prompt_loaded': prompt_loaded,
                 }
     except Exception as e:
         print(f"[cache] tmux states error: {e}")
@@ -317,8 +323,14 @@ async def _trigger_prompt_reload(agent_id: str):
         session = f"{MA_PREFIX}-agent-{agent_id}"
         cmd = f"deviens agent {prompt_path}"
 
+        # Send text then C-m (Enter) separately to avoid lost keystrokes
+        await _run_subprocess(
+            ["tmux", "send-keys", "-t", f"{session}:0.0", cmd],
+            text=True, timeout=5
+        )
+        await asyncio.sleep(0.3)
         result = await _run_subprocess(
-            ["tmux", "send-keys", "-t", f"{session}:0", cmd, "Enter"],
+            ["tmux", "send-keys", "-t", f"{session}:0.0", "C-m"],
             text=True, timeout=5
         )
         if result.returncode == 0:
@@ -333,12 +345,14 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
     """Batch resolve agent statuses using Redis pipelines.
 
     agents_data: list of (agent_id, tmux_state)
-    tmux_state has: busy (bool), compacted (bool), context_pct (int: -1=hidden, 0-5=shown)
+    tmux_state has: busy, compacted, context_pct, done_compacting, prompt_loaded
 
-    Status logic based on context_pct from Claude status line:
-      - context_pct 1-5%  → context_warning (orange)
-      - context_pct 0% or compacting in progress → context_compacted (red) + send reload 1x
-      - context_pct not visible (-1) → use busy flag only
+    Status logic:
+      - compacting in progress (not done) → context_compacted (red), set flag, DON'T reload yet
+      - done_compacting + prompt_loaded → green (prompt retained, no reload needed)
+      - done_compacting + NOT prompt_loaded → send "deviens agent" (prompt lost)
+      - context_pct 0% → context_compacted (red, compacting imminent)
+      - context_pct 1-5% → context_warning (orange)
 
     Returns: dict of agent_id -> status override string
     """
@@ -354,64 +368,52 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
             pipe.get(f"{MA_PREFIX}:agent:{aid}:reload_sent")
         reload_flags = await pipe.execute()
 
-        # Step 2: Classify agents and collect reload triggers
-        trigger_ids = []
-
+        # Step 2: Classify agents by context state
         for i, (aid, state) in enumerate(agents_data):
             ctx = state.get('context_pct', -1)
             is_compacting = state.get('compacted', False)
-            already_reloaded = reload_flags[i] is not None
+            done_compacting = state.get('done_compacting', False)
+            already_sent = reload_flags[i] is not None
 
-            if is_compacting or ctx == 0:
-                # Red: compacting in progress or context at 0%
+            if is_compacting and not done_compacting:
+                # Red: compacting in progress ("Compacting conversation..." visible)
+                # Just set flag, DON'T send "deviens agent" yet (wait for compacting to finish)
                 overrides[aid] = "context_compacted"
-                if not already_reloaded:
-                    trigger_ids.append(aid)
+                if not already_sent:
+                    pipe2 = redis_pool.pipeline()
+                    pipe2.set(f"{MA_PREFIX}:agent:{aid}:reload_sent", "1", ex=600)
+                    await pipe2.execute()
+            elif done_compacting:
+                # "Conversation compacted" visible → compacting finished → GREEN
+                if state.get('busy'):
+                    overrides[aid] = "busy"
+                # else: no override = green (idle)
+            elif ctx == 0:
+                # Red: context at 0%, compacting imminent
+                overrides[aid] = "context_compacted"
             elif 1 <= ctx <= 5:
                 # Orange: context running low (1-5%)
                 overrides[aid] = "context_warning"
             elif state.get('busy'):
                 overrides[aid] = "busy"
 
-        # Step 3: Trigger reload for newly compacted agents (1x only)
-        if trigger_ids:
-            pipe = redis_pool.pipeline()
-            for aid in trigger_ids:
-                pipe.set(f"{MA_PREFIX}:agent:{aid}:reload_sent", "1", ex=600)
-            await pipe.execute()
-            for aid in trigger_ids:
-                asyncio.ensure_future(_trigger_prompt_reload(aid))
-
-        # Step 4: Verify reload for agents that recovered (context no longer critical)
+        # Step 3: After compacting finished, check if prompt was retained
+        # Uses prompt_loaded flag from the SAME tmux capture (no 2nd capture needed)
         clear_ids = []
-        verify_ids = []
         for i, (aid, state) in enumerate(agents_data):
-            ctx = state.get('context_pct', -1)
-            is_compacting = state.get('compacted', False)
+            done_compacting = state.get('done_compacting', False)
+            prompt_loaded = state.get('prompt_loaded', False)
             had_flag = reload_flags[i] is not None
-            if had_flag and not is_compacting and ctx == -1:
-                # Context % no longer shown = recovered after compacting
-                # Verify the reload was actually processed
-                verify_ids.append(aid)
-
-        # Check tmux for "deviens agent" in recent output (was it processed?)
-        for aid in verify_ids:
-            session = f"{MA_PREFIX}-agent-{aid}"
-            try:
-                result = await _run_subprocess(
-                    ["tmux", "capture-pane", "-t", f"{session}:0", "-p", "-S", "-15"],
-                    text=True, timeout=5
-                )
-                output = result.stdout if result.returncode == 0 else ""
-                if "deviens agent" in output or "DÉMARRAGE" in output or "agent.md" in output:
-                    # Reload was processed, clear the flag
+            if had_flag and done_compacting:
+                if prompt_loaded:
+                    # prompt file found in tmux output after "Conversation compacted"
                     clear_ids.append(aid)
+                    print(f"[reload] Agent {aid}: prompt retained after compacting, no reload needed")
                 else:
-                    # Reload was lost during compacting, resend
-                    print(f"[reload] Agent {aid} recovered but prompt not loaded, resending")
+                    # Claude lost its prompt — send "deviens agent"
+                    print(f"[reload] Agent {aid}: prompt NOT in compacted summary, sending deviens agent")
                     asyncio.ensure_future(_trigger_prompt_reload(aid))
-            except Exception:
-                clear_ids.append(aid)  # Don't block on errors
+                    clear_ids.append(aid)
 
         if clear_ids:
             pipe = redis_pool.pipeline()
