@@ -401,26 +401,32 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
                 overrides[aid] = "busy"
 
         # Step 3: After compacting finished, check if prompt was retained
-        # Uses prompt_loaded flag from the SAME tmux capture (no 2nd capture needed)
-        # Key insight: if agent is BUSY after compacting → it retained its prompt
+        # First check 30-line capture; if not found, do a deep 100-line capture
         clear_ids = []
         for i, (aid, state) in enumerate(agents_data):
             done_compacting = state.get('done_compacting', False)
             prompt_loaded = state.get('prompt_loaded', False)
-            is_busy = state.get('busy', False)
             had_flag = reload_flags[i] is not None
             if had_flag and done_compacting:
-                if prompt_loaded or is_busy:
-                    # Either: prompt file visible in output, OR agent is actively working
-                    # Both mean the prompt was retained — no reload needed
+                if prompt_loaded:
+                    # Prompt file visible in 30-line capture — definitely retained
                     clear_ids.append(aid)
-                    reason = "prompt file in output" if prompt_loaded else "agent busy (working)"
-                    print(f"[reload] Agent {aid}: {reason} after compacting, no reload needed")
+                    print(f"[reload] Agent {aid}: prompt file in output after compacting, no reload needed")
                 else:
-                    # Agent idle + prompt file NOT visible → lost its prompt
-                    print(f"[reload] Agent {aid}: idle + prompt NOT in summary, sending deviens agent")
-                    asyncio.ensure_future(_trigger_prompt_reload(aid))
-                    clear_ids.append(aid)
+                    # Not in 30-line window — do deeper capture (100 lines)
+                    session = f"{MA_PREFIX}-agent-{aid}"
+                    deep = await _run_subprocess(
+                        ["tmux", "capture-pane", "-t", f"{session}:0.0", "-p", "-J", "-S", "-100"],
+                        text=True, timeout=5
+                    )
+                    deep_text = deep.stdout if deep and deep.stdout else ""
+                    if f"prompts/{aid}-" in deep_text:
+                        clear_ids.append(aid)
+                        print(f"[reload] Agent {aid}: prompt found in deep capture (100 lines), no reload needed")
+                    else:
+                        print(f"[reload] Agent {aid}: prompt NOT found in deep capture, sending deviens agent")
+                        asyncio.ensure_future(_trigger_prompt_reload(aid))
+                        clear_ids.append(aid)
 
         if clear_ids:
             pipe = redis_pool.pipeline()
