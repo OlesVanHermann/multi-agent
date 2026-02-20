@@ -124,7 +124,7 @@ async def _refresh_cache_once():
             'for s in $(tmux ls -F "#{session_name}" 2>/dev/null | grep "^' + MA_PREFIX + '-agent-"); do '
             'id="${s#' + MA_PREFIX + '-agent-}"; '
             'out=$(tmux capture-pane -t "$s:0.0" -p -J -S -30 2>/dev/null); '
-            'busy=0; compacted=0; ctx=-1; done_compacting=0; prompt_loaded=0; ctx_limit=0; '
+            'busy=0; compacted=0; ctx=-1; done_compacting=0; prompt_loaded=0; ctx_limit=0; api_error=0; '
             'if echo "$out" | grep "bypass permissions" | tail -1 | grep -q "esc to interrupt"; then busy=1; fi; '
             'if echo "$out" | grep -qiE "compacting conversation"; then compacted=1; fi; '
             'if echo "$out" | grep -qi "Conversation compacted"; then done_compacting=1; fi; '
@@ -132,7 +132,9 @@ async def _refresh_cache_once():
             'pct=$(echo "$out" | grep -oE "auto-compact: [0-9]+%" | tail -1 | grep -oE "[0-9]+"); '
             'if [ -n "$pct" ]; then ctx=$pct; fi; '
             'if echo "$out" | grep -q "Context limit reached"; then ctx_limit=1; fi; '
-            'echo "$id:$busy:$compacted:$ctx:$done_compacting:$prompt_loaded:$ctx_limit"; '
+            'api_err_count=$(echo "$out" | grep -c "API Error:" 2>/dev/null || echo 0); '
+            'if [ "$api_err_count" -ge 3 ]; then api_error=1; fi; '
+            'echo "$id:$busy:$compacted:$ctx:$done_compacting:$prompt_loaded:$ctx_limit:$api_error"; '
             'done'
         )
         result = await _run_subprocess(
@@ -147,6 +149,7 @@ async def _refresh_cache_once():
                 done_compacting = parts[4] == '1' if len(parts) >= 5 else False
                 prompt_loaded = parts[5] == '1' if len(parts) >= 6 else False
                 ctx_limit = parts[6] == '1' if len(parts) >= 7 else False
+                api_error = parts[7] == '1' if len(parts) >= 8 else False
                 agent_states[parts[0]] = {
                     'busy': parts[1] == '1',
                     'compacted': parts[2] == '1',
@@ -154,6 +157,7 @@ async def _refresh_cache_once():
                     'done_compacting': done_compacting,
                     'prompt_loaded': prompt_loaded,
                     'context_limit': ctx_limit,
+                    'api_error': api_error,
                 }
     except Exception as e:
         print(f"[cache] tmux states error: {e}")
@@ -436,14 +440,15 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
             is_compacting = state.get('compacted', False)
             done_compacting = state.get('done_compacting', False)
             context_limit = state.get('context_limit', False)
+            api_error = state.get('api_error', False)
             flag_ts = float(reload_flags[i]) if reload_flags[i] else 0
 
-            if ctx >= 0 or is_compacting or done_compacting or context_limit:
+            if ctx >= 0 or is_compacting or done_compacting or context_limit or api_error:
                 elapsed = int(now - flag_ts) if flag_ts else 0
-                print(f"[context] Agent {aid}: ctx={ctx}% compacting={is_compacting} done={done_compacting} limit={context_limit} flag={elapsed}s")
+                print(f"[context] Agent {aid}: ctx={ctx}% compacting={is_compacting} done={done_compacting} limit={context_limit} api_err={api_error} flag={elapsed}s")
 
-            # Context limit reached — agent is STUCK, immediate /clear + reload
-            if context_limit:
+            # Context limit reached OR repeated API errors — agent is STUCK, immediate /clear + reload
+            if context_limit or api_error:
                 overrides[aid] = "context_compacted"
                 asyncio.ensure_future(_trigger_context_clear(aid))
                 continue
