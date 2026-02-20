@@ -124,14 +124,15 @@ async def _refresh_cache_once():
             'for s in $(tmux ls -F "#{session_name}" 2>/dev/null | grep "^' + MA_PREFIX + '-agent-"); do '
             'id="${s#' + MA_PREFIX + '-agent-}"; '
             'out=$(tmux capture-pane -t "$s:0.0" -p -J -S -30 2>/dev/null); '
-            'busy=0; compacted=0; ctx=-1; done_compacting=0; prompt_loaded=0; '
+            'busy=0; compacted=0; ctx=-1; done_compacting=0; prompt_loaded=0; ctx_limit=0; '
             'if echo "$out" | grep "bypass permissions" | tail -1 | grep -q "esc to interrupt"; then busy=1; fi; '
             'if echo "$out" | grep -qiE "compacting conversation"; then compacted=1; fi; '
             'if echo "$out" | grep -qi "Conversation compacted"; then done_compacting=1; fi; '
             'if [ "$done_compacting" -eq 1 ] && echo "$out" | grep -q "prompts/${id}-"; then prompt_loaded=1; fi; '
             'pct=$(echo "$out" | grep -oE "auto-compact: [0-9]+%" | tail -1 | grep -oE "[0-9]+"); '
             'if [ -n "$pct" ]; then ctx=$pct; fi; '
-            'echo "$id:$busy:$compacted:$ctx:$done_compacting:$prompt_loaded"; '
+            'if echo "$out" | grep -q "Context limit reached"; then ctx_limit=1; fi; '
+            'echo "$id:$busy:$compacted:$ctx:$done_compacting:$prompt_loaded:$ctx_limit"; '
             'done'
         )
         result = await _run_subprocess(
@@ -145,12 +146,14 @@ async def _refresh_cache_once():
                 ctx_pct = int(parts[3]) if parts[3].lstrip('-').isdigit() else -1
                 done_compacting = parts[4] == '1' if len(parts) >= 5 else False
                 prompt_loaded = parts[5] == '1' if len(parts) >= 6 else False
+                ctx_limit = parts[6] == '1' if len(parts) >= 7 else False
                 agent_states[parts[0]] = {
                     'busy': parts[1] == '1',
                     'compacted': parts[2] == '1',
                     'context_pct': ctx_pct,  # -1 = not visible, 0-5 = shown by Claude
                     'done_compacting': done_compacting,
                     'prompt_loaded': prompt_loaded,
+                    'context_limit': ctx_limit,
                 }
     except Exception as e:
         print(f"[cache] tmux states error: {e}")
@@ -317,6 +320,49 @@ async def health():
 # _get_agent_states removed — replaced by background _cache_loop
 
 
+async def _trigger_context_clear(agent_id: str):
+    """Send /clear then 'deviens agent' when Context limit reached (agent is stuck)."""
+    debounce_key = f"{MA_PREFIX}:agent:{agent_id}:last_clear"
+    try:
+        if redis_pool:
+            last = await redis_pool.get(debounce_key)
+            if last and time.time() - float(last) < 120:
+                return  # debounce: too soon (2 min)
+            await redis_pool.set(debounce_key, str(time.time()), ex=300)
+
+        # Find prompt file
+        prompts_dir = BASE_DIR / "prompts"
+        prompt_files = sorted(prompts_dir.glob(f"{agent_id}-*.md"))
+        if not prompt_files:
+            print(f"[clear] No prompt file found for agent {agent_id}")
+            return
+
+        prompt_path = prompt_files[0]
+        session = f"{MA_PREFIX}-agent-{agent_id}"
+        pane = f"{session}:0.0"
+
+        # Step 1: Send /clear
+        await _run_subprocess(["tmux", "send-keys", "-t", pane, "/clear"], text=True, timeout=5)
+        await asyncio.sleep(0.3)
+        await _run_subprocess(["tmux", "send-keys", "-t", pane, "C-m"], text=True, timeout=5)
+        print(f"[clear] Sent /clear to {agent_id}")
+
+        # Step 2: Wait for Claude to be ready
+        await asyncio.sleep(3)
+
+        # Step 3: Send deviens agent
+        cmd = f"deviens agent {prompt_path}"
+        await _run_subprocess(["tmux", "send-keys", "-t", pane, cmd], text=True, timeout=5)
+        await asyncio.sleep(0.3)
+        result = await _run_subprocess(["tmux", "send-keys", "-t", pane, "C-m"], text=True, timeout=5)
+        if result.returncode == 0:
+            print(f"[clear] Sent /clear + 'deviens agent' to {agent_id} ({prompt_path.name})")
+        else:
+            print(f"[clear] Failed tmux send-keys for {agent_id}: {result.stderr}")
+    except Exception as e:
+        print(f"[clear] Error for {agent_id}: {e}")
+
+
 async def _trigger_prompt_reload(agent_id: str):
     """Send 'deviens agent' via tmux send-keys after compacting (1x, debounced 60s)."""
     debounce_key = f"{MA_PREFIX}:agent:{agent_id}:last_reload"
@@ -389,11 +435,18 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
             ctx = state.get('context_pct', -1)
             is_compacting = state.get('compacted', False)
             done_compacting = state.get('done_compacting', False)
+            context_limit = state.get('context_limit', False)
             flag_ts = float(reload_flags[i]) if reload_flags[i] else 0
 
-            if ctx >= 0 or is_compacting or done_compacting:
+            if ctx >= 0 or is_compacting or done_compacting or context_limit:
                 elapsed = int(now - flag_ts) if flag_ts else 0
-                print(f"[context] Agent {aid}: ctx={ctx}% compacting={is_compacting} done={done_compacting} flag={elapsed}s")
+                print(f"[context] Agent {aid}: ctx={ctx}% compacting={is_compacting} done={done_compacting} limit={context_limit} flag={elapsed}s")
+
+            # Context limit reached — agent is STUCK, immediate /clear + reload
+            if context_limit:
+                overrides[aid] = "context_compacted"
+                asyncio.ensure_future(_trigger_context_clear(aid))
+                continue
 
             if is_compacting and not done_compacting:
                 # Red: compacting in progress
