@@ -449,7 +449,7 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
 
             # Context limit reached OR repeated API errors — agent is STUCK, immediate /clear + reload
             if context_limit or api_error:
-                overrides[aid] = "context_compacted"
+                overrides[aid] = "needs_clear"
                 asyncio.ensure_future(_trigger_context_clear(aid))
                 continue
 
