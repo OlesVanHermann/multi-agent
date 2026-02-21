@@ -3,9 +3,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react'
 const AuthContext = createContext(null)
 
 // Keycloak configuration
-// Detect base path for auth endpoint (works behind reverse proxy)
-const BASE = window.location.pathname.replace(/\/+$/, '')
-const KEYCLOAK_URL = `${BASE}/auth`
+const KEYCLOAK_URL = '/auth'
 const REALM = 'multi-agent'
 const CLIENT_ID = 'multi-agent-web'
 
@@ -71,6 +69,11 @@ export function AuthProvider({ children }) {
       localStorage.setItem('access_token', data.access_token)
       localStorage.setItem('refresh_token', data.refresh_token)
       localStorage.setItem('user', JSON.stringify(userInfo))
+
+      // Redirect to root after login
+      if (window.location.pathname !== '/') {
+        window.history.replaceState(null, '', '/')
+      }
 
       return true
     } catch (err) {

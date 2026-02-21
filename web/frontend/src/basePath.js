@@ -1,9 +1,7 @@
-// Detect base path from current URL (works behind any reverse proxy)
-// At /inception/ → BASE = '/inception'
-// At / → BASE = ''
-const BASE = window.location.pathname.replace(/\/+$/, '')
+// Base path is root (app served at /)
+const BASE = ''
 
-export const api = (path) => `${BASE}/${path}`
+export const api = (path) => `/${path}`
 export const wsUrl = (path) => {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   return `${protocol}//${window.location.host}${BASE}/${path}`
