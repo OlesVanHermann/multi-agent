@@ -95,6 +95,48 @@ _cache = {
 _cache_lock = asyncio.Lock()
 _cache_task: Optional[asyncio.Task] = None
 
+# === Event Logging ===
+# Track previous states for transition detection
+_prev_agent_states: dict[str, dict] = {}
+_prev_inbox_xlens: dict[str, int] = {}
+
+
+def _events_dir(agent_id: str) -> Path:
+    """Return logs/{agent_id}/ directory, create if needed."""
+    d = BASE_DIR / "logs" / agent_id
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _log_event(agent_id: str, event_type: str, detail: str = ""):
+    """Append JSON line to logs/{agent_id}/events.jsonl."""
+    from datetime import datetime
+    entry = json.dumps({"ts": datetime.now().strftime("%Y%m%d_%H%M%S"), "type": event_type, "detail": detail})
+    try:
+        f = _events_dir(agent_id) / "events.jsonl"
+        with open(f, "a") as fh:
+            fh.write(entry + "\n")
+        print(f"[event] agent={agent_id} type={event_type} detail={detail}")
+    except Exception as e:
+        print(f"[event] log error agent={agent_id}: {e}")
+
+
+def _rotate_events(agent_id: str):
+    """Rotate events on /clear: rename events.jsonl → events.{timestamp}.jsonl."""
+    try:
+        d = _events_dir(agent_id)
+        current = d / "events.jsonl"
+        if current.exists() and current.stat().st_size > 0:
+            from datetime import datetime
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            archived = d / f"events.{ts}.jsonl"
+            current.rename(archived)
+            print(f"[event] rotated events for agent {agent_id} → {archived.name}")
+        else:
+            print(f"[event] nothing to rotate for agent {agent_id}")
+    except Exception as e:
+        print(f"[event] rotate error agent={agent_id}: {e}")
+
 
 async def _refresh_cache_once():
     """Single cache refresh cycle: tmux + Redis → _cache.
@@ -124,7 +166,7 @@ async def _refresh_cache_once():
             'for s in $(tmux ls -F "#{session_name}" 2>/dev/null | grep "^' + MA_PREFIX + '-agent-"); do '
             'id="${s#' + MA_PREFIX + '-agent-}"; '
             'out=$(tmux capture-pane -t "$s:0.0" -p -J -S -30 2>/dev/null); '
-            'busy=0; compacted=0; ctx=-1; done_compacting=0; prompt_loaded=0; ctx_limit=0; api_error=0; '
+            'busy=0; compacted=0; ctx=-1; done_compacting=0; prompt_loaded=0; ctx_limit=0; api_error=0; model_change=0; '
             'if echo "$out" | grep "bypass permissions" | tail -1 | grep -q "esc to interrupt"; then busy=1; fi; '
             'if echo "$out" | grep -qiE "compacting conversation"; then compacted=1; fi; '
             'if echo "$out" | grep -qi "Conversation compacted"; then done_compacting=1; fi; '
@@ -134,7 +176,8 @@ async def _refresh_cache_once():
             'if echo "$out" | grep -q "Context limit reached"; then ctx_limit=1; fi; '
             'api_err_count=$(echo "$out" | grep -c "API Error:" 2>/dev/null || echo 0); '
             'if [ "$api_err_count" -ge 3 ]; then api_error=1; fi; '
-            'echo "$id:$busy:$compacted:$ctx:$done_compacting:$prompt_loaded:$ctx_limit:$api_error"; '
+            'if echo "$out" | grep -q "/model "; then model_change=1; fi; '
+            'echo "$id:$busy:$compacted:$ctx:$done_compacting:$prompt_loaded:$ctx_limit:$api_error:$model_change"; '
             'done'
         )
         result = await _run_subprocess(
@@ -150,6 +193,7 @@ async def _refresh_cache_once():
                 prompt_loaded = parts[5] == '1' if len(parts) >= 6 else False
                 ctx_limit = parts[6] == '1' if len(parts) >= 7 else False
                 api_error = parts[7] == '1' if len(parts) >= 8 else False
+                model_change = parts[8] == '1' if len(parts) >= 9 else False
                 agent_states[parts[0]] = {
                     'busy': parts[1] == '1',
                     'compacted': parts[2] == '1',
@@ -158,6 +202,7 @@ async def _refresh_cache_once():
                     'prompt_loaded': prompt_loaded,
                     'context_limit': ctx_limit,
                     'api_error': api_error,
+                    'model_change': model_change,
                 }
     except Exception as e:
         print(f"[cache] tmux states error: {e}")
@@ -189,6 +234,23 @@ async def _refresh_cache_once():
                 agent_redis_data[agent_id] = data if isinstance(data, dict) else {}
         except Exception as e:
             print(f"[cache] redis pipeline error: {e}")
+
+    # --- Batch XLEN inbox for prompt detection ---
+    if redis_pool and agent_ids:
+        try:
+            pipe = redis_pool.pipeline()
+            for agent_id in agent_ids:
+                pipe.xlen(f"{MA_PREFIX}:agent:{agent_id}:inbox")
+            xlens = await pipe.execute()
+            for agent_id, xlen in zip(agent_ids, xlens):
+                xlen = int(xlen) if isinstance(xlen, (int, str)) else 0
+                prev_xlen = _prev_inbox_xlens.get(agent_id, 0)
+                if xlen > prev_xlen and prev_xlen > 0:
+                    for _ in range(xlen - prev_xlen):
+                        _log_event(agent_id, "prompt", f"xlen {prev_xlen}→{xlen}")
+                _prev_inbox_xlens[agent_id] = xlen
+        except Exception as e:
+            print(f"[cache] inbox xlen error: {e}")
 
     # --- Batch resolve agent statuses (3-5 pipeline round-trips instead of 3N-5N) ---
     status_overrides = await _resolve_agent_statuses_batch(
@@ -345,21 +407,26 @@ async def _trigger_context_clear(agent_id: str):
         session = f"{MA_PREFIX}-agent-{agent_id}"
         pane = f"{session}:0.0"
 
-        # Step 1: Send /clear
+        # Step 1: Rotate events + log clear
+        _rotate_events(agent_id)
+        _log_event(agent_id, "clear", "auto /clear triggered")
+
+        # Step 2: Send /clear
         await _run_subprocess(["tmux", "send-keys", "-t", pane, "/clear"], text=True, timeout=5)
         await asyncio.sleep(0.3)
         await _run_subprocess(["tmux", "send-keys", "-t", pane, "C-m"], text=True, timeout=5)
         print(f"[clear] Sent /clear to {agent_id}")
 
-        # Step 2: Wait for Claude to be ready
+        # Step 3: Wait for Claude to be ready
         await asyncio.sleep(3)
 
-        # Step 3: Send deviens agent
+        # Step 4: Send deviens agent
         cmd = f"deviens agent {prompt_path}"
         await _run_subprocess(["tmux", "send-keys", "-t", pane, cmd], text=True, timeout=5)
         await asyncio.sleep(0.3)
         result = await _run_subprocess(["tmux", "send-keys", "-t", pane, "C-m"], text=True, timeout=5)
         if result.returncode == 0:
+            _log_event(agent_id, "deviens_agent", prompt_path.name)
             print(f"[clear] Sent /clear + 'deviens agent' to {agent_id} ({prompt_path.name})")
         else:
             print(f"[clear] Failed tmux send-keys for {agent_id}: {result.stderr}")
@@ -399,6 +466,7 @@ async def _trigger_prompt_reload(agent_id: str):
             text=True, timeout=5
         )
         if result.returncode == 0:
+            _log_event(agent_id, "deviens_agent", prompt_path.name)
             print(f"[reload] Sent 'deviens agent' to {agent_id} ({prompt_path.name})")
         else:
             print(f"[reload] Failed tmux send-keys for {agent_id}: {result.stderr}")
@@ -433,7 +501,24 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
             pipe.get(f"{MA_PREFIX}:agent:{aid}:reload_sent")
         reload_flags = await pipe.execute()
 
-        # Step 2: Classify agents + set compacting timestamp flag
+        # Step 2a: Detect transitions → log events
+        for aid, state in agents_data:
+            prev = _prev_agent_states.get(aid, {})
+            # compacting False→True
+            if state.get('compacted') and not prev.get('compacted'):
+                _log_event(aid, "compacting", "started")
+            # api_error False→True
+            if state.get('api_error') and not prev.get('api_error'):
+                _log_event(aid, "api_error", "3+ API errors")
+            # context_limit False→True
+            if state.get('context_limit') and not prev.get('context_limit'):
+                _log_event(aid, "context_limit", "reached")
+            # model_change detected
+            if state.get('model_change') and not prev.get('model_change'):
+                _log_event(aid, "model", "/model detected in output")
+            _prev_agent_states[aid] = dict(state)
+
+        # Step 2b: Classify agents + set compacting timestamp flag
         now = time.time()
         for i, (aid, state) in enumerate(agents_data):
             ctx = state.get('context_pct', -1)
@@ -557,6 +642,36 @@ async def get_agent(agent_id: str):
         tasks_completed=int(data.get("tasks_completed", 0)),
         mode=data.get("mode", "unknown")
     ).model_dump()
+
+
+@app.get("/api/agent/{agent_id}/events")
+async def get_agent_events(agent_id: str, all: int = 0):
+    """Get event log for an agent. ?all=1 includes archived (rotated) files."""
+    d = _events_dir(agent_id)
+
+    def _read_jsonl(path: Path) -> list:
+        if not path.exists():
+            return []
+        lines = []
+        with open(path) as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    try:
+                        lines.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+        return lines
+
+    events = _read_jsonl(d / "events.jsonl")
+
+    if all:
+        archived = []
+        for f in sorted(d.glob("events.*.jsonl")):
+            archived.extend(_read_jsonl(f))
+        return {"agent_id": agent_id, "events": events, "archived": archived}
+
+    return {"agent_id": agent_id, "events": events}
 
 
 class UpdateInput(BaseModel):
