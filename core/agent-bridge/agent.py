@@ -119,6 +119,17 @@ class TmuxAgent:
         print(line, flush=True)
         self.logfile.write(line + "\n")
 
+    def _log_event(self, event_type, detail=""):
+        """Append JSON event to logs/{agent_id}/events.jsonl"""
+        import json
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        entry = json.dumps({"ts": ts, "type": event_type, "detail": detail})
+        try:
+            with open(self.log_dir / "events.jsonl", "a") as fh:
+                fh.write(entry + "\n")
+        except Exception as e:
+            self._log(f"event log error: {e}")
+
     def _tmux_session_exists(self):
         """Check if tmux session exists"""
         result = subprocess.run(
@@ -237,6 +248,7 @@ class TmuxAgent:
     def _run_claude(self, prompt):
         """Send prompt to Claude via tmux and capture response"""
         self._log(f"Sending to Claude: {prompt[:60]}...")
+        self._log_event("prompt", prompt[:120])
 
         # Capture baseline
         print(f"\n{'─'*60}", flush=True)
