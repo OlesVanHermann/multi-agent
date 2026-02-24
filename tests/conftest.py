@@ -1,57 +1,100 @@
 """
-Pytest fixtures for multi-agent tests
+Fixtures partagées pour les tests 345-output
+Complémente tests/conftest.py du projet principal
+
+EF-001, EF-002, EF-003, EF-004 — Fixtures pour mocks Redis, tmux, CDP
 """
 import pytest
-import subprocess
-import time
 import os
 import sys
+import subprocess
+import time
+from unittest.mock import MagicMock, patch
 
-# Add core to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'core', 'agent-bridge'))
-
-
-@pytest.fixture
-def redis_client():
-    """Get a Redis client for testing"""
-    try:
-        import redis
-        client = redis.Redis(host='localhost', port=6379, decode_responses=True)
-        client.ping()
-        yield client
-        # Cleanup test keys
-        for key in client.keys('ma:test:*'):
-            client.delete(key)
-    except Exception as e:
-        pytest.skip(f"Redis not available: {e}")
+# Add paths — deployed structure: scripts/chrome_bridge/ package
+_BASE = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(_BASE, 'core', 'agent-bridge'))
+sys.path.insert(0, os.path.join(_BASE, 'scripts', 'chrome_bridge'))
+sys.path.insert(0, os.path.join(_BASE, 'scripts'))
 
 
 @pytest.fixture
-def mock_tmux_session():
-    """Create a mock tmux session for testing"""
-    session_name = "test-agent-999"
-
-    # Kill if exists
-    subprocess.run(["tmux", "kill-session", "-t", session_name],
-                   capture_output=True)
-
-    # Create session
-    subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "-x", "200", "-y", "50"],
-                   capture_output=True)
-
-    yield session_name
-
-    # Cleanup
-    subprocess.run(["tmux", "kill-session", "-t", session_name],
-                   capture_output=True)
+def mock_redis_client():
+    """Mock Redis client with common operations pre-configured"""
+    client = MagicMock()
+    client.ping.return_value = True
+    client.get.return_value = None
+    client.set.return_value = True
+    client.delete.return_value = 1
+    client.keys.return_value = []
+    client.hset.return_value = True
+    client.hgetall.return_value = {}
+    client.xadd.return_value = "1-0"
+    client.xread.return_value = None
+    client.blpop.return_value = None
+    client.rpush.return_value = 1
+    return client
 
 
 @pytest.fixture
-def sample_messages():
-    """Sample messages for testing"""
+def mock_websocket():
+    """Mock WebSocket connection for CDP tests"""
+    ws = MagicMock()
+    ws.send = MagicMock()
+    ws.recv = MagicMock(return_value='{"id": 1, "result": {}}')
+    ws.close = MagicMock()
+    ws.settimeout = MagicMock()
+    return ws
+
+
+@pytest.fixture
+def sample_cdp_responses():
+    """Sample CDP response data for testing"""
+    import json
     return {
-        'simple': 'Hello agent',
-        'with_from': 'FROM:100|go scaleway.com',
-        'with_type': 'FROM:300|DONE scaleway.com - SUCCESS',
-        'multiline': 'Line 1\nLine 2\nLine 3',
+        'empty': json.dumps({"id": 1, "result": {}}),
+        'string_value': json.dumps({
+            "id": 1,
+            "result": {"result": {"type": "string", "value": "test"}}
+        }),
+        'bool_true': json.dumps({
+            "id": 1,
+            "result": {"result": {"type": "boolean", "value": True}}
+        }),
+        'bool_false': json.dumps({
+            "id": 1,
+            "result": {"result": {"type": "boolean", "value": False}}
+        }),
+        'coords': json.dumps({
+            "id": 1,
+            "result": {"result": {"type": "object", "value": {"x": 100, "y": 200}}}
+        }),
+        'null_value': json.dumps({
+            "id": 1,
+            "result": {"result": {"type": "object", "value": None}}
+        }),
+        'error': json.dumps({
+            "id": 1,
+            "error": {"message": "Element not found"}
+        }),
+        'screenshot': json.dumps({
+            "id": 1,
+            "result": {"data": "iVBORw0KGgo="}  # minimal base64
+        }),
     }
+
+
+@pytest.fixture
+def agent_bridge_mocks():
+    """Common mocks for TmuxAgent initialization"""
+    with patch('agent.subprocess.run') as mock_run, \
+         patch('agent.redis.Redis') as mock_redis_cls:
+        mock_redis_instance = MagicMock()
+        mock_redis_instance.ping.return_value = True
+        mock_redis_cls.return_value = mock_redis_instance
+        mock_run.return_value = MagicMock(returncode=0, stdout="10\n")
+        yield {
+            'run': mock_run,
+            'redis_cls': mock_redis_cls,
+            'redis': mock_redis_instance,
+        }
