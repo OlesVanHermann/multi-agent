@@ -666,12 +666,11 @@ SEOF
     TOTAL=$(ls "$DIR"/*.md | wc -l)
     echo ""
     log_ok "Triangle $ID créé ($TOTAL fichiers dans prompts/$DIR_NAME/)"
-
-    # Start agents
-    start_triangle "$ID"
-
     echo ""
-    log_ok "Triangle $ID prêt. Lancer avec: ./scripts/send.sh $MASTER \"go\""
+    echo "  Prochaines étapes :"
+    echo "    1. ./scripts/send.sh 900 \"configure triangle $ID\""
+    echo "    2. ./scripts/agent.sh start $ID"
+    echo "    3. ./scripts/send.sh $MASTER \"go\""
 }
 
 # ============================================================
