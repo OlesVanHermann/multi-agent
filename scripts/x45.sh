@@ -806,11 +806,11 @@ ACTION="${1:-}"
 shift 2>/dev/null || true
 
 case "$ACTION" in
-    init)      do_init "$@" ;;
-    create)    do_create "$@" ;;
-    disable) do_disable "$@" ;;
-    enable)    do_enable "$@" ;;
-    list)      do_list ;;
+    i|init)       do_init "$@" ;;
+    c|create)     do_create "$@" ;;
+    d|disable)    do_disable "$@" ;;
+    e|enable)     do_enable "$@" ;;
+    l|list)       do_list ;;
     -h|--help|help|"") show_help ;;
     *)       log_err "Action inconnue: $ACTION"; show_help; exit 1 ;;
 esac
