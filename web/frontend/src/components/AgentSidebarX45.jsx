@@ -412,15 +412,21 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
       {/* TOP */}
       <div className="x45-third">
         <div className="agent-hover-label">{topLabel || '\u00A0'}</div>
-        {Object.entries(
-          rootAgents.reduce((groups, a) => {
-            const g = a.id[0]
-            ;(groups[g] = groups[g] || []).push(a)
-            return groups
-          }, {})
-        ).map(([g, agents]) => (
-          <div key={g} className="x45-grid">
-            {agents.map(a => {
+        {(() => {
+          const getRow = (id) => {
+            const n = parseInt(id)
+            if (n < 200) return 0
+            if (n < 300) return 1
+            if (n < 400) return 2
+            if (n < 900) return 3
+            return 4
+          }
+          const rows = [[], [], [], [], []]
+          rootAgents.forEach(a => rows[getRow(a.id)].push(a))
+          return rows.filter(r => r.length > 0)
+        })().map((row, ri) => (
+          <div key={ri} className="x45-grid">
+            {row.map(a => {
               const color = getStatusColor(a.status)
               const isSelected = a.id === selectedTriangle || a.id === selectedAgent || a.id === controlAgent
               const isPulsing = a.status === 'context_compacted'

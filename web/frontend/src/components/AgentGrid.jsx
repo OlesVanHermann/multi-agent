@@ -74,20 +74,19 @@ function AgentGrid({ agents, selectedAgent, controlAgent, onAgentClick }) {
     ? `${displayId} - ${AGENT_LABELS[displayId] || 'Agent'}`
     : null
 
-  // Group agents by hundred range (1XX, 2XX, 3XX...)
-  const groups = []
-  let currentGroup = []
-  let currentRange = -1
+  // Group agents into rows: [000,100] [200] [3xx] [400,500,600,700,800] [900+]
+  const getRow = (id) => {
+    const n = parseInt(id)
+    if (n < 200) return 0       // 000, 100
+    if (n < 300) return 1       // 200
+    if (n < 400) return 2       // 3xx
+    if (n < 900) return 3       // 400-800
+    return 4                    // 900+
+  }
+  const groups = [[], [], [], [], []]
   agents.forEach(agent => {
-    const range = Math.floor(parseInt(agent.id) / 100)
-    if (range !== currentRange) {
-      if (currentGroup.length > 0) groups.push(currentGroup)
-      currentGroup = []
-      currentRange = range
-    }
-    currentGroup.push(agent)
+    groups[getRow(agent.id)].push(agent)
   })
-  if (currentGroup.length > 0) groups.push(currentGroup)
 
   return (
     <div className="agent-grid-container">
@@ -97,7 +96,7 @@ function AgentGrid({ agents, selectedAgent, controlAgent, onAgentClick }) {
       </div>
 
       {/* Visual grid grouped by range */}
-      {groups.map((group, gi) => (
+      {groups.filter(g => g.length > 0).map((group, gi) => (
         <div key={gi} className="agent-grid-group">
           {group.map(agent => {
             const color = getStatusColor(agent.status)
