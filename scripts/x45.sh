@@ -69,24 +69,18 @@ derive_ids() {
     ALL_AGENTS=("$id" "$MASTER" "$OBSERVER" "$CURATOR" "$COACH" "$ARCHITECT")
 }
 
-# Stop all agents of a triangle
+# Stop all agents of a triangle (agent.sh auto-expands x45)
 stop_triangle() {
     local id="$1"
-    derive_ids "$id"
-    log_info "Stopping triangle $id (6 agents)..."
-    for agent_id in "${ALL_AGENTS[@]}"; do
-        "$SCRIPT_DIR/agent.sh" stop "$agent_id" 2>/dev/null || true
-    done
+    log_info "Stopping triangle $id..."
+    "$SCRIPT_DIR/agent.sh" stop "$id" || log_warn "stop $id returned error"
 }
 
-# Start all agents of a triangle
+# Start all agents of a triangle (agent.sh auto-expands x45)
 start_triangle() {
     local id="$1"
-    derive_ids "$id"
-    log_info "Starting triangle $id (6 agents)..."
-    for agent_id in "${ALL_AGENTS[@]}"; do
-        "$SCRIPT_DIR/agent.sh" start "$agent_id" 2>/dev/null || true
-    done
+    log_info "Starting triangle $id..."
+    "$SCRIPT_DIR/agent.sh" start "$id" || log_warn "start $id returned error"
 }
 
 # ============================================================
