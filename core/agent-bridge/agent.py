@@ -2,13 +2,15 @@
 """
 agent-tmux.py - Agent bridge using tmux to communicate with interactive Claude
 
-Instead of subprocess with --print, this uses:
-- tmux send-keys: send prompts to Claude
-- tmux capture-pane: read Claude's output
-- Claude runs in FULL INTERACTIVE MODE with MCP access!
+EF-001 : Health endpoint HTTP (http.server stdlib, port 9100+id)
+EF-003 : Heartbeat enrichi (10s, 7 champs, psutil CT-011)
+R-INTEGRATE : MetricsCollector intégré (record_task_start/end/error/message)
+CT-001 : http.server stdlib pour health endpoint
+CT-002 : Préfixe mi: pour streams monitoring
+CT-009 : XTRIM MAXLEN ~1000 sur streams heartbeat
+CT-011 : psutil >= 5.9 pour EF-003
 
 Usage: python agent-tmux.py <AGENT_ID>
-
 Requires: tmux session "agent-{id}" with Claude running interactively
 """
 
@@ -18,6 +20,9 @@ import time
 import subprocess
 import re
 import argparse
+import json
+import http.server
+import threading
 from datetime import datetime
 from threading import Thread, Lock
 from queue import Queue, Empty
@@ -31,6 +36,13 @@ except ImportError:
     subprocess.run([sys.executable, "-m", "pip", "install", "redis", "-q"])
     import redis
 
+# psutil conditionnel (CT-011: autorisé pour EF-003)
+_PSUTIL_AVAILABLE = False
+try:
+    import psutil
+    _PSUTIL_AVAILABLE = True
+except ImportError:
+    pass
 
 # === CONFIG ===
 BASE_DIR = Path(__file__).parent.parent.parent
@@ -39,12 +51,64 @@ REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 MA_PREFIX = os.environ.get("MA_PREFIX", "ma")
 
+# Préfixe dédié monitoring (CT-002: mi: pour streams monitoring)
+MONITORING_PREFIX = os.environ.get("MONITORING_PREFIX", "mi")
+
 MAX_HISTORY = 50
-RESPONSE_TIMEOUT = 300  # 5 min max wait for Claude response
-POLL_INTERVAL = 1.0     # How often to check for new output (was 0.3 — too CPU intensive)
+RESPONSE_TIMEOUT = int(os.environ.get("RESPONSE_TIMEOUT", 300))
+POLL_INTERVAL = 1.0
+
+# EF-003 : intervalle heartbeat enrichi (CA-004: toutes les 10s ± 2s)
+HEARTBEAT_INTERVAL = 10
+
+# EF-001 : port de base pour health endpoint (port = base + agent_id numérique)
+HEALTH_PORT_BASE = int(os.environ.get("AGENT_HEALTH_PORT_BASE", 9100))
 
 # Claude prompt markers (to detect end of response)
 PROMPT_MARKERS = ['❯', '>', '$', '%']
+
+# CT-009 : borne streams monitoring
+STREAM_MAXLEN = 1000
+
+
+class _HealthHandler(http.server.BaseHTTPRequestHandler):
+    """Health endpoint HTTP — EF-001, CT-001 (http.server stdlib).
+
+    Retourne JSON avec 6 champs requis (CA-001: <500ms).
+    """
+    agent_ref = None  # Set by _start_health_server
+
+    def do_GET(self):
+        if self.path == '/health':
+            agent = self.__class__.agent_ref
+            if not agent:
+                self.send_response(503)
+                self.end_headers()
+                return
+            try:
+                redis_ok = agent._redis_ping()
+            except Exception:
+                redis_ok = False
+            data = {
+                "status": "healthy" if redis_ok else "degraded",
+                "agent_id": agent.agent_id,
+                "uptime_seconds": int(time.time() - agent._start_time),
+                "last_heartbeat_ts": getattr(agent, '_last_heartbeat_ts', 0),
+                "redis_connected": redis_ok,
+                "pty_active": agent._tmux_session_exists()
+            }
+            body = json.dumps(data).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        pass  # Suppress default http.server logging
 
 
 class State(Enum):
@@ -58,6 +122,14 @@ class TmuxAgent:
         self.session_name = f"{MA_PREFIX}-agent-{agent_id}"
         self.state = State.IDLE
         self.state_lock = Lock()
+
+        # EF-001: start time for uptime
+        self._start_time = time.time()
+
+        # EF-003: compteurs pour heartbeat enrichi
+        self._messages_processed = 0
+        self._last_message_ts = 0
+        self._last_heartbeat_ts = 0
 
         # Tracking
         self.tasks_completed = 0
@@ -94,6 +166,15 @@ class TmuxAgent:
             self._log(f"ERROR: Cannot connect to Redis at {REDIS_HOST}:{REDIS_PORT}")
             sys.exit(1)
 
+        # R-INTEGRATE: MetricsCollector pour tracking performance
+        try:
+            from monitoring.metrics_collector import MetricsCollector
+            self.metrics = MetricsCollector(self.redis, prefix=MONITORING_PREFIX)
+            self._log("MetricsCollector initialized (R-INTEGRATE)")
+        except ImportError:
+            self.metrics = None
+            self._log("WARNING: monitoring.metrics_collector not available")
+
         # Get initial pane content to know baseline
         self.last_output_lines = self._get_pane_line_count()
 
@@ -106,9 +187,14 @@ class TmuxAgent:
             Thread(target=self._listen_redis, daemon=True, name="redis_listener"),
             Thread(target=self._listen_legacy, daemon=True, name="legacy_listener"),
             Thread(target=self._process_queue, daemon=True, name="queue_processor"),
+            Thread(target=self._heartbeat_loop, daemon=True, name="heartbeat"),  # EF-003
         ]
         for t in self.threads:
             t.start()
+
+        # EF-001: Start health endpoint HTTP server
+        self._health_server = None
+        self._start_health_server()
 
         self._set_redis_status()
         self._log(f"Listening: Redis={self.inbox} + {self.legacy_inbox}, tmux={self.session_name}")
@@ -121,7 +207,6 @@ class TmuxAgent:
 
     def _log_event(self, event_type, detail=""):
         """Append JSON event to logs/{agent_id}/events.jsonl"""
-        import json
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         entry = json.dumps({"ts": ts, "type": event_type, "detail": detail})
         try:
@@ -129,6 +214,13 @@ class TmuxAgent:
                 fh.write(entry + "\n")
         except Exception as e:
             self._log(f"event log error: {e}")
+
+    def _redis_ping(self):
+        """Test connexion Redis — utilisé par health endpoint (EF-001)."""
+        try:
+            return self.redis.ping()
+        except Exception:
+            return False
 
     def _tmux_session_exists(self):
         """Check if tmux session exists"""
@@ -158,34 +250,25 @@ class TmuxAgent:
 
     def _send_keys(self, text):
         """Send keys to tmux pane 0 (where Claude runs)"""
-        # Target pane 0 specifically (Claude is in pane 0, bridge is in pane 1)
         target = f"{self.session_name}:0"
 
-        # Clear any existing input first
         subprocess.run(["tmux", "send-keys", "-t", target, "C-c"], capture_output=True)
         time.sleep(0.5)
         subprocess.run(["tmux", "send-keys", "-t", target, "C-u"], capture_output=True)
         time.sleep(0.5)
 
-        # Send text
         subprocess.run(
             ["tmux", "send-keys", "-t", target, "-l", text],
             capture_output=True
         )
-
-        # Wait 1 second for text to be received
         time.sleep(1)
 
-        # Send Escape (exits multi-line mode if active)
         subprocess.run(
             ["tmux", "send-keys", "-t", target, "Escape"],
             capture_output=True
         )
-
-        # Wait 1 second for Escape to be processed
         time.sleep(1)
 
-        # Send Enter to submit
         subprocess.run(
             ["tmux", "send-keys", "-t", target, "Enter"],
             capture_output=True
@@ -207,14 +290,12 @@ class TmuxAgent:
 
             current = self._capture_pane(200)
 
-            # Check if content changed
             if current != last_content:
                 last_content = current
                 stable_count = 0
                 if hash(current) != baseline_hash:
                     response_started = True
 
-                # Print new content in real-time
                 current_lines = current.strip().split('\n')
                 if len(current_lines) > last_printed:
                     for line in current_lines[last_printed:][-5:]:
@@ -224,17 +305,14 @@ class TmuxAgent:
             else:
                 stable_count += 1
 
-            # Check for prompt marker (Claude is done)
             current_lines = current.strip().split('\n')
             last_line = current_lines[-1].strip() if current_lines else ""
             for marker in PROMPT_MARKERS:
                 if last_line.endswith(marker) or last_line == marker:
                     if response_started and stable_count >= 2:
-                        # Return full captured content (not baseline-relative)
                         response = '\n'.join(current_lines[:-1]).strip()
                         return response
 
-            # If stable for a while and we got content, consider it done
             if stable_count > 10 and response_started:
                 response = '\n'.join(current_lines).strip()
                 for marker in PROMPT_MARKERS:
@@ -250,15 +328,11 @@ class TmuxAgent:
         self._log(f"Sending to Claude: {prompt[:60]}...")
         self._log_event("prompt", prompt[:120])
 
-        # Capture baseline
         print(f"\n{'─'*60}", flush=True)
         print(f"📤 CLAUDE (tmux interactive):", flush=True)
         print(f"{'─'*60}", flush=True)
 
-        # Send prompt
         self._send_keys(prompt)
-
-        # Wait for response
         response = self._wait_for_response()
 
         print(f"{'─'*60}\n", flush=True)
@@ -279,6 +353,80 @@ class TmuxAgent:
         except redis.ConnectionError:
             pass
 
+    def _start_health_server(self):
+        """Démarre le serveur HTTP health endpoint — EF-001, CT-001.
+
+        Port = HEALTH_PORT_BASE + agent_id numérique (CA-001: configurable).
+        """
+        try:
+            numeric_id = int(self.agent_id.split('-')[0])
+        except (ValueError, IndexError):
+            numeric_id = 0
+        port = HEALTH_PORT_BASE + numeric_id
+
+        handler_class = type('Handler', (_HealthHandler,), {'agent_ref': self})
+        try:
+            server = http.server.HTTPServer(('0.0.0.0', port), handler_class)
+            server.timeout = 1
+            self._health_server = server
+            t = Thread(target=self._health_serve_loop, daemon=True, name="health_server")
+            t.start()
+            self._log(f"Health endpoint started on port {port} (EF-001)")
+        except OSError as e:
+            self._log(f"WARNING: Health server port {port} unavailable: {e}")
+
+    def _health_serve_loop(self):
+        """Boucle du serveur health — EF-001."""
+        while self.running and self._health_server:
+            try:
+                self._health_server.handle_request()
+            except Exception:
+                pass
+
+    def _heartbeat_loop(self):
+        """Thread: heartbeat enrichi toutes les 10s — EF-003, CA-004.
+
+        Publie 7 champs sur mi:agent:{id}:heartbeat (CT-002, CT-009).
+        Champs: agent_id, timestamp, status, memory_mb, cpu_percent,
+                messages_processed, last_message_ts.
+        """
+        while self.running:
+            try:
+                data = {
+                    "agent_id": self.agent_id,
+                    "timestamp": str(int(time.time())),
+                    "status": self.state.value,
+                    "messages_processed": str(self._messages_processed),
+                    "last_message_ts": str(self._last_message_ts),
+                }
+                # psutil metrics (CT-011)
+                if _PSUTIL_AVAILABLE:
+                    proc = psutil.Process()
+                    data["memory_mb"] = str(round(proc.memory_info().rss / 1048576, 1))
+                    data["cpu_percent"] = str(proc.cpu_percent(interval=0))
+                else:
+                    data["memory_mb"] = "0"
+                    data["cpu_percent"] = "0"
+
+                # Publier heartbeat enrichi (CT-002: mi: prefix, CT-009: XTRIM)
+                self.redis.xadd(
+                    f"{MONITORING_PREFIX}:agent:{self.agent_id}:heartbeat",
+                    data,
+                    maxlen=STREAM_MAXLEN, approximate=True
+                )
+                self._last_heartbeat_ts = int(time.time())
+
+                # Enregistrer dans métriques (R-INTEGRATE)
+                if self.metrics:
+                    self.metrics.record_heartbeat(self.agent_id, data)
+
+            except redis.ConnectionError:
+                self._log("Heartbeat: Redis connection lost")
+            except Exception as e:
+                self._log(f"Heartbeat error: {e}")
+
+            time.sleep(HEARTBEAT_INTERVAL)
+
     def _listen_redis(self):
         """Thread: listen to Redis inbox (Streams format)"""
         last_id = '$'
@@ -289,6 +437,11 @@ class TmuxAgent:
                     stream, messages = result[0]
                     for msg_id, data in messages:
                         last_id = msg_id
+
+                        # R-INTEGRATE: record inbound message
+                        if self.metrics:
+                            self.metrics.record_message(self.agent_id, "inbound")
+
                         msg_type = data.get('type', 'prompt')
 
                         if msg_type == 'prompt' or 'prompt' in data:
@@ -310,7 +463,6 @@ class TmuxAgent:
 
                             self._log(f"<- Response from {from_id} ({len(response_text)} chars){' ['+chunk_info+']' if chunk_info else ''}")
 
-                            # Forward response to Claude in tmux (compact format)
                             header = f"[FROM {from_id}]"
                             if chunk_info:
                                 header += f" [{chunk_info}]"
@@ -327,6 +479,9 @@ class TmuxAgent:
                 time.sleep(2)
             except Exception as e:
                 self._log(f"Redis error: {e}")
+                # R-INTEGRATE: record error
+                if self.metrics:
+                    self.metrics.record_error(self.agent_id, type(e).__name__, str(e)[:200])
                 time.sleep(1)
 
     def _listen_legacy(self):
@@ -337,18 +492,20 @@ class TmuxAgent:
         """
         while self.running:
             try:
-                # BLPOP blocks until message available (timeout 2s)
                 result = self.redis.blpop(self.legacy_inbox, timeout=2)
                 if result:
                     _, message = result
 
-                    # Parse FROM:xxx| prefix if present
+                    # R-INTEGRATE: record inbound message
+                    if self.metrics:
+                        self.metrics.record_message(self.agent_id, "inbound")
+
                     from_agent = 'legacy'
                     prompt = message
                     if message.startswith('FROM:'):
                         parts = message.split('|', 1)
                         if len(parts) == 2:
-                            from_agent = parts[0][5:]  # Remove "FROM:" prefix
+                            from_agent = parts[0][5:]
                             prompt = parts[1]
 
                     self.prompt_queue.put({
@@ -362,6 +519,8 @@ class TmuxAgent:
                 time.sleep(2)
             except Exception as e:
                 self._log(f"Legacy Redis error: {e}")
+                if self.metrics:
+                    self.metrics.record_error(self.agent_id, type(e).__name__, str(e)[:200])
                 time.sleep(1)
 
     def _process_queue(self):
@@ -380,8 +539,22 @@ class TmuxAgent:
             src = f"[{task.get('from_agent', 'local')}]"
             self._log(f"-> Executing {src}: {task['prompt'][:80]}...")
 
+            # R-INTEGRATE: record task start
+            if self.metrics:
+                self.metrics.record_task_start(self.agent_id, task_id=task.get('msg_id'))
+
             # Run prompt
-            response = self._run_claude(task['prompt'])
+            try:
+                response = self._run_claude(task['prompt'])
+            except Exception as e:
+                self._log(f"ERROR running Claude: {e}")
+                if self.metrics:
+                    self.metrics.record_error(self.agent_id, type(e).__name__, str(e)[:200])
+                response = f"[ERROR] {e}"
+
+            # R-INTEGRATE: record task end
+            if self.metrics:
+                self.metrics.record_task_end(self.agent_id, task_id=task.get('msg_id'))
 
             # Save to history
             self.history.append({
@@ -401,14 +574,20 @@ class TmuxAgent:
             }
             self.redis.xadd(self.outbox, msg_data)
 
+            # R-INTEGRATE: record outbound message
+            if self.metrics:
+                self.metrics.record_message(self.agent_id, "outbound")
+
+            # EF-003: update message counters
+            self._messages_processed += 1
+            self._last_message_ts = int(time.time())
+
             # Notify sender if it was another agent
             from_agent = task.get('from_agent')
 
             if from_agent and from_agent not in ['manual', 'cli', 'auto_init', 'unknown', 'legacy', 'compaction_reload']:
                 try:
-                    # Send FULL response - no truncation
-                    # For very long responses, split into chunks
-                    MAX_CHUNK = 15000  # Redis can handle larger messages
+                    MAX_CHUNK = 15000
 
                     if len(response) <= MAX_CHUNK:
                         self.redis.xadd(f"{MA_PREFIX}:agent:{from_agent}:inbox", {
@@ -419,7 +598,6 @@ class TmuxAgent:
                             'complete': 'true'
                         })
                     else:
-                        # Split into chunks for very long responses
                         chunks = [response[i:i+MAX_CHUNK] for i in range(0, len(response), MAX_CHUNK)]
                         for i, chunk in enumerate(chunks):
                             self.redis.xadd(f"{MA_PREFIX}:agent:{from_agent}:inbox", {
@@ -434,6 +612,8 @@ class TmuxAgent:
                     self._log(f"-> Full response sent to {from_agent} ({len(response)} chars)")
                 except Exception as e:
                     self._log(f"Failed to send response to {from_agent}: {e}")
+                    if self.metrics:
+                        self.metrics.record_error(self.agent_id, "SendError", str(e)[:200])
 
             self._log(f"Response sent ({len(response)} chars)")
             self.tasks_completed += 1
@@ -478,7 +658,6 @@ class TmuxAgent:
         prompt_path = self._find_prompt_file()
         if prompt_path:
             if self._is_x45_agent(prompt_path):
-                # x45 mode: tell Claude to read all files in order
                 files_list = self._get_x45_files(prompt_path)
 
                 if files_list:
@@ -492,7 +671,6 @@ class TmuxAgent:
                 else:
                     self._log(f"WARNING: x45 dir {prompt_path} found but no system.md or {self.agent_id}-system.md")
             else:
-                # Pipeline standard: single flat .md file
                 self._log(f"Auto-loading: {prompt_path}")
                 self.prompt_queue.put({
                     'prompt': f"deviens agent {prompt_path}",
@@ -522,6 +700,8 @@ class TmuxAgent:
         finally:
             self.running = False
             self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", "status", "stopped")
+            if self._health_server:
+                self._health_server.server_close()
             self.logfile.close()
 
     def _reload_prompt(self):
@@ -531,12 +711,9 @@ class TmuxAgent:
             self._log(f"RELOAD: {prompt_path} (with /reset to clear thinking blocks)")
             self.messages_since_reload = 0
 
-            # First, reset the conversation to clear thinking blocks
-            # This prevents API error: "thinking blocks cannot be modified"
             self._send_keys("/reset")
-            time.sleep(2)  # Wait for reset to complete
+            time.sleep(2)
 
-            # Then inject the prompt (reuse auto-init logic for x45 vs flat)
             if self._is_x45_agent(prompt_path):
                 files_list = self._get_x45_files(prompt_path)
                 if files_list:
@@ -559,11 +736,9 @@ class TmuxAgent:
 
         Handles both plain (341/) and verbose (341-analyse-archi-.../) names.
         """
-        # Exact match first
         exact = prompts_dir / numeric_id
         if exact.is_dir():
             return exact
-        # Verbose match: 341-analyse-archi-faiblesses-codebase-multi-agent/
         for d in prompts_dir.iterdir():
             if d.is_dir() and re.match(rf'^{re.escape(numeric_id)}-', d.name):
                 return d
@@ -573,46 +748,34 @@ class TmuxAgent:
         """Find prompt file for this agent.
 
         Supports three formats:
-        - x45 triangles (new): prompts/{dir}/{id}.md symlink (e.g. prompts/345/345.md or prompts/345/345-500.md)
+        - x45 triangles (new): prompts/{dir}/{id}.md symlink
         - x45 mode (old): prompts/{id}/system.md (directory with 3 files)
         - Pipeline standard: prompts/{id}-*.md (flat file)
-
-        All formats support verbose directory names (e.g. 341-analyse-archi-...).
         """
         prompts_dir = BASE_DIR / "prompts"
 
-        # For compound IDs like "345-500": parent dir is "345"
-        # For simple IDs like "345": parent dir is "345"
         parent_id = self.agent_id.split('-')[0] if '-' in self.agent_id else self.agent_id
 
-        # Resolve parent directory (handles verbose names)
         parent_dir = self._resolve_prompts_dir(prompts_dir, parent_id)
 
         if parent_dir:
-            # Check x45 new format: prompts/{parent}/{id}.md (symlink to AGENT.md)
             x45_entry = parent_dir / f"{self.agent_id}.md"
             if x45_entry.exists():
                 return str(x45_entry)
 
-            # Check x45 format with {id}-system.md (e.g. 341-system.md)
             x45_system = parent_dir / f"{self.agent_id}-system.md"
             if x45_system.exists():
-                return str(parent_dir)  # Return directory path for x45
+                return str(parent_dir)
 
-            # Check x45 old format: prompts/{id}/system.md
             system_md = parent_dir / "system.md"
             if system_md.exists():
-                return str(parent_dir)  # Return directory path for x45
+                return str(parent_dir)
 
-        # For satellites: check parent dir for satellite files
-        # e.g. agent 341-141 → look in 341-analyse-.../ for 341-141-system.md
         if '-' in self.agent_id and parent_dir:
             sat_system = parent_dir / f"{self.agent_id}-system.md"
             if sat_system.exists():
                 return str(parent_dir)
 
-        # Fallback: flat file format (prompts/{id}-*.md)
-        # Must be a FILE, not a directory
         pattern = f"{self.agent_id}-*.md"
         matches = [m for m in prompts_dir.glob(pattern) if m.is_file()]
         if matches:
@@ -624,35 +787,26 @@ class TmuxAgent:
         return Path(prompt_path).is_dir()
 
     def _get_x45_files(self, prompt_path):
-        """Get the ordered list of x45 files to load for this agent.
-
-        Supports both naming conventions:
-        - Old: system.md, memory.md, methodology.md, AGENT.md
-        - New (prefixed): {id}-system.md, {id}-memory.md, {id}-methodology.md, {id}.md
-        """
+        """Get the ordered list of x45 files to load for this agent."""
         p = Path(prompt_path)
         aid = self.agent_id
         files_list = []
 
-        # Entry point: {id}.md or AGENT.md
         for candidate in [p / f"{aid}.md", p.parent / "AGENT.md", p / "AGENT.md"]:
             if candidate.exists():
                 files_list.append(str(candidate))
                 break
 
-        # System: {id}-system.md or system.md (required)
         for candidate in [p / f"{aid}-system.md", p / "system.md"]:
             if candidate.exists():
                 files_list.append(str(candidate))
                 break
 
-        # Memory: {id}-memory.md or memory.md (optional)
         for candidate in [p / f"{aid}-memory.md", p / "memory.md"]:
             if candidate.exists():
                 files_list.append(str(candidate))
                 break
 
-        # Methodology: {id}-methodology.md or methodology.md (optional)
         for candidate in [p / f"{aid}-methodology.md", p / "methodology.md"]:
             if candidate.exists():
                 files_list.append(str(candidate))

@@ -43,7 +43,7 @@ class TestNominalStartup:
         assert REDIS_PORT > 0
         assert MA_PREFIX == "ma" or isinstance(MA_PREFIX, str)
         assert MAX_HISTORY == 50
-        assert RESPONSE_TIMEOUT == 300
+        assert 30 <= RESPONSE_TIMEOUT <= 900  # configurable via env
         assert POLL_INTERVAL == 1.0
         assert isinstance(PROMPT_MARKERS, list)
         assert len(PROMPT_MARKERS) > 0
@@ -447,18 +447,20 @@ class TestCommandErrors:
         assert agent.redis.xadd.call_count == 2
 
     def test_find_prompt_file_monogent(self):
-        """Vérifie la détection d'un prompt monogent (EF-001)"""
+        """Vérifie la détection d'un prompt x45 entry point (EF-001)"""
         from agent import TmuxAgent, BASE_DIR
 
         agent = object.__new__(TmuxAgent)
         agent.agent_id = "100"
 
-        with patch.object(Path, 'exists', return_value=True), \
-             patch.object(Path, 'is_file', return_value=True), \
-             patch.object(Path, 'is_symlink', return_value=False):
+        parent_dir = BASE_DIR / "prompts" / "100"
+        entry_file = parent_dir / "100.md"
+
+        with patch.object(TmuxAgent, '_resolve_prompts_dir', return_value=parent_dir), \
+             patch.object(Path, 'exists', lambda p: str(p) == str(entry_file)):
             result = agent._find_prompt_file()
 
-        expected = str(BASE_DIR / "prompts" / "100.md")
+        expected = str(entry_file)
         assert result == expected
 
     def test_is_x45_agent_directory(self):

@@ -102,19 +102,19 @@ class TestPromptFileDetection:
     """EF-001 — Tests de la détection de fichiers prompt"""
 
     def test_find_prompt_monogent(self):
-        """Détection format monogent : prompts/100.md (EF-001)"""
+        """Détection format x45 entry point : prompts/{dir}/{id}.md (EF-001)"""
         from agent import TmuxAgent, BASE_DIR
 
         agent = object.__new__(TmuxAgent)
         agent.agent_id = "100"
 
-        # Create a mock that simulates file existing
-        monogent_path = BASE_DIR / "prompts" / "100.md"
-        with patch.object(Path, 'exists', return_value=True), \
-             patch.object(Path, 'is_file', return_value=True), \
-             patch.object(Path, 'is_symlink', return_value=False):
+        parent_dir = BASE_DIR / "prompts" / "100"
+        entry_file = parent_dir / "100.md"
+
+        with patch.object(TmuxAgent, '_resolve_prompts_dir', return_value=parent_dir), \
+             patch.object(Path, 'exists', lambda p: str(p) == str(entry_file)):
             result = agent._find_prompt_file()
-        assert result == str(monogent_path)
+        assert result == str(entry_file)
 
     def test_find_prompt_x45_new(self):
         """Détection format x45 nouveau : prompts/345/345.md (symlink) (EF-001)"""
@@ -123,24 +123,14 @@ class TestPromptFileDetection:
         agent = object.__new__(TmuxAgent)
         agent.agent_id = "345"
 
-        # Monogent doesn't exist, but x45 new format does
-        call_count = [0]
-        def mock_exists(self_path):
-            call_count[0] += 1
-            # First call: monogent check → False
-            # Second call: x45 new format → True
-            if call_count[0] == 1:
-                return False
-            return True
+        parent_dir = BASE_DIR / "prompts" / "345"
+        entry_file = parent_dir / "345.md"
 
-        with patch.object(Path, 'exists', mock_exists), \
-             patch.object(Path, 'is_file', return_value=False), \
-             patch.object(Path, 'is_symlink', return_value=False), \
-             patch.object(Path, 'glob', return_value=[]), \
-             patch.object(Path, 'is_dir', return_value=True):
+        with patch.object(TmuxAgent, '_resolve_prompts_dir', return_value=parent_dir), \
+             patch.object(Path, 'exists', lambda p: str(p) == str(entry_file)):
             result = agent._find_prompt_file()
 
-        expected = str(BASE_DIR / "prompts" / "345" / "345.md")
+        expected = str(entry_file)
         assert result == expected
 
     def test_find_prompt_compound_id(self):
@@ -154,21 +144,14 @@ class TestPromptFileDetection:
         parent_id = agent.agent_id.split('-')[0]
         assert parent_id == "345"
 
-        call_count = [0]
-        def mock_exists(self_path):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                return False  # monogent
-            return True  # x45 new
+        parent_dir = BASE_DIR / "prompts" / "345"
+        entry_file = parent_dir / "345-500.md"
 
-        with patch.object(Path, 'exists', mock_exists), \
-             patch.object(Path, 'is_file', return_value=False), \
-             patch.object(Path, 'is_symlink', return_value=False), \
-             patch.object(Path, 'glob', return_value=[]), \
-             patch.object(Path, 'is_dir', return_value=True):
+        with patch.object(TmuxAgent, '_resolve_prompts_dir', return_value=parent_dir), \
+             patch.object(Path, 'exists', lambda p: str(p) == str(entry_file)):
             result = agent._find_prompt_file()
 
-        expected = str(BASE_DIR / "prompts" / "345" / "345-500.md")
+        expected = str(entry_file)
         assert result == expected
 
     def test_find_prompt_x45_old_directory(self):
@@ -201,16 +184,14 @@ class TestPromptFileDetection:
         agent = object.__new__(TmuxAgent)
         agent.agent_id = "350"
 
-        with patch.object(Path, 'exists', return_value=False), \
-             patch.object(Path, 'is_file', return_value=False), \
-             patch.object(Path, 'is_symlink', return_value=False), \
-             patch.object(Path, 'is_dir', return_value=False), \
-             patch.object(Path, 'glob', return_value=[
-                 BASE_DIR / "prompts" / "350-explorer.md"
-             ]):
+        flat_file = BASE_DIR / "prompts" / "350-explorer.md"
+
+        with patch.object(TmuxAgent, '_resolve_prompts_dir', return_value=None), \
+             patch.object(Path, 'glob', return_value=[flat_file]), \
+             patch.object(Path, 'is_file', return_value=True):
             result = agent._find_prompt_file()
 
-        expected = str(BASE_DIR / "prompts" / "350-explorer.md")
+        expected = str(flat_file)
         assert result == expected
 
     def test_find_prompt_none(self):
@@ -434,7 +415,7 @@ class TestWaitForResponse:
     def test_response_timeout_value(self):
         """Le timeout de réponse est de 300 secondes (EF-001)"""
         from agent import RESPONSE_TIMEOUT
-        assert RESPONSE_TIMEOUT == 300
+        assert 30 <= RESPONSE_TIMEOUT <= 900  # configurable via env
 
     def test_poll_interval_value(self):
         """L'intervalle de polling est de 1.0 seconde (EF-001)"""

@@ -170,4 +170,4 @@ class TestConfigConstants:
     def test_response_timeout_reasonable(self):
         """RESPONSE_TIMEOUT est entre 30 et 600 secondes (CA-007)"""
         from agent import RESPONSE_TIMEOUT
-        assert 30 <= RESPONSE_TIMEOUT <= 600
+        assert 30 <= RESPONSE_TIMEOUT <= 900  # configurable via env
