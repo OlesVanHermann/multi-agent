@@ -32,9 +32,9 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 # ── Helpers ──
 
 is_protected() {
-    # Protected: 000, 9XX, and their satellites (000-500, 000-900, etc.)
+    # Protected: only 000 and its satellites (000-500, 000-900, etc.)
     local base="${1%%-*}"  # 345-500 → 345, 000-900 → 000
-    [[ "$base" =~ ^(9[0-9][0-9]|000)$ ]]
+    [[ "$base" == "000" ]]
 }
 
 # ── Start ──
@@ -287,7 +287,7 @@ stop_single() {
 }
 
 stop_all() {
-    log_info "Stopping agents (000 and 9XX are NEVER stopped)..."
+    log_info "Stopping agents (000 is NEVER stopped)..."
     tmux ls 2>/dev/null | grep "^${MA_PREFIX}-agent-" | cut -d: -f1 | while read session; do
         local agent_id="${session#${MA_PREFIX}-agent-}"
         if is_protected "$agent_id"; then
@@ -327,9 +327,9 @@ show_help() {
     echo "  $0 start 300 301   Start agents 300 and 301"
     echo "  $0 start all       Start all agents from prompts/"
     echo "  $0 stop 300        Stop agent 300"
-    echo "  $0 stop all        Stop all (except 000 and 9XX)"
+    echo "  $0 stop all        Stop all (except 000)"
     echo ""
-    echo "  000 and 9XX are protected — use infra.sh start / infra.sh stop"
+    echo "  000 is protected — use infra.sh start / infra.sh stop"
 }
 
 # ── Main ──
