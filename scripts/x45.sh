@@ -135,6 +135,7 @@ AGENTEOF
     # 2. Agents globaux (flat .md)
     local -A AGENTS
     AGENTS[200]="explorer"
+    AGENTS[400]="merge"
     AGENTS[500]="observer"
     AGENTS[600]="indexer"
     AGENTS[700]="curator"
@@ -143,6 +144,7 @@ AGENTEOF
 
     local -A ROLES
     ROLES[200]="Explorer — Scan codebase"
+    ROLES[400]="Merge — Intégration Git cherry-pick"
     ROLES[500]="Observer global — Bilans et scores"
     ROLES[600]="Indexer global — Index documents pipeline"
     ROLES[700]="Curator global — Préparation memory agents"
@@ -151,6 +153,7 @@ AGENTEOF
 
     local -A WRITE_PERMS
     WRITE_PERMS[200]="pipeline/200-output/, index/"
+    WRITE_PERMS[400]="project/ (merge branches)"
     WRITE_PERMS[500]="bilans/"
     WRITE_PERMS[600]="index/"
     WRITE_PERMS[700]="prompts/*/XXX-memory.md (tous les agents)"
@@ -159,6 +162,7 @@ AGENTEOF
 
     local -A INPUTS
     INPUTS[200]="project-config.md, codebase du projet"
+    INPUTS[400]="pipeline/*/output (outputs des 3XX)"
     INPUTS[500]="pipeline/*/output, bilans précédents"
     INPUTS[600]="pipeline/*/output, project/raw/, project/clean/"
     INPUTS[700]="prompts/*/XXX-system.md, pipeline/*/output, index/"
@@ -167,6 +171,7 @@ AGENTEOF
 
     local -A OUTPUTS
     OUTPUTS[200]="pipeline/200-output/ (analyse, SPEC)"
+    OUTPUTS[400]="branche intégrée (cherry-pick des outputs 3XX)"
     OUTPUTS[500]="bilans/{id}-cycle{N}.md (score 0-100)"
     OUTPUTS[600]="index/ (documents indexés)"
     OUTPUTS[700]="prompts/*/XXX-memory.md mis à jour"
@@ -175,12 +180,12 @@ AGENTEOF
 
     echo ""
     echo "  Agents globaux :"
-    for id in 200 500 600 700 800 900; do
+    for id in 200 400 500 600 700 800 900; do
         local filename="${id}-${AGENTS[$id]}-${PROJECT_NAME}.md"
 
-        # Skip if already exists
-        if ls "$PROMPTS_DIR"/${id}-*.md 1>/dev/null 2>&1; then
-            log_warn "  $id déjà présent, skip"
+        # Skip if already exists (flat .md or directory)
+        if ls "$PROMPTS_DIR"/${id}-*.md 1>/dev/null 2>&1 || ls -d "$PROMPTS_DIR"/${id} "$PROMPTS_DIR"/${id}-*/ 1>/dev/null 2>&1; then
+            log_ok "  $id déjà présent, skip"
             continue
         fi
 
@@ -242,7 +247,7 @@ GEOF
     echo "    2. ./scripts/infra.sh start"
     echo "    3. ./scripts/agent.sh start 900"
     echo "    4. ./scripts/send.sh 900 \"go\""
-    echo "    5. ./scripts/x45-agent.sh create \"341-nom-tache\""
+    echo "    5. ./scripts/x45.sh create \"341-nom-tache\""
     echo "    6. ./scripts/agent.sh start all"
     echo ""
 }
