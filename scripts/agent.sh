@@ -37,6 +37,31 @@ is_protected() {
     [[ "$base" == "000" ]]
 }
 
+# Resolve x45 directory (plain or verbose name)
+find_x45_dir() {
+    local id="$1"
+    # Exact match
+    [ -d "$PROMPTS_DIR/$id" ] && echo "$PROMPTS_DIR/$id" && return 0
+    # Verbose match: 341-analyse-archi-...
+    for d in "$PROMPTS_DIR"/${id}-*/; do
+        [ -d "$d" ] && echo "${d%/}" && return 0
+    done
+    return 1
+}
+
+# Get all agent IDs for an x45 triangle (main + satellites)
+get_triangle_ids() {
+    local id="$1"
+    local dir
+    dir=$(find_x45_dir "$id") || return 1
+    local ids=("$id")
+    for sat_link in "$dir"/${id}-[0-9][0-9][0-9].md; do
+        [ -f "$sat_link" ] || continue
+        ids+=("$(basename "$sat_link" .md)")
+    done
+    echo "${ids[@]}"
+}
+
 # ── Start ──
 
 start_single() {
@@ -260,7 +285,17 @@ do_start() {
     else
         shift
         for agent_id in "$target" "$@"; do
-            start_single "$agent_id"
+            # x45 triangle? expand to all satellites
+            local tri_ids
+            tri_ids=$(get_triangle_ids "$agent_id" 2>/dev/null)
+            if [ -n "$tri_ids" ] && [ "$(echo $tri_ids | wc -w)" -gt 1 ]; then
+                log_info "x45 triangle $agent_id: $tri_ids"
+                for tid in $tri_ids; do
+                    start_single "$tid"
+                done
+            else
+                start_single "$agent_id"
+            fi
         done
     fi
     echo ""
@@ -312,7 +347,17 @@ do_stop() {
     else
         shift
         for agent_id in "$target" "$@"; do
-            stop_single "$agent_id"
+            # x45 triangle? expand to all satellites
+            local tri_ids
+            tri_ids=$(get_triangle_ids "$agent_id" 2>/dev/null)
+            if [ -n "$tri_ids" ] && [ "$(echo $tri_ids | wc -w)" -gt 1 ]; then
+                log_info "x45 triangle $agent_id: $tri_ids"
+                for tid in $tri_ids; do
+                    stop_single "$tid"
+                done
+            else
+                stop_single "$agent_id"
+            fi
         done
     fi
     log_ok "Done"
