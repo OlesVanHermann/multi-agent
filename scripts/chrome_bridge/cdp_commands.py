@@ -63,8 +63,8 @@ class CDPCommands(CDP):
 
     @staticmethod
     def _safe_sel(selector):
-        """Escape single quotes in CSS selectors to prevent JS injection (R-SANIT)."""
-        return selector.replace("'", "\\'")
+        """Sanitise un sélecteur CSS pour injection dans JS evaluate() (R-SANIT, R-P1CLOSE)."""
+        return selector.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r")
 
     # =========================================================================
     # NAVIGATION
@@ -537,9 +537,10 @@ class CDPCommands(CDP):
         if max_dim is None:
             max_dim = MAX_IMAGE_DIM
 
+        safe = self._safe_sel(selector)
         bounds = self.evaluate(f"""
             (() => {{
-                const el = document.querySelector('{selector}');
+                const el = document.querySelector('{safe}');
                 if (!el) return null;
                 const rect = el.getBoundingClientRect();
                 return {{
