@@ -478,27 +478,19 @@ class TmuxAgent:
         prompt_path = self._find_prompt_file()
         if prompt_path:
             if self._is_x45_agent(prompt_path):
-                # x45 mode: tell Claude to read all 4 files in order
-                agent_md = str(Path(prompt_path).parent / "AGENT.md")
-                system_md = str(Path(prompt_path) / "system.md")
-                memory_md = str(Path(prompt_path) / "memory.md")
-                methodology_md = str(Path(prompt_path) / "methodology.md")
-                files_list = []
-                if Path(agent_md).exists():
-                    files_list.append(agent_md)
-                files_list.append(system_md)
-                if Path(memory_md).exists():
-                    files_list.append(memory_md)
-                if Path(methodology_md).exists():
-                    files_list.append(methodology_md)
+                # x45 mode: tell Claude to read all files in order
+                files_list = self._get_x45_files(prompt_path)
 
-                files_str = ", ".join(files_list)
-                self._log(f"Auto-loading x45 agent: {prompt_path} ({len(files_list)} files)")
-                self.prompt_queue.put({
-                    'prompt': f"Lis ces fichiers dans l'ordre et deviens cet agent : {files_str}",
-                    'from_agent': 'auto_init',
-                    'msg_id': f"init_{int(time.time())}",
-                })
+                if files_list:
+                    files_str = ", ".join(files_list)
+                    self._log(f"Auto-loading x45 agent: {prompt_path} ({len(files_list)} files)")
+                    self.prompt_queue.put({
+                        'prompt': f"Lis ces fichiers dans l'ordre et deviens cet agent : {files_str}",
+                        'from_agent': 'auto_init',
+                        'msg_id': f"init_{int(time.time())}",
+                    })
+                else:
+                    self._log(f"WARNING: x45 dir {prompt_path} found but no system.md or {self.agent_id}-system.md")
             else:
                 # Pipeline standard: single flat .md file
                 self._log(f"Auto-loading: {prompt_path}")
@@ -546,24 +538,14 @@ class TmuxAgent:
 
             # Then inject the prompt (reuse auto-init logic for x45 vs flat)
             if self._is_x45_agent(prompt_path):
-                agent_md = str(Path(prompt_path).parent / "AGENT.md")
-                system_md = str(Path(prompt_path) / "system.md")
-                memory_md = str(Path(prompt_path) / "memory.md")
-                methodology_md = str(Path(prompt_path) / "methodology.md")
-                files_list = []
-                if Path(agent_md).exists():
-                    files_list.append(agent_md)
-                files_list.append(system_md)
-                if Path(memory_md).exists():
-                    files_list.append(memory_md)
-                if Path(methodology_md).exists():
-                    files_list.append(methodology_md)
-                files_str = ", ".join(files_list)
-                self.prompt_queue.put({
-                    'prompt': f"Lis ces fichiers dans l'ordre et deviens cet agent : {files_str}",
-                    'from_agent': 'compaction_reload',
-                    'msg_id': f"reload_{int(time.time())}",
-                })
+                files_list = self._get_x45_files(prompt_path)
+                if files_list:
+                    files_str = ", ".join(files_list)
+                    self.prompt_queue.put({
+                        'prompt': f"Lis ces fichiers dans l'ordre et deviens cet agent : {files_str}",
+                        'from_agent': 'compaction_reload',
+                        'msg_id': f"reload_{int(time.time())}",
+                    })
             else:
                 self.prompt_queue.put({
                     'prompt': f"deviens agent {prompt_path}",
@@ -572,6 +554,21 @@ class TmuxAgent:
                 })
             self._set_redis_status()
 
+    def _resolve_prompts_dir(self, prompts_dir, numeric_id):
+        """Resolve a numeric ID to its prompts directory.
+
+        Handles both plain (341/) and verbose (341-analyse-archi-.../) names.
+        """
+        # Exact match first
+        exact = prompts_dir / numeric_id
+        if exact.is_dir():
+            return exact
+        # Verbose match: 341-analyse-archi-faiblesses-codebase-multi-agent/
+        for d in prompts_dir.iterdir():
+            if d.is_dir() and re.match(rf'^{re.escape(numeric_id)}-', d.name):
+                return d
+        return None
+
     def _find_prompt_file(self):
         """Find prompt file for this agent.
 
@@ -579,6 +576,8 @@ class TmuxAgent:
         - x45 triangles (new): prompts/{dir}/{id}.md symlink (e.g. prompts/345/345.md or prompts/345/345-500.md)
         - x45 mode (old): prompts/{id}/system.md (directory with 3 files)
         - Pipeline standard: prompts/{id}-*.md (flat file)
+
+        All formats support verbose directory names (e.g. 341-analyse-archi-...).
         """
         prompts_dir = BASE_DIR / "prompts"
 
@@ -586,27 +585,80 @@ class TmuxAgent:
         # For simple IDs like "345": parent dir is "345"
         parent_id = self.agent_id.split('-')[0] if '-' in self.agent_id else self.agent_id
 
-        # Check x45 new format: prompts/{parent}/{id}.md (symlink to AGENT.md)
-        x45_entry = prompts_dir / parent_id / f"{self.agent_id}.md"
-        if x45_entry.exists():
-            return str(x45_entry)
+        # Resolve parent directory (handles verbose names)
+        parent_dir = self._resolve_prompts_dir(prompts_dir, parent_id)
 
-        # Check x45 old format: prompts/{id}/system.md (directory with 3 files)
-        x45_dir = prompts_dir / self.agent_id
-        if x45_dir.is_dir() and (x45_dir / "system.md").exists():
-            return str(x45_dir)  # Return directory path for old x45
+        if parent_dir:
+            # Check x45 new format: prompts/{parent}/{id}.md (symlink to AGENT.md)
+            x45_entry = parent_dir / f"{self.agent_id}.md"
+            if x45_entry.exists():
+                return str(x45_entry)
+
+            # Check x45 format with {id}-system.md (e.g. 341-system.md)
+            x45_system = parent_dir / f"{self.agent_id}-system.md"
+            if x45_system.exists():
+                return str(parent_dir)  # Return directory path for x45
+
+            # Check x45 old format: prompts/{id}/system.md
+            system_md = parent_dir / "system.md"
+            if system_md.exists():
+                return str(parent_dir)  # Return directory path for x45
+
+        # For satellites: check parent dir for satellite files
+        # e.g. agent 341-141 → look in 341-analyse-.../ for 341-141-system.md
+        if '-' in self.agent_id and parent_dir:
+            sat_system = parent_dir / f"{self.agent_id}-system.md"
+            if sat_system.exists():
+                return str(parent_dir)
 
         # Fallback: flat file format (prompts/{id}-*.md)
+        # Must be a FILE, not a directory
         pattern = f"{self.agent_id}-*.md"
-        matches = list(prompts_dir.glob(pattern))
+        matches = [m for m in prompts_dir.glob(pattern) if m.is_file()]
         if matches:
             return str(matches[0])
         return None
 
     def _is_x45_agent(self, prompt_path):
-        """Check if prompt_path is an old x45 directory (vs .md file)
-        New x45 format uses .md symlinks and is loaded like flat files."""
+        """Check if prompt_path is an x45 directory (vs .md file)."""
         return Path(prompt_path).is_dir()
+
+    def _get_x45_files(self, prompt_path):
+        """Get the ordered list of x45 files to load for this agent.
+
+        Supports both naming conventions:
+        - Old: system.md, memory.md, methodology.md, AGENT.md
+        - New (prefixed): {id}-system.md, {id}-memory.md, {id}-methodology.md, {id}.md
+        """
+        p = Path(prompt_path)
+        aid = self.agent_id
+        files_list = []
+
+        # Entry point: {id}.md or AGENT.md
+        for candidate in [p / f"{aid}.md", p.parent / "AGENT.md", p / "AGENT.md"]:
+            if candidate.exists():
+                files_list.append(str(candidate))
+                break
+
+        # System: {id}-system.md or system.md (required)
+        for candidate in [p / f"{aid}-system.md", p / "system.md"]:
+            if candidate.exists():
+                files_list.append(str(candidate))
+                break
+
+        # Memory: {id}-memory.md or memory.md (optional)
+        for candidate in [p / f"{aid}-memory.md", p / "memory.md"]:
+            if candidate.exists():
+                files_list.append(str(candidate))
+                break
+
+        # Methodology: {id}-methodology.md or methodology.md (optional)
+        for candidate in [p / f"{aid}-methodology.md", p / "methodology.md"]:
+            if candidate.exists():
+                files_list.append(str(candidate))
+                break
+
+        return files_list
 
     def _handle_command(self, line):
         """Handle slash commands"""
