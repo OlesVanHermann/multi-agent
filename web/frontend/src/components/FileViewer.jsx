@@ -9,7 +9,8 @@ function FileViewer({ filePath }) {
     if (!filePath) return
     setContent(null)
     setError(null)
-    fetch(api(`api/file?path=${encodeURIComponent(filePath)}`))
+    const reverse = filePath.endsWith('LOGS.md') ? '&reverse=true' : ''
+    fetch(api(`api/file?path=${encodeURIComponent(filePath)}${reverse}`))
       .then(r => r.json())
       .then(d => {
         if (d.error) setError(d.error)

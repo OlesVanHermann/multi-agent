@@ -97,6 +97,11 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
     onAgentClick(satId)
   }
 
+  const handleLogsClick = () => {
+    if (!selectedTriangle) return
+    onFileClick(`prompts/${selectedTriangle}/LOGS.md`)
+  }
+
   const selectedTri = selectedTriangle ? triangles[selectedTriangle] : null
   const sfx = (id) => id && id.includes('-') ? id.split('-')[1] : id
 
@@ -179,7 +184,12 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
           {selectedTri.tri_architect
             ? <LabeledCell {...mkSatCell(selectedTri.tri_architect, 'Architect', setHoveredMid)} />
             : <div />}
-          <div /><div />
+          <div />
+          <div className="tri-logs-btn"
+            onClick={handleLogsClick}
+            onMouseEnter={() => setHoveredMid('LOGS')}
+            onMouseLeave={() => setHoveredMid(null)}
+          >LOGS</div>
 
           {/* R2: vline center */}
           <div /><div /><div className="tri-vline" /><div /><div />

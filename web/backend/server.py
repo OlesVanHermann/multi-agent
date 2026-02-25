@@ -688,9 +688,10 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
 
 
 @app.get("/api/file")
-async def read_prompt_file(path: str = ""):
+async def read_prompt_file(path: str = "", reverse: bool = False):
     """Read a prompt file (only from prompts/ directory).
     Resolves named directories: prompts/345/file → prompts/345-name/file.
+    reverse=true returns lines in reverse order (newest first for LOGS.md).
     """
     if not path:
         raise HTTPException(status_code=400, detail="path required")
@@ -711,6 +712,9 @@ async def read_prompt_file(path: str = ""):
         raise HTTPException(status_code=404, detail="not found")
     try:
         content = full.read_text(encoding="utf-8")
+        if reverse:
+            lines = content.splitlines()
+            content = "\n".join(reversed(lines))
     except Exception:
         raise HTTPException(status_code=500, detail="read error")
     return {"path": path, "content": content}
