@@ -126,6 +126,7 @@ class TmuxAgent:
 
         # EF-001: start time for uptime
         self._start_time = time.time()
+        self._last_approval_time = 0  # cooldown for auto-approve
 
         # EF-003: compteurs pour heartbeat enrichi
         self._messages_processed = 0
@@ -275,13 +276,13 @@ class TmuxAgent:
             capture_output=True
         )
 
-    # Patterns that indicate Claude is waiting for user approval
+    # Patterns that indicate Claude is waiting for user approval.
+    # Short patterns to survive tmux 80-col line wrapping.
     APPROVAL_PATTERNS = [
-        "Would you like to proceed?",
-        "❯ 1. Yes",
-        "1. Yes, clear context",
-        "1. Yes, and bypass",
-        "approve or deny",
+        "Would you like to",          # "Would you like to proceed?" (may wrap)
+        "1. Yes, clear context",      # plan approval option 1
+        "1. Yes, and bypass",         # plan approval option 2
+        "approve or deny",            # permission prompt
     ]
 
     def _check_needs_approval(self, pane_text):
@@ -305,10 +306,12 @@ class TmuxAgent:
         subprocess.run(["tmux", "send-keys", "-t", target, "1"], capture_output=True)
         time.sleep(0.5)
         subprocess.run(["tmux", "send-keys", "-t", target, "Enter"], capture_output=True)
+        time.sleep(2)  # wait for Claude to process before resuming poll
 
         with self.state_lock:
             self.state = State.BUSY
         self._set_redis_status()
+        self._last_approval_time = time.time()
 
     def _wait_for_response(self, timeout=RESPONSE_TIMEOUT):
         """Wait for Claude to finish responding and return the output"""
@@ -342,7 +345,10 @@ class TmuxAgent:
                 stable_count += 1
 
             # Detect approval prompts (plan confirmation, permissions)
-            if stable_count >= 2 and response_started and self._check_needs_approval(current):
+            # Cooldown: don't re-approve within 15s of last approval
+            if (stable_count >= 2 and response_started
+                    and (time.time() - self._last_approval_time) > 15
+                    and self._check_needs_approval(current)):
                 self._auto_approve()
                 # Reset: Claude will continue working after approval
                 stable_count = 0
