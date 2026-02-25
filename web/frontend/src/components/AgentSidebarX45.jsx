@@ -5,7 +5,7 @@ function getStatusColor(status) {
   switch (status) {
     case 'busy': return 'green'
     case 'active': case 'idle': case 'stale': return 'gray'
-    case 'starting': return 'blue'
+    case 'starting': case 'waiting_approval': return 'blue'
     case 'context_warning': return 'orange'
     case 'context_compacted': return 'red'
     case 'error': case 'blocked': return 'orange'

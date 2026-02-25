@@ -58,7 +58,7 @@ function AgentGrid({ agents, selectedAgent, controlAgent, onAgentClick }) {
       case 'active': return 'gray'
       case 'idle': return 'gray'
       case 'stale': return 'gray'
-      case 'starting': return 'blue'
+      case 'starting': case 'waiting_approval': return 'blue'
       case 'context_warning': return 'orange'
       case 'context_compacted': return 'red'
       case 'error':

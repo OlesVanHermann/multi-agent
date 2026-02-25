@@ -114,6 +114,7 @@ class _HealthHandler(http.server.BaseHTTPRequestHandler):
 class State(Enum):
     IDLE = "idle"
     BUSY = "busy"
+    WAITING_APPROVAL = "waiting_approval"
 
 
 class TmuxAgent:
@@ -274,6 +275,41 @@ class TmuxAgent:
             capture_output=True
         )
 
+    # Patterns that indicate Claude is waiting for user approval
+    APPROVAL_PATTERNS = [
+        "Would you like to proceed?",
+        "❯ 1. Yes",
+        "1. Yes, clear context",
+        "1. Yes, and bypass",
+        "approve or deny",
+    ]
+
+    def _check_needs_approval(self, pane_text):
+        """Check if Claude is waiting for plan/permission approval"""
+        for pattern in self.APPROVAL_PATTERNS:
+            if pattern in pane_text:
+                return True
+        return False
+
+    def _auto_approve(self):
+        """Send '1' to approve a plan or permission prompt"""
+        target = f"{self.session_name}:0"
+        self._log("AUTO-APPROVE: Detected approval prompt, sending '1'")
+        self._log_event("auto_approve", "plan/permission approval")
+
+        with self.state_lock:
+            self.state = State.WAITING_APPROVAL
+        self._set_redis_status()
+
+        time.sleep(1)
+        subprocess.run(["tmux", "send-keys", "-t", target, "1"], capture_output=True)
+        time.sleep(0.5)
+        subprocess.run(["tmux", "send-keys", "-t", target, "Enter"], capture_output=True)
+
+        with self.state_lock:
+            self.state = State.BUSY
+        self._set_redis_status()
+
     def _wait_for_response(self, timeout=RESPONSE_TIMEOUT):
         """Wait for Claude to finish responding and return the output"""
         start_time = time.time()
@@ -304,6 +340,14 @@ class TmuxAgent:
                     last_printed = len(current_lines)
             else:
                 stable_count += 1
+
+            # Detect approval prompts (plan confirmation, permissions)
+            if stable_count >= 2 and response_started and self._check_needs_approval(current):
+                self._auto_approve()
+                # Reset: Claude will continue working after approval
+                stable_count = 0
+                start_time = time.time()  # reset timeout
+                continue
 
             current_lines = current.strip().split('\n')
             last_line = current_lines[-1].strip() if current_lines else ""
