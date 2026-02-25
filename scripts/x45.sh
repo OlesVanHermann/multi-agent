@@ -4,15 +4,15 @@
 # Usage:
 #   ./scripts/x45.sh init      <nom-projet>
 #   ./scripts/x45.sh create    <id-nom-verbose>
-#   ./scripts/x45.sh desactive <id>
-#   ./scripts/x45.sh active    <id>
+#   ./scripts/x45.sh disable <id>
+#   ./scripts/x45.sh enable    <id>
 #   ./scripts/x45.sh list
 #
 # Exemples:
 #   ./scripts/x45.sh init      "mon-projet"
 #   ./scripts/x45.sh create    "346-audit-securite-api"
-#   ./scripts/x45.sh desactive 346
-#   ./scripts/x45.sh active    346
+#   ./scripts/x45.sh disable 346
+#   ./scripts/x45.sh enable    346
 
 set -euo pipefail
 
@@ -287,7 +287,7 @@ do_create() {
         exit 1
     fi
     if find_dir "$DISABLED_DIR" "$ID" >/dev/null 2>&1; then
-        log_err "Triangle $ID existe dans prompts-disabled/ — utiliser 'active' d'abord"
+        log_err "Triangle $ID existe dans prompts-disabled/ — utiliser 'enable' d'abord"
         exit 1
     fi
 
@@ -683,8 +683,8 @@ SEOF
 # ============================================================
 # DESACTIVE
 # ============================================================
-do_desactive() {
-    local ID="${1:?Usage: $0 desactive <id>}"
+do_disable() {
+    local ID="${1:?Usage: $0 disable <id>}"
 
     if [[ ! "$ID" =~ ^[0-9][0-9][0-9]$ ]]; then
         log_err "L'ID doit être 3 chiffres (ex: 346)"
@@ -712,8 +712,8 @@ do_desactive() {
 # ============================================================
 # ACTIVE
 # ============================================================
-do_active() {
-    local ID="${1:?Usage: $0 active <id>}"
+do_enable() {
+    local ID="${1:?Usage: $0 enable <id>}"
 
     if [[ ! "$ID" =~ ^[0-9][0-9][0-9]$ ]]; then
         log_err "L'ID doit être 3 chiffres (ex: 346)"
@@ -788,15 +788,15 @@ show_help() {
     echo "Actions:"
     echo "  init <nom-projet>          Initialiser un projet x45 (agents globaux + arborescence)"
     echo "  create <id-nom>           Créer un triangle x45 complet (6 agents) + démarrer"
-    echo "  desactive <id>            Stopper les agents + déplacer dans prompts-disabled/"
-    echo "  active <id>               Réactiver depuis prompts-disabled/ + démarrer"
+    echo "  disable <id>            Stopper les agents + déplacer dans prompts-disabled/"
+    echo "  enable <id>               Réactiver depuis prompts-disabled/ + démarrer"
     echo "  list                      Lister les triangles actifs et désactivés"
     echo ""
     echo "Exemples:"
     echo "  $0 init      \"mon-projet\""
     echo "  $0 create    \"346-audit-securite-api\""
-    echo "  $0 desactive 346"
-    echo "  $0 active    346"
+    echo "  $0 disable 346"
+    echo "  $0 enable    346"
 }
 
 # ============================================================
@@ -808,8 +808,8 @@ shift 2>/dev/null || true
 case "$ACTION" in
     init)      do_init "$@" ;;
     create)    do_create "$@" ;;
-    desactive) do_desactive "$@" ;;
-    active)    do_active "$@" ;;
+    disable) do_disable "$@" ;;
+    enable)    do_enable "$@" ;;
     list)      do_list ;;
     -h|--help|help|"") show_help ;;
     *)       log_err "Action inconnue: $ACTION"; show_help; exit 1 ;;
