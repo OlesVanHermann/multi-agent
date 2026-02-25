@@ -1,124 +1,91 @@
-# Exemples - Projet MCP OnlyOffice
+# Exemples
 
-Ce dossier contient des exemples concrets tirés du projet **MCP OnlyOffice** qui a été développé avec ce système multi-agent.
-
----
-
-## Projet MCP OnlyOffice
-
-Serveur MCP pour manipulation de documents OnlyOffice (Excel, Word, PowerPoint, PDF) via CDP.
-
-**Résultats obtenus avec ce système :**
-
-| Métrique | Valeur |
-|----------|--------|
-| Outils MCP créés | 197+ |
-| Formats supportés | 4 |
-| Tests passés | 78/78 |
-| Agents utilisés | 12 |
+4 exemples gradués, du plus simple au plus complexe.
 
 ---
 
-## Structure des exemples
+## Vue d'ensemble
 
-```
-examples/
-├── README.md                    # Ce fichier
-├── prompts/                     # Prompts spécialisés
-│   ├── 300-dev-excel.md         # Agent dev Excel
-│   ├── 301-dev-word.md          # Agent dev Word
-│   ├── 302-dev-pptx.md          # Agent dev PowerPoint
-│   └── 303-dev-pdf.md           # Agent dev PDF
-├── knowledge/                   # Inventaires
-│   ├── INVENTORY-EXCEL.md       # ~1350 fonctions API
-│   ├── INVENTORY-WORD.md        # ~1400 fonctions API
-│   ├── INVENTORY-PPTX.md        # ~650 fonctions API
-│   └── INVENTORY-PDF.md         # ~269 fonctions API
-├── specs/                       # Exemples de SPEC
-│   └── SPEC-*.md
-└── pool-requests/               # Exemples de PR
-    ├── PR-DOC-example.md
-    ├── PR-SPEC-example.md
-    └── PR-TEST-example.md
-```
+| # | Exemple | Mode | Agents | But |
+|---|---------|------|--------|-----|
+| 1 | [1-pipeline-simple](1-pipeline-simple/) | pipeline | 3 | Format de base : 1 fichier flat par agent |
+| 2 | [2-pipeline-complet](2-pipeline-complet/) | pipeline | 10 | Hiérarchie complète : Architect → Release |
+| 3 | [3-x45-simple](3-x45-simple/) | x45 | 7 | 1 triangle (3XX+7XX+8XX) avec feedback |
+| 4 | [4-x45-complet](4-x45-complet/) | x45 | 15 | 3 triangles, 3 cycles, 60% → 95% |
 
 ---
 
-## Comment ces exemples ont été créés
+## Pipeline standard (mode flat)
 
-### 1. Agents Dev (300-303)
+Un fichier `.md` par agent. Pas de feedback automatique.
 
-Créés par l'Agent 000 (Architect) à partir du template `3XX-developer.md.template` :
+### 1. [1-pipeline-simple](1-pipeline-simple/) — 3 agents
 
-```
-Template + Variables = Prompt spécialisé
-
-Variables pour Excel :
-  AGENT_ID = 300
-  DOMAIN_NAME = Excel
-  DOMAIN_LOWER = excel
-  FUNCTION_PREFIX = excel
-  REPO_NAME = mcp-onlyoffice-excel
-  MAIN_FILE = server_multiformat.py
-```
-
-### 2. Inventaires
-
-Créés en scannant la documentation API OnlyOffice :
+Le minimum : Architect + Master + Developer avec le workflow Pool Requests.
 
 ```
-api.onlyoffice.com/
-├── spreadsheet-api/     → INVENTORY-EXCEL.md (63 classes)
-├── text-document-api/   → INVENTORY-WORD.md (60 classes)
-├── presentation-api/    → INVENTORY-PPTX.md (49 classes)
-└── form-api/            → INVENTORY-PDF.md (12 classes)
+prompts/
+  000-architect.md    ← configure, supervise
+  100-master.md       ← dispatch
+  300-dev.md          ← implémente
 ```
 
-### 3. Pool Requests
+### 2. [2-pipeline-complet](2-pipeline-complet/) — 10 agents
 
-Cycle de vie d'une fonctionnalité :
+Toute la hiérarchie du pipeline standard :
 
 ```
-PR-DOC (201) → PR-SPEC (200) → PR-SPEC assigned (3XX) → PR-TEST (3XX) → TEST (501)
-     ↓              ↓                    ↓                    ↓            ↓
-  pending        pending             assigned              pending      tests/
-     ↓              ↓                    ↓                    ↓
-   done           done                 done                 done
+000 Architect → 200 Explorer → 100 Master
+                                  │
+                            ┌─────┼─────┐
+                           300   301   302  (en parallèle)
+                            └─────┼─────┘
+                                  │
+                           400 Integrator → 500 Tester → 600 Releaser
 ```
 
 ---
 
-## Utilisation par Agent 000
+## x45 (mode triangle)
 
-Quand tu configures un nouveau projet :
+3 fichiers par agent (`system.md` + `memory.md` + `methodology.md`). Feedback automatique via Observer + Coach.
 
-1. **Lis ces exemples** pour comprendre le format
-2. **Adapte** les prompts dev à ton domaine
-3. **Crée** les inventaires selon ta source de données
-4. **Utilise** les mêmes conventions de nommage
+### 3. [3-x45-simple](3-x45-simple/) — 7 agents, 1 triangle
 
-### Exemple : Adapter pour un projet Web
+Le pattern central de x45 :
 
 ```
-MCP OnlyOffice          →    Projet Web
-─────────────────────────────────────────
-300-dev-excel.md        →    300-dev-backend.md
-301-dev-word.md         →    301-dev-frontend.md
-302-dev-pptx.md         →    302-dev-api.md
-INVENTORY-EXCEL.md      →    INVENTORY-BACKEND.md
-excel_range_copy        →    backend_user_create
+741 Curator  → 341/memory.md       (prépare le contexte)
+841 Coach    → 341/methodology.md   (améliore la méthode)
+500 Observer → bilans/              (évalue les outputs)
 ```
+
+Tâche : analyser un CSV de ventes. Montre la boucle de feedback complète.
+
+### 4. [4-x45-complet](4-x45-complet/) — 15 agents, 3 triangles
+
+Projet réel : serveur MCP Python pour LibreOffice Calc.
+3 workers chaînés (341→342→345), chacun avec son triangle.
+Progression de 60% à 95% sur 3 cycles.
 
 ---
 
-## Points clés à retenir
+## Deux modes de pipeline
 
-1. **Convention de nommage** : `PR-{TYPE}-{AGENT}-{Classe}_{Methode}.md`
-2. **Flux unidirectionnel** : pending → assigned → done
-3. **Git = persistance** : chaque action = commit
-4. **Redis = notification** : communication temps réel entre agents
-5. **Isolation Git** : chaque dev a son propre repo/branche
+Le système supporte deux modes, détectés automatiquement :
 
----
+| | Pipeline standard | x45 |
+|--|-------------------|-----|
+| Format | `prompts/XXX-nom.md` | `prompts/XXX/{system,memory,methodology}.md` |
+| Feedback | Non | Oui (boucle courte + longue) |
+| Amélioration | Manuelle | Automatique (Coach + Curator) |
+| Cas d'usage | Tâches simples, parallélisables | Tâches complexes, itératives |
 
-*Exemples du projet MCP OnlyOffice - Janvier 2026*
+## Parcours recommandé
+
+1. **Découvrir le format** → `1-pipeline-simple`
+2. **Comprendre la hiérarchie** → `2-pipeline-complet`
+3. **Découvrir x45 et le feedback** → `3-x45-simple`
+4. **Voir un projet réel** → `4-x45-complet`
+
+Pour en savoir plus sur x45 : [`docs/X45-METHODOLOGY.md`](../docs/X45-METHODOLOGY.md)

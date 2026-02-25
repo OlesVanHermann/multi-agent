@@ -140,7 +140,7 @@ class TmuxAgent:
 
     def _get_pane_line_count(self):
         """Get current number of lines in tmux pane 0"""
-        target = f"{self.session_name}.0"
+        target = f"{self.session_name}:0"
         result = subprocess.run(
             ["tmux", "capture-pane", "-t", target, "-p"],
             capture_output=True, text=True
@@ -149,7 +149,7 @@ class TmuxAgent:
 
     def _capture_pane(self, lines=100):
         """Capture tmux pane 0 content (where Claude runs)"""
-        target = f"{self.session_name}.0"
+        target = f"{self.session_name}:0"
         result = subprocess.run(
             ["tmux", "capture-pane", "-t", target, "-p", "-S", f"-{lines}"],
             capture_output=True, text=True
@@ -159,7 +159,7 @@ class TmuxAgent:
     def _send_keys(self, text):
         """Send keys to tmux pane 0 (where Claude runs)"""
         # Target pane 0 specifically (Claude is in pane 0, bridge is in pane 1)
-        target = f"{self.session_name}.0"
+        target = f"{self.session_name}:0"
 
         # Clear any existing input first
         subprocess.run(["tmux", "send-keys", "-t", target, "C-c"], capture_output=True)
@@ -475,14 +475,38 @@ class TmuxAgent:
         self._log("Ready. Monitoring Redis and stdin...")
 
         # Auto-load prompt
-        prompt_file = self._find_prompt_file()
-        if prompt_file:
-            self._log(f"Auto-loading: {prompt_file}")
-            self.prompt_queue.put({
-                'prompt': f"deviens agent {prompt_file}",
-                'from_agent': 'auto_init',
-                'msg_id': f"init_{int(time.time())}",
-            })
+        prompt_path = self._find_prompt_file()
+        if prompt_path:
+            if self._is_x45_agent(prompt_path):
+                # x45 mode: tell Claude to read all 4 files in order
+                agent_md = str(Path(prompt_path).parent / "AGENT.md")
+                system_md = str(Path(prompt_path) / "system.md")
+                memory_md = str(Path(prompt_path) / "memory.md")
+                methodology_md = str(Path(prompt_path) / "methodology.md")
+                files_list = []
+                if Path(agent_md).exists():
+                    files_list.append(agent_md)
+                files_list.append(system_md)
+                if Path(memory_md).exists():
+                    files_list.append(memory_md)
+                if Path(methodology_md).exists():
+                    files_list.append(methodology_md)
+
+                files_str = ", ".join(files_list)
+                self._log(f"Auto-loading x45 agent: {prompt_path} ({len(files_list)} files)")
+                self.prompt_queue.put({
+                    'prompt': f"Lis ces fichiers dans l'ordre et deviens cet agent : {files_str}",
+                    'from_agent': 'auto_init',
+                    'msg_id': f"init_{int(time.time())}",
+                })
+            else:
+                # Pipeline standard: single flat .md file
+                self._log(f"Auto-loading: {prompt_path}")
+                self.prompt_queue.put({
+                    'prompt': f"deviens agent {prompt_path}",
+                    'from_agent': 'auto_init',
+                    'msg_id': f"init_{int(time.time())}",
+                })
 
         try:
             import select
@@ -510,9 +534,9 @@ class TmuxAgent:
 
     def _reload_prompt(self):
         """Reload agent prompt file to restore personality after context compaction"""
-        prompt_file = self._find_prompt_file()
-        if prompt_file:
-            self._log(f"RELOAD: {prompt_file} (with /reset to clear thinking blocks)")
+        prompt_path = self._find_prompt_file()
+        if prompt_path:
+            self._log(f"RELOAD: {prompt_path} (with /reset to clear thinking blocks)")
             self.messages_since_reload = 0
 
             # First, reset the conversation to clear thinking blocks
@@ -520,22 +544,69 @@ class TmuxAgent:
             self._send_keys("/reset")
             time.sleep(2)  # Wait for reset to complete
 
-            # Then inject the prompt
-            self.prompt_queue.put({
-                'prompt': f"deviens agent {prompt_file}",
-                'from_agent': 'compaction_reload',
-                'msg_id': f"reload_{int(time.time())}",
-            })
+            # Then inject the prompt (reuse auto-init logic for x45 vs flat)
+            if self._is_x45_agent(prompt_path):
+                agent_md = str(Path(prompt_path).parent / "AGENT.md")
+                system_md = str(Path(prompt_path) / "system.md")
+                memory_md = str(Path(prompt_path) / "memory.md")
+                methodology_md = str(Path(prompt_path) / "methodology.md")
+                files_list = []
+                if Path(agent_md).exists():
+                    files_list.append(agent_md)
+                files_list.append(system_md)
+                if Path(memory_md).exists():
+                    files_list.append(memory_md)
+                if Path(methodology_md).exists():
+                    files_list.append(methodology_md)
+                files_str = ", ".join(files_list)
+                self.prompt_queue.put({
+                    'prompt': f"Lis ces fichiers dans l'ordre et deviens cet agent : {files_str}",
+                    'from_agent': 'compaction_reload',
+                    'msg_id': f"reload_{int(time.time())}",
+                })
+            else:
+                self.prompt_queue.put({
+                    'prompt': f"deviens agent {prompt_path}",
+                    'from_agent': 'compaction_reload',
+                    'msg_id': f"reload_{int(time.time())}",
+                })
             self._set_redis_status()
 
     def _find_prompt_file(self):
-        """Find prompt file for this agent"""
+        """Find prompt file for this agent.
+
+        Supports three formats:
+        - x45 triangles (new): prompts/{dir}/{id}.md symlink (e.g. prompts/345/345.md or prompts/345/345-500.md)
+        - x45 mode (old): prompts/{id}/system.md (directory with 3 files)
+        - Pipeline standard: prompts/{id}-*.md (flat file)
+        """
         prompts_dir = BASE_DIR / "prompts"
+
+        # For compound IDs like "345-500": parent dir is "345"
+        # For simple IDs like "345": parent dir is "345"
+        parent_id = self.agent_id.split('-')[0] if '-' in self.agent_id else self.agent_id
+
+        # Check x45 new format: prompts/{parent}/{id}.md (symlink to AGENT.md)
+        x45_entry = prompts_dir / parent_id / f"{self.agent_id}.md"
+        if x45_entry.exists():
+            return str(x45_entry)
+
+        # Check x45 old format: prompts/{id}/system.md (directory with 3 files)
+        x45_dir = prompts_dir / self.agent_id
+        if x45_dir.is_dir() and (x45_dir / "system.md").exists():
+            return str(x45_dir)  # Return directory path for old x45
+
+        # Fallback: flat file format (prompts/{id}-*.md)
         pattern = f"{self.agent_id}-*.md"
         matches = list(prompts_dir.glob(pattern))
         if matches:
             return str(matches[0])
         return None
+
+    def _is_x45_agent(self, prompt_path):
+        """Check if prompt_path is an old x45 directory (vs .md file)
+        New x45 format uses .md symlinks and is loaded like flat files."""
+        return Path(prompt_path).is_dir()
 
     def _handle_command(self, line):
         """Handle slash commands"""

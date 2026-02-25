@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react'
 import AgentGrid, { AGENT_LABELS } from './components/AgentGrid'
+import AgentSidebarX45 from './components/AgentSidebarX45'
 import Terminal from './components/Terminal'
+import FileViewer from './components/FileViewer'
 import StatusBar from './components/StatusBar'
 import { useAuth } from './AuthProvider'
 import { api, wsUrl } from './basePath'
@@ -26,6 +28,8 @@ function usePollSetting(key, defaultVal) {
 function App() {
   const { user, logout, isOperator } = useAuth()
   const [agents, setAgents] = useState([])
+  const [mode, setMode] = useState('pipeline')
+  const [triangles, setTriangles] = useState({})
   const [selectedAgent, setSelectedAgent] = useState(null)
   const [controlPlane, setControlPlane] = useState('000') // Super-Master by default
   const [activePanel, setActivePanel] = useState('control') // 'control' or 'agent'
@@ -47,6 +51,8 @@ function App() {
         if (data.agents && Array.isArray(data.agents) && data.agents.length > 0) {
           setAgents(data.agents)
           setLastUpdate(new Date())
+          if (data.mode) setMode(data.mode)
+          if (data.triangles) setTriangles(data.triangles)
         }
       } catch (err) {
         console.error('Failed to fetch agents:', err)
@@ -91,6 +97,8 @@ function App() {
           if (data.agents && Array.isArray(data.agents) && data.agents.length > 0) {
             setAgents(data.agents)
             setLastUpdate(new Date())
+            if (data.mode) setMode(data.mode)
+            if (data.triangles) setTriangles(data.triangles)
           }
         }
       }
@@ -125,15 +133,27 @@ function App() {
     }
   }, [statusPoll])
 
+  const [selectedFile, setSelectedFile] = useState(null)
+
   const handleAgentClick = (agentId) => {
+    setSelectedFile(null) // clear file view when selecting an agent
     const num = parseInt(agentId)
-    if (num < 200 || num >= 900) {
+    // For compound IDs (341-141), use suffix to determine role
+    const suffixNum = agentId.includes('-') ? parseInt(agentId.split('-')[1]) : num
+    // x45: 0xx/1xx go to control (incl. master satellites); pipeline: 0xx/1xx + 900+
+    const isControl = mode === 'x45' ? (suffixNum < 200) : (num < 200 || num >= 900)
+    if (isControl) {
       setControlPlane(agentId)
       setActivePanel('control')
     } else {
       setSelectedAgent(agentId)
       setActivePanel('agent')
     }
+  }
+
+  const handleFileClick = (filePath) => {
+    setSelectedFile(filePath)
+    setActivePanel('agent')
   }
 
   const activeCount = agents.filter(a =>
@@ -171,15 +191,26 @@ function App() {
       </header>
 
       <main className="main">
-        {/* Left column: Agent Grid */}
+        {/* Left column: Agent Grid or x45 Sidebar */}
         <section className="panel agents-panel">
-          <h2>AGENTS ({agents.length})</h2>
-          <AgentGrid
-            agents={agents}
-            selectedAgent={selectedAgent}
-            controlAgent={controlPlane}
-            onAgentClick={handleAgentClick}
-          />
+          <h2>AGENTS ({agents.length}){mode === 'x45' ? ' — x45' : ''}</h2>
+          {mode === 'x45' ? (
+            <AgentSidebarX45
+              agents={agents}
+              triangles={triangles}
+              selectedAgent={selectedAgent}
+              controlAgent={controlPlane}
+              onAgentClick={handleAgentClick}
+              onFileClick={handleFileClick}
+            />
+          ) : (
+            <AgentGrid
+              agents={agents}
+              selectedAgent={selectedAgent}
+              controlAgent={controlPlane}
+              onAgentClick={handleAgentClick}
+            />
+          )}
         </section>
 
         {/* Center column: Control Plane Terminal */}
@@ -201,7 +232,9 @@ function App() {
           <div className="panel-header">
             <h2>AGENT {selectedAgent ? `(${selectedAgent}) — ${AGENT_LABELS[selectedAgent] || getAgentType(selectedAgent)}` : '---'}</h2>
           </div>
-          {selectedAgent ? (
+          {selectedFile ? (
+            <FileViewer filePath={selectedFile} />
+          ) : selectedAgent ? (
             <Terminal agentId={selectedAgent} focused={activePanel === 'agent'} pollInterval={agentPoll} />
           ) : (
             <div className="no-selection">

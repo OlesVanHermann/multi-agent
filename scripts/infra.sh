@@ -9,7 +9,7 @@ set -e
 ulimit -n 10240 2>/dev/null || true
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BASE_DIR="$SCRIPT_DIR/.."
+BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BRIDGE_SCRIPT="$BASE_DIR/core/agent-bridge/agent.py"
 LOG_DIR="$BASE_DIR/logs/000"
 WEB_DIR="$BASE_DIR/web"
@@ -172,7 +172,7 @@ do_start() {
         fi
 
         tmux new-session -d -s "$SESSION_NAME"
-        tmux send-keys -t "$SESSION_NAME" "cd '$BASE_DIR' && claude --dangerously-skip-permissions" Enter
+        tmux send-keys -t "$SESSION_NAME" "cd '$BASE_DIR' && unset CLAUDECODE && claude --dangerously-skip-permissions" Enter
         sleep 4
 
         # Select model (Enter to type, sleep, Enter to confirm menu)

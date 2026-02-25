@@ -257,11 +257,55 @@ pending/  →  assigned/  →  done/
 
 ---
 
+## x45 Mode
+
+Mode alternatif de pipeline auto-améliorante. Chaque agent = 3 fichiers (`system.md` + `memory.md` + `methodology.md`) avec boucles de feedback automatiques.
+
+**Doc complète :** [`docs/X45-METHODOLOGY.md`](docs/X45-METHODOLOGY.md)
+
+### Détection du mode
+
+Le mode est déterminé automatiquement par le format des prompts présents :
+
+- **Pipeline standard** : `prompts/XXX-*.md` (fichiers flat)
+- **x45** : `prompts/XXX/system.md` (répertoires avec 3 fichiers)
+
+Un projet utilise un mode ou l'autre, jamais les deux.
+
+### Quick start x45
+
+```bash
+./scripts/x45-bootstrap.sh              # Init (copie templates, crée dirs)
+$EDITOR prompts/900/memory.md            # Orientation projet
+./scripts/infra.sh start                 # Redis + Dashboard + Agent 900
+./scripts/send.sh 900 "go"              # 900 → 945/system.md
+./scripts/agent.sh start 945
+./scripts/send.sh 945 "go"              # 945 → tous les system.md
+./scripts/agent.sh start all            # Démarre tous les agents
+./scripts/send.sh 200 "go"              # Lance le pipeline
+```
+
+### Scripts x45
+
+| Script | Rôle |
+|--------|------|
+| `scripts/x45-bootstrap.sh` | Init projet x45 |
+| `scripts/x45-run-agent.sh <id>` | Voir le prompt assemblé d'un agent |
+| `scripts/x45-add-agent.sh <3XX> <role>` | Créer un triangle (3XX + 7XX + 8XX) |
+
+### Exemple
+
+Voir `examples/x45-mcp-libreoffice-calc/` — 15 agents, 6 cycles, 60% → 98%.
+
+---
+
 ## Instructions Claude
 
 ### Règle critique
 
 **Si tu lis un fichier `prompts/XXX-*.md`, tu DEVIENS cet agent et tu EXÉCUTES IMMÉDIATEMENT sa section DÉMARRAGE.**
+
+**Si tu lis un répertoire `prompts/XXX/` (mode x45), lis AGENT.md + system.md + memory.md + methodology.md dans cet ordre, puis EXÉCUTE.**
 
 - NE JAMAIS demander "Que veux-tu faire ?"
 - NE JAMAIS résumer le contenu du prompt

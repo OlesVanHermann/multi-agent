@@ -9,7 +9,7 @@ set -e
 ulimit -n 10240 2>/dev/null || true
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BASE_DIR="$SCRIPT_DIR/.."
+BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BRIDGE_SCRIPT="$BASE_DIR/core/agent-bridge/agent.py"
 LOG_DIR="$BASE_DIR/logs"
 PROMPTS_DIR="$BASE_DIR/prompts"
@@ -32,7 +32,9 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 # ── Helpers ──
 
 is_protected() {
-    [[ "$1" =~ ^(9[0-9][0-9]|000)$ ]]
+    # Protected: 000, 9XX, and their satellites (000-500, 000-900, etc.)
+    local base="${1%%-*}"  # 345-500 → 345, 000-900 → 000
+    [[ "$base" =~ ^(9[0-9][0-9]|000)$ ]]
 }
 
 # ── Start ──
@@ -63,7 +65,7 @@ start_single() {
     fi
 
     tmux new-session -d -s "$SESSION_NAME"
-    tmux send-keys -t "$SESSION_NAME" "cd '$BASE_DIR' && claude --dangerously-skip-permissions" Enter
+    tmux send-keys -t "$SESSION_NAME" "cd '$BASE_DIR' && unset CLAUDECODE && claude --dangerously-skip-permissions" Enter
     sleep 4
 
     # Select model (Enter to type, sleep, Enter to confirm menu)
@@ -106,6 +108,8 @@ start_all() {
 
     # Collect all agent IDs
     local agents=()
+
+    # Format 1: flat prompts (pipeline standard) — prompts/XXX-*.md
     for prompt_file in "$PROMPTS_DIR"/[0-9][0-9][0-9]-*.md; do
         [ -f "$prompt_file" ] || continue
         local filename=$(basename "$prompt_file" .md)
@@ -120,6 +124,41 @@ start_all() {
             continue
         fi
         agents+=("$agent_id")
+    done
+
+    # Format 2: x45 directory prompts — prompts/XXX/ or prompts/XXX-name/
+    for agent_dir in "$PROMPTS_DIR"/[0-9][0-9][0-9] "$PROMPTS_DIR"/[0-9][0-9][0-9]-*; do
+        [ -d "$agent_dir" ] || continue
+        local dir_name=$(basename "$agent_dir")
+        # Extract numeric prefix (341 from 341-analyse-archi-...)
+        local agent_id="${dir_name:0:3}"
+        { [ -f "$agent_dir/${agent_id}-system.md" ] || [ -f "$agent_dir/system.md" ]; } || continue
+        is_protected "$agent_id" && continue
+        # Skip duplicates (already found in flat format or verbose duplicate)
+        if ! [[ " ${agents[*]} " == *" $agent_id "* ]]; then
+            # Skip already running
+            local SESSION_NAME="${MA_PREFIX}-agent-$agent_id"
+            if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+                log_warn "$SESSION_NAME already exists, skipping"
+            else
+                agents+=("$agent_id")
+            fi
+        fi
+
+        # x45 satellites: find XXX-{suffix}.md symlinks (e.g. 345-500.md, 345-700.md)
+        # Always scan satellites even if worker is already running
+        for sat_link in "$agent_dir"/${agent_id}-[0-9][0-9][0-9].md; do
+            [ -f "$sat_link" ] || continue
+            local sat_name=$(basename "$sat_link" .md)  # e.g. 345-500
+            is_protected "$sat_name" && continue
+            [[ " ${agents[*]} " == *" $sat_name "* ]] && continue
+            local SAT_SESSION="${MA_PREFIX}-agent-$sat_name"
+            if tmux has-session -t "$SAT_SESSION" 2>/dev/null; then
+                log_warn "$SAT_SESSION already exists, skipping"
+                continue
+            fi
+            agents+=("$sat_name")
+        done
     done
 
     local total=${#agents[@]}
@@ -141,7 +180,7 @@ start_all() {
             local SESSION="${MA_PREFIX}-agent-$agent_id"
             mkdir -p "$LOG_DIR/$agent_id"
             tmux new-session -d -s "$SESSION"
-            tmux send-keys -t "$SESSION" "cd '$BASE_DIR' && claude --dangerously-skip-permissions" Enter
+            tmux send-keys -t "$SESSION" "cd '$BASE_DIR' && unset CLAUDECODE && claude --dangerously-skip-permissions" Enter
         done
 
         # Phase 2: wait for Claude to be ready in ALL sessions, then configure
@@ -259,7 +298,7 @@ stop_all() {
     done
 
     # Update Redis status
-    for key in $(redis-cli KEYS "${MA_PREFIX}:agent:*" 2>/dev/null | grep -E "^${MA_PREFIX}:agent:[0-9]+$"); do
+    for key in $(redis-cli KEYS "${MA_PREFIX}:agent:*" 2>/dev/null | grep -E "^${MA_PREFIX}:agent:[0-9]+(-[0-9]+)?$"); do
         redis-cli HSET "$key" status "stopped" > /dev/null 2>&1
     done
 }

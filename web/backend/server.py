@@ -90,6 +90,8 @@ COMPACTING_WAIT_SECS = 80  # wait this long before fast-polling for compacting e
 _cache = {
     "agents": [],       # list of agent dicts
     "health": {"status": "starting", "redis": False, "timestamp": 0},
+    "mode": "pipeline", # "pipeline" or "x45"
+    "triangles": {},    # {worker_id: {worker, curator, coach}}
     "timestamp": 0,     # last refresh epoch
 }
 _cache_lock = asyncio.Lock()
@@ -170,7 +172,7 @@ async def _refresh_cache_once():
             'if echo "$out" | grep "bypass permissions" | tail -1 | grep -q "esc to interrupt"; then busy=1; fi; '
             'if echo "$out" | grep -qiE "compacting conversation"; then compacted=1; fi; '
             'if echo "$out" | grep -qi "Conversation compacted"; then done_compacting=1; fi; '
-            'if [ "$done_compacting" -eq 1 ] && echo "$out" | grep -q "prompts/${id}-"; then prompt_loaded=1; fi; '
+            'if [ "$done_compacting" -eq 1 ] && echo "$out" | grep -qE "prompts/[0-9]+/${id}[.-]|prompts/${id}-"; then prompt_loaded=1; fi; '
             'pct=$(echo "$out" | grep -oE "auto-compact: [0-9]+%" | tail -1 | grep -oE "[0-9]+"); '
             'if [ -n "$pct" ]; then ctx=$pct; fi; '
             'if echo "$out" | grep -q "Context limit reached"; then ctx_limit=1; fi; '
@@ -217,7 +219,8 @@ async def _refresh_cache_once():
             for line in result.stdout.strip().split("\n"):
                 if line.startswith(f"{MA_PREFIX}-agent-"):
                     agent_id = line.replace(f"{MA_PREFIX}-agent-", "")
-                    if agent_id.isdigit():
+                    # Accept numeric IDs (345) and compound IDs (345-500)
+                    if re.match(r'^\d{3}(-\d{3})?$', agent_id):
                         agent_ids.append(agent_id)
     except Exception as e:
         print(f"[cache] agent list error: {e}")
@@ -276,12 +279,50 @@ async def _refresh_cache_once():
             "mode": "tmux",
         })
 
-    agents.sort(key=lambda a: int(a["id"]))
+    agents.sort(key=lambda a: tuple(int(p) for p in a["id"].split("-")))
+
+    # --- Detect x45 mode ---
+    # A directory is x45 if it starts with 3 digits and contains {digits}-system.md
+    prompts_dir = BASE_DIR / "prompts"
+    x45_dirs = []  # list of (numeric_id, dir_path)
+    for d in prompts_dir.iterdir():
+        if not d.is_dir():
+            continue
+        m = re.match(r'^(\d{3})', d.name)
+        if m and (d / f"{m.group(1)}-system.md").exists():
+            x45_dirs.append((m.group(1), d))
+    mode = "x45" if x45_dirs else "pipeline"
+
+    triangles = {}
+    if mode == "x45":
+        for did, d in x45_dirs:
+            tri = {"worker": did}
+            for f in d.glob(f"{did}-*-system.md"):
+                suffix = f.stem.replace(f"{did}-", "").replace("-system", "")
+                if not suffix or not suffix[0].isdigit():
+                    continue
+                role_digit = suffix[0]
+                sat_id = f"{did}-{suffix}"
+                if role_digit == "1":
+                    tri["master"] = sat_id
+                elif role_digit == "5":
+                    tri["observer"] = sat_id
+                elif role_digit == "6":
+                    tri["indexer"] = sat_id
+                elif role_digit == "7":
+                    tri["curator"] = sat_id
+                elif role_digit == "8":
+                    tri["coach"] = sat_id
+                elif role_digit == "9":
+                    tri["tri_architect"] = sat_id
+            triangles[did] = tri
 
     # --- Write cache atomically ---
     async with _cache_lock:
         _cache["agents"] = agents
         _cache["health"] = health
+        _cache["mode"] = mode
+        _cache["triangles"] = triangles
         _cache["timestamp"] = now
 
 
@@ -386,6 +427,42 @@ async def health():
 # _get_agent_states removed — replaced by background _cache_loop
 
 
+def _resolve_prompts_dir(prompts_dir: Path, numeric_id: str) -> Optional[Path]:
+    """Resolve a numeric agent ID to its prompts directory.
+    Handles both plain (345/) and named (345-develop-fonction-beta/) directories.
+    """
+    # Exact match first
+    exact = prompts_dir / numeric_id
+    if exact.is_dir():
+        return exact
+    # Named directory: 345-*
+    for d in prompts_dir.iterdir():
+        if d.is_dir() and re.match(rf'^{re.escape(numeric_id)}-', d.name):
+            return d
+    return None
+
+
+def _find_agent_prompt(prompts_dir: Path, agent_id: str) -> Optional[Path]:
+    """Find prompt file for an agent. Supports:
+    - x45 new: prompts/{parent}*/{id}.md (e.g. prompts/345/345-500.md)
+    - x45 old: prompts/{id}/system.md
+    - flat: prompts/{id}-*.md
+    Handles named directories (345-develop-fonction-beta/).
+    """
+    parent_id = agent_id.split('-')[0] if '-' in agent_id else agent_id
+    # x45: resolve named directory
+    parent_dir = _resolve_prompts_dir(prompts_dir, parent_id)
+    if parent_dir:
+        entry = parent_dir / f"{agent_id}.md"
+        if entry.exists():
+            return entry
+    # Flat format
+    matches = sorted(prompts_dir.glob(f"{agent_id}-*.md"))
+    if matches:
+        return matches[0]
+    return None
+
+
 async def _trigger_context_clear(agent_id: str):
     """Send /clear then 'deviens agent' when Context limit reached (agent is stuck)."""
     debounce_key = f"{MA_PREFIX}:agent:{agent_id}:last_clear"
@@ -398,12 +475,11 @@ async def _trigger_context_clear(agent_id: str):
 
         # Find prompt file
         prompts_dir = BASE_DIR / "prompts"
-        prompt_files = sorted(prompts_dir.glob(f"{agent_id}-*.md"))
-        if not prompt_files:
+        prompt_path = _find_agent_prompt(prompts_dir, agent_id)
+        if not prompt_path:
             print(f"[clear] No prompt file found for agent {agent_id}")
             return
 
-        prompt_path = prompt_files[0]
         session = f"{MA_PREFIX}-agent-{agent_id}"
         pane = f"{session}:0.0"
 
@@ -446,12 +522,10 @@ async def _trigger_prompt_reload(agent_id: str):
 
         # Find prompt file for this agent
         prompts_dir = BASE_DIR / "prompts"
-        prompt_files = sorted(prompts_dir.glob(f"{agent_id}-*.md"))
-        if not prompt_files:
+        prompt_path = _find_agent_prompt(prompts_dir, agent_id)
+        if not prompt_path:
             print(f"[reload] No prompt file found for agent {agent_id}")
             return
-
-        prompt_path = prompt_files[0]
         session = f"{MA_PREFIX}-agent-{agent_id}"
         cmd = f"deviens agent {prompt_path}"
 
@@ -591,7 +665,9 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
                     text=True, timeout=5
                 )
                 deep_text = deep.stdout if deep and deep.stdout else ""
-                if f"prompts/{aid}-" in deep_text:
+                # Check for prompt path in deep capture: both flat (prompts/345-) and x45 (prompts/345/345)
+                parent_aid = aid.split('-')[0] if '-' in aid else aid
+                if f"prompts/{parent_aid}/{aid}" in deep_text or f"prompts/{aid}-" in deep_text:
                     clear_ids.append(aid)
                     print(f"[reload] Agent {aid}: prompt in deep capture ({int(elapsed)}s), no reload needed")
                 else:
@@ -611,15 +687,49 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
     return overrides
 
 
+@app.get("/api/file")
+async def read_prompt_file(path: str = ""):
+    """Read a prompt file (only from prompts/ directory).
+    Resolves named directories: prompts/345/file → prompts/345-name/file.
+    """
+    if not path:
+        raise HTTPException(status_code=400, detail="path required")
+    full = (BASE_DIR / path).resolve()
+    prompts_root = (BASE_DIR / "prompts").resolve()
+    if not str(full).startswith(str(prompts_root)):
+        raise HTTPException(status_code=403, detail="forbidden")
+    # If not found, try resolving named directory (345 → 345-develop-fonction-beta)
+    if not full.exists():
+        parts = Path(path).parts  # e.g. ('prompts', '345', '345-system.md')
+        if len(parts) >= 2 and parts[0] == 'prompts' and re.match(r'^\d{3}$', parts[1]):
+            resolved_dir = _resolve_prompts_dir(BASE_DIR / "prompts", parts[1])
+            if resolved_dir:
+                full = (resolved_dir / Path(*parts[2:])).resolve()
+                if not str(full).startswith(str(prompts_root)):
+                    raise HTTPException(status_code=403, detail="forbidden")
+    if not full.exists() or not full.is_file():
+        raise HTTPException(status_code=404, detail="not found")
+    try:
+        content = full.read_text(encoding="utf-8")
+    except Exception:
+        raise HTTPException(status_code=500, detail="read error")
+    return {"path": path, "content": content}
+
+
 @app.get("/api/agents")
 async def list_agents():
     """List all agents — reads from background cache (instant)"""
     agents = _cache["agents"]
-    return {
+    result = {
         "agents": agents,
         "count": len(agents),
-        "timestamp": _cache["timestamp"]
+        "timestamp": _cache["timestamp"],
     }
+    if _cache.get("mode"):
+        result["mode"] = _cache["mode"]
+    if _cache.get("triangles"):
+        result["triangles"] = _cache["triangles"]
+    return result
 
 
 @app.get("/api/agent/{agent_id}")
@@ -1155,8 +1265,12 @@ async def websocket_status(websocket: WebSocket):
             payload = {
                 "type": "status_update",
                 "agents": [{"id": a["id"], "status": a["status"], "last_seen": a["last_seen"]} for a in agents],
-                "timestamp": _cache["timestamp"]
+                "timestamp": _cache["timestamp"],
             }
+            if _cache.get("mode"):
+                payload["mode"] = _cache["mode"]
+            if _cache.get("triangles"):
+                payload["triangles"] = _cache["triangles"]
             payload_str = json.dumps(payload, sort_keys=True)
 
             # Only send if data changed

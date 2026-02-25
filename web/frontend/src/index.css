@@ -197,6 +197,369 @@ body {
   50% { opacity: 0.5; }
 }
 
+/* x45 Sidebar */
+.x45-sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.x45-third {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem;
+  overflow: hidden;
+}
+
+.x45-border-top {
+  border-top: 1px solid var(--border-color);
+}
+
+.x45-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 3px;
+}
+
+.x45-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  font-style: italic;
+}
+
+/* Triangle diagram (flex, used by bottom section) */
+.tri-diagram {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 0.25rem 0;
+}
+
+.tri-diagram .agent-cell,
+.tri-grid .agent-cell {
+  aspect-ratio: auto;
+  font-size: 0.55rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.tri-small {
+  width: 42px;
+  height: 24px;
+}
+
+.tri-big {
+  width: 52px;
+  height: 28px;
+  font-size: 0.6rem !important;
+  font-weight: 600;
+}
+
+/* Agent cell + role label */
+.tri-labeled-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+
+.tri-role-tag {
+  font-size: 0.38rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+/* File boxes - document-like */
+.tri-file {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-left: 2px solid var(--blue);
+  color: var(--text-secondary);
+  font-size: 0.48rem;
+  padding: 3px 8px;
+  border-radius: 2px;
+  white-space: nowrap;
+  cursor: pointer;
+  text-align: center;
+}
+
+.tri-file:hover {
+  border-color: var(--blue);
+  color: var(--text-primary);
+  background: rgba(74, 158, 255, 0.06);
+}
+
+/* Directory box (dashed border, not clickable) */
+.tri-dir {
+  background: var(--bg-secondary);
+  border: 1px dashed var(--border-color);
+  color: var(--text-secondary);
+  font-size: 0.45rem;
+  padding: 3px 6px;
+  border-radius: 2px;
+  white-space: nowrap;
+  text-align: center;
+}
+
+/* CSS vertical line */
+.tri-vline {
+  width: 1px;
+  height: 10px;
+  background: var(--gray);
+  justify-self: center;
+}
+
+/* Flow label (on connections) */
+.tri-flow-label {
+  font-size: 0.38rem;
+  color: var(--text-secondary);
+  font-style: italic;
+  line-height: 1.2;
+}
+
+/* ========== CSS Grid triangle (middle section) ========== */
+.tri-grid {
+  display: grid;
+  grid-template-columns: 1fr 18px auto 18px 1fr;
+  gap: 3px 0;
+  align-items: center;
+  justify-items: center;
+  width: 100%;
+  padding: 0.15rem 0;
+}
+
+/* Horizontal arrow for grid cells */
+.tri-garrow {
+  width: 14px;
+  border-top: 1px solid var(--gray);
+  position: relative;
+  justify-self: stretch;
+  align-self: center;
+  margin: 0 2px;
+}
+
+.tri-garrow::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: -4px;
+  width: 0;
+  height: 0;
+  border-left: 5px solid var(--gray);
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+}
+
+/* Vertical arrow UP (satellite writes to file above) */
+.tri-garrow-up {
+  width: 1px;
+  height: 14px;
+  background: var(--gray);
+  position: relative;
+  justify-self: center;
+}
+
+.tri-garrow-up::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: -3px;
+  width: 0;
+  height: 0;
+  border-bottom: 5px solid var(--gray);
+  border-left: 3.5px solid transparent;
+  border-right: 3.5px solid transparent;
+}
+
+/* Vertical arrow DOWN (output flows to satellite below) */
+.tri-garrow-down {
+  width: 1px;
+  height: 14px;
+  background: var(--gray);
+  position: relative;
+  justify-self: center;
+}
+
+.tri-garrow-down::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: -3px;
+  width: 0;
+  height: 0;
+  border-top: 5px solid var(--gray);
+  border-left: 3.5px solid transparent;
+  border-right: 3.5px solid transparent;
+}
+
+/* Agent box visual grouping (SYSTEM / agent / METHODOLOGY) */
+.tri-box-t, .tri-box-b {
+  background: var(--bg-secondary);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: var(--text-secondary);
+  font-size: 0.45rem;
+  padding: 3px 8px;
+  text-align: center;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tri-box-t {
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+}
+
+.tri-box-b {
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+}
+
+.tri-box-t:hover, .tri-box-b:hover {
+  color: var(--blue);
+  background: rgba(74, 158, 255, 0.06);
+}
+
+.tri-box-m {
+  border-left: 1px solid rgba(255,255,255,0.12);
+  border-right: 1px solid rgba(255,255,255,0.12);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 2px 4px;
+}
+
+.tri-box-spacer {
+  min-height: 4px;
+}
+
+/* Left-pointing horizontal arrow */
+.tri-garrow-left {
+  width: 14px;
+  border-top: 1px solid var(--gray);
+  position: relative;
+  justify-self: stretch;
+  align-self: center;
+  margin: 0 2px;
+}
+
+.tri-garrow-left::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: -4px;
+  width: 0;
+  height: 0;
+  border-right: 5px solid var(--gray);
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+}
+
+/* Tall agent cell (double height, spans 2 grid rows) */
+.tri-cell-tall {
+  grid-row: span 2;
+  display: flex;
+  align-items: center;
+}
+
+.tri-cell-tall .agent-cell {
+  height: 64px !important;
+}
+
+/* Horizontal line (no arrowhead) */
+.tri-hline {
+  border-top: 1px solid var(--gray);
+  justify-self: stretch;
+  align-self: center;
+}
+
+/* Indexer extension below grid */
+.tri-indexer-ext {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding-top: 0;
+}
+
+/* ========== Flex center row (bottom section) ========== */
+.tri-center-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 4px 0;
+}
+
+/* Info box (multi-line input description) */
+.tri-info {
+  font-size: 0.4rem;
+  color: var(--text-secondary);
+  padding: 2px 5px;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  background: var(--bg-secondary);
+  line-height: 1.3;
+  text-align: right;
+}
+
+/* Small info badge */
+.tri-info-sm {
+  color: var(--text-secondary);
+  font-size: 0.4rem;
+  padding: 1px 5px;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  background: var(--bg-secondary);
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* Output column (vertical stack) */
+.tri-output-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Target arrows (→ 845, → 945) */
+.tri-target-col {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-left: 3px;
+}
+
+.tri-target-arrow {
+  color: var(--blue);
+  font-size: 0.4rem;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
+.tri-target-arrow::before {
+  content: '\25b8 ';
+}
+
+/* Grid outputs wrapper (badges + target arrows side by side) */
+.tri-grid-outputs {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  justify-self: start;
+}
+
+
 /* Terminal */
 .terminal {
   flex: 1;
