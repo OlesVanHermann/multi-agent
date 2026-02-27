@@ -13,6 +13,7 @@ BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BRIDGE_SCRIPT="$BASE_DIR/core/agent-bridge/agent.py"
 LOG_DIR="$BASE_DIR/logs"
 PROMPTS_DIR="$BASE_DIR/prompts"
+PROFILES_DIR="$BASE_DIR/login"
 
 # Auto-detect MA_PREFIX from project-config.md if not set
 if [ -z "${MA_PREFIX:-}" ] && [ -f "$BASE_DIR/project-config.md" ]; then
@@ -89,8 +90,21 @@ start_single() {
         MODEL=$(cat "$PROMPTS_DIR/default.model" | tr -d '[:space:]')
     fi
 
+    # Read login profile: prompts/{agent_id}.login > prompts/default.login
+    local LOGIN_PROFILE=""
+    if [ -f "$PROMPTS_DIR/${agent_id}.login" ]; then
+        LOGIN_PROFILE=$(cat "$PROMPTS_DIR/${agent_id}.login" | tr -d '[:space:]')
+    elif [ -f "$PROMPTS_DIR/default.login" ]; then
+        LOGIN_PROFILE=$(cat "$PROMPTS_DIR/default.login" | tr -d '[:space:]')
+    fi
+
+    local CLAUDE_CMD="claude"
+    if [ -n "$LOGIN_PROFILE" ]; then
+        CLAUDE_CMD="CLAUDE_CONFIG_DIR=$PROFILES_DIR/$LOGIN_PROFILE claude"
+    fi
+
     tmux new-session -d -s "$SESSION_NAME"
-    tmux send-keys -t "$SESSION_NAME" "cd '$BASE_DIR' && unset CLAUDECODE && claude --dangerously-skip-permissions" Enter
+    tmux send-keys -t "$SESSION_NAME" "cd '$BASE_DIR' && unset CLAUDECODE && $CLAUDE_CMD --dangerously-skip-permissions" Enter
     sleep 4
 
     # Select model (Enter to type, sleep, Enter to confirm menu)
@@ -204,8 +218,22 @@ start_all() {
         for agent_id in "${batch[@]}"; do
             local SESSION="${MA_PREFIX}-agent-$agent_id"
             mkdir -p "$LOG_DIR/$agent_id"
+
+            # Read login profile: prompts/{agent_id}.login > prompts/default.login
+            local LOGIN_PROFILE=""
+            if [ -f "$PROMPTS_DIR/${agent_id}.login" ]; then
+                LOGIN_PROFILE=$(cat "$PROMPTS_DIR/${agent_id}.login" | tr -d '[:space:]')
+            elif [ -f "$PROMPTS_DIR/default.login" ]; then
+                LOGIN_PROFILE=$(cat "$PROMPTS_DIR/default.login" | tr -d '[:space:]')
+            fi
+
+            local CLAUDE_CMD="claude"
+            if [ -n "$LOGIN_PROFILE" ]; then
+                CLAUDE_CMD="CLAUDE_CONFIG_DIR=$PROFILES_DIR/$LOGIN_PROFILE claude"
+            fi
+
             tmux new-session -d -s "$SESSION"
-            tmux send-keys -t "$SESSION" "cd '$BASE_DIR' && unset CLAUDECODE && claude --dangerously-skip-permissions" Enter
+            tmux send-keys -t "$SESSION" "cd '$BASE_DIR' && unset CLAUDECODE && $CLAUDE_CMD --dangerously-skip-permissions" Enter
         done
 
         # Phase 2: wait for Claude to be ready in ALL sessions, then configure
