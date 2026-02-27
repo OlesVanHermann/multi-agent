@@ -237,3 +237,52 @@ class TestDashboardAPICheck:
             data = resp.json()
             assert "alerts_detected" in data
             assert "timestamp" in data
+
+
+@pytest.mark.skipif(not FASTAPI_AVAILABLE, reason="FastAPI not installed")
+class TestDashboardAPIEF006:
+    """EF-006, CA-007 : Tests complémentaires server.py monitoring (C5)."""
+
+    @pytest.mark.anyio
+    async def test_get_agent_latency_empty(self):
+        """EF-006, CA-007 : latency endpoint sans données retourne historique vide."""
+        redis = _make_mock_redis()
+        redis.lrange.return_value = []
+        app = _make_app(redis)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/monitoring/metrics/999/latency")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["agent_id"] == "999"
+            assert data["count"] == 0
+            assert data["history"] == []
+
+    @pytest.mark.anyio
+    async def test_redis_unavailable_metrics_graceful(self):
+        """EF-006, CA-007 : Redis indisponible → réponse 500, pas de crash."""
+        redis = _make_mock_redis()
+        redis.scan_iter.side_effect = ConnectionError("Redis unavailable")
+        app = _make_app(redis)
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/monitoring/metrics")
+            assert resp.status_code == 500
+
+    @pytest.mark.anyio
+    async def test_run_check_with_alerts_detected(self):
+        """EF-006, CA-007 : check détecte alertes et les retourne."""
+        redis = _make_mock_redis()
+        redis.scan_iter.return_value = ["test:metrics:345"]
+        redis.hgetall.return_value = {
+            "tasks_total": "0",
+            "last_activity": str(int(time.time()) - 3600)
+        }
+        app = _make_app(redis)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/monitoring/check")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "alerts_detected" in data
+            assert isinstance(data["alerts_detected"], int)
+            assert "alerts" in data
+            assert "timestamp" in data

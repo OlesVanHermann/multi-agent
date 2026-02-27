@@ -11,7 +11,7 @@ LOG_DIR="$BASE_DIR/logs"
 if [ -z "${MA_PREFIX:-}" ] && [ -f "$BASE_DIR/project-config.md" ]; then
     MA_PREFIX=$(grep '^MA_PREFIX=' "$BASE_DIR/project-config.md" 2>/dev/null | cut -d= -f2 | tr -d ' ' || true)
 fi
-MA_PREFIX="${MA_PREFIX:-ma}"
+MA_PREFIX="${MA_PREFIX:-A}"
 
 # Dashboard URL
 DASH_URL="http://127.0.0.1:8090"

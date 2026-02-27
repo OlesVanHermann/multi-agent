@@ -21,6 +21,16 @@ from io import StringIO
 _BASE = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 sys.path.insert(0, os.path.join(_BASE, 'core', 'agent-bridge'))
 
+# P11 FIX C4: Save real redis.ConnectionError BEFORE any test_monitor.py mock
+# can poison sys.modules['redis']. This prevents TypeError when used as side_effect.
+try:
+    import redis as _real_redis_mod
+    _RedisConnectionError = _real_redis_mod.ConnectionError
+except (ImportError, AttributeError):
+    class _RedisConnectionError(Exception):
+        """Fallback if redis not installed."""
+        pass
+
 
 # === Scénario 1 : Démarrage nominal ===
 
@@ -117,8 +127,8 @@ class TestNominalStartup:
 
     @patch('agent.subprocess.run')
     @patch('agent.redis.Redis')
-    def test_init_starts_three_threads(self, mock_redis_cls, mock_run):
-        """Vérifie que 3 threads daemon sont créés (EF-001)"""
+    def test_init_starts_threads(self, mock_redis_cls, mock_run):
+        """Vérifie que 4 threads daemon sont créés (EF-001, EF-003 — R-REGTEST C3)"""
         mock_redis_instance = MagicMock()
         mock_redis_instance.ping.return_value = True
         mock_redis_cls.return_value = mock_redis_instance
@@ -133,11 +143,12 @@ class TestNominalStartup:
             agent = TmuxAgent("303")
             agent.running = False
 
-        assert len(agent.threads) == 3
+        assert len(agent.threads) == 4  # R-REGTEST: 3 original + heartbeat (EF-003)
         thread_names = [t.name for t in agent.threads]
         assert "redis_listener" in thread_names
         assert "legacy_listener" in thread_names
         assert "queue_processor" in thread_names
+        assert "heartbeat" in thread_names  # EF-003: heartbeat enrichi
 
     @patch('agent.subprocess.run')
     def test_tmux_session_exists_true(self, mock_run):
@@ -170,8 +181,7 @@ class TestRedisConnectionLoss:
     def test_init_exits_on_redis_failure(self, mock_redis_cls, mock_run):
         """Vérifie que l'agent quitte si Redis est indisponible au démarrage (EF-001)"""
         mock_redis_instance = MagicMock()
-        import redis as redis_lib
-        mock_redis_instance.ping.side_effect = redis_lib.ConnectionError("Connection refused")
+        mock_redis_instance.ping.side_effect = _RedisConnectionError("Connection refused")
         mock_redis_cls.return_value = mock_redis_instance
         mock_run.return_value = MagicMock(returncode=0, stdout="10\n")
 
@@ -193,15 +203,13 @@ class TestRedisConnectionLoss:
         agent.tasks_completed = 0
         agent.messages_since_reload = 0
         agent.redis = MagicMock()
-        import redis as redis_lib
-        agent.redis.hset.side_effect = redis_lib.ConnectionError("Connection lost")
+        agent.redis.hset.side_effect = _RedisConnectionError("Connection lost")
 
         # Should not raise
         agent._set_redis_status()
 
     def test_listen_redis_reconnects_on_error(self):
         """Vérifie que le listener Redis tente de se reconnecter après erreur (EF-001)"""
-        import redis as redis_lib
         from agent import TmuxAgent
 
         agent = object.__new__(TmuxAgent)
@@ -216,7 +224,7 @@ class TestRedisConnectionLoss:
             nonlocal call_count
             call_count += 1
             if call_count <= 2:
-                raise redis_lib.ConnectionError("Connection lost")
+                raise _RedisConnectionError("Connection lost")
             # Stop after 3 calls
             agent.running = False
             return None
@@ -250,8 +258,7 @@ class TestRedisConnectionLoss:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                import redis as redis_lib
-                raise redis_lib.ConnectionError("Connection refused")
+                raise _RedisConnectionError("Connection refused")
             agent.running = False
             return None
 

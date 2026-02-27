@@ -49,7 +49,7 @@ BASE_DIR = Path(__file__).parent.parent.parent
 LOG_DIR = os.environ.get("LOG_DIR", str(BASE_DIR / "logs"))
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
-MA_PREFIX = os.environ.get("MA_PREFIX", "ma")
+MA_PREFIX = os.environ.get("MA_PREFIX", "A")
 
 # Préfixe dédié monitoring (CT-002: mi: pour streams monitoring)
 MONITORING_PREFIX = os.environ.get("MONITORING_PREFIX", "mi")
@@ -114,7 +114,6 @@ class _HealthHandler(http.server.BaseHTTPRequestHandler):
 class State(Enum):
     IDLE = "idle"
     BUSY = "busy"
-    WAITING_APPROVAL = "waiting_approval"
 
 
 class TmuxAgent:
@@ -126,7 +125,6 @@ class TmuxAgent:
 
         # EF-001: start time for uptime
         self._start_time = time.time()
-        self._last_approval_time = 0  # cooldown for auto-approve
 
         # EF-003: compteurs pour heartbeat enrichi
         self._messages_processed = 0
@@ -276,43 +274,6 @@ class TmuxAgent:
             capture_output=True
         )
 
-    # Patterns that indicate Claude is waiting for user approval.
-    # Short patterns to survive tmux 80-col line wrapping.
-    APPROVAL_PATTERNS = [
-        "Would you like to",          # "Would you like to proceed?" (may wrap)
-        "1. Yes, clear context",      # plan approval option 1
-        "1. Yes, and bypass",         # plan approval option 2
-        "approve or deny",            # permission prompt
-    ]
-
-    def _check_needs_approval(self, pane_text):
-        """Check if Claude is waiting for plan/permission approval"""
-        for pattern in self.APPROVAL_PATTERNS:
-            if pattern in pane_text:
-                return True
-        return False
-
-    def _auto_approve(self):
-        """Send '1' to approve a plan or permission prompt"""
-        target = f"{self.session_name}:0"
-        self._log("AUTO-APPROVE: Detected approval prompt, sending '1'")
-        self._log_event("auto_approve", "plan/permission approval")
-
-        with self.state_lock:
-            self.state = State.WAITING_APPROVAL
-        self._set_redis_status()
-
-        time.sleep(1)
-        subprocess.run(["tmux", "send-keys", "-t", target, "1"], capture_output=True)
-        time.sleep(0.5)
-        subprocess.run(["tmux", "send-keys", "-t", target, "Enter"], capture_output=True)
-        time.sleep(2)  # wait for Claude to process before resuming poll
-
-        with self.state_lock:
-            self.state = State.BUSY
-        self._set_redis_status()
-        self._last_approval_time = time.time()
-
     def _wait_for_response(self, timeout=RESPONSE_TIMEOUT):
         """Wait for Claude to finish responding and return the output"""
         start_time = time.time()
@@ -343,17 +304,6 @@ class TmuxAgent:
                     last_printed = len(current_lines)
             else:
                 stable_count += 1
-
-            # Detect approval prompts (plan confirmation, permissions)
-            # Cooldown: don't re-approve within 15s of last approval
-            if (stable_count >= 2 and response_started
-                    and (time.time() - self._last_approval_time) > 15
-                    and self._check_needs_approval(current)):
-                self._auto_approve()
-                # Reset: Claude will continue working after approval
-                stable_count = 0
-                start_time = time.time()  # reset timeout
-                continue
 
             current_lines = current.strip().split('\n')
             last_line = current_lines[-1].strip() if current_lines else ""
@@ -785,10 +735,13 @@ class TmuxAgent:
         """Resolve a numeric ID to its prompts directory.
 
         Handles both plain (341/) and verbose (341-analyse-archi-.../) names.
+        R-REGTEST: guard against missing prompts_dir.
         """
         exact = prompts_dir / numeric_id
         if exact.is_dir():
             return exact
+        if not prompts_dir.is_dir():
+            return None
         for d in prompts_dir.iterdir():
             if d.is_dir() and re.match(rf'^{re.escape(numeric_id)}-', d.name):
                 return d

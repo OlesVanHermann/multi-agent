@@ -16,8 +16,8 @@ import sys
 import importlib
 from unittest.mock import MagicMock, patch
 
-# Add scripts/chrome_bridge/ to path (deployed structure)
-_REFACTORING = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'scripts', 'chrome_bridge'))
+# Add refactoring to path (simulates scripts/cdp/)
+_REFACTORING = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'refactoring'))
 sys.path.insert(0, _REFACTORING)
 
 

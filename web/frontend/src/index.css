@@ -985,3 +985,122 @@ body {
   font-size: 0.75rem;
   color: var(--text-secondary);
 }
+
+/* Config button (Login & Model) */
+.config-btn {
+  padding: 0.25rem 0.75rem;
+  background: transparent;
+  border: 1px solid var(--blue);
+  color: var(--blue);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.75rem;
+  border-radius: 3px;
+  margin-left: 1rem;
+}
+
+.config-btn:hover {
+  background: rgba(74, 158, 255, 0.1);
+}
+
+.config-btn-active {
+  background: var(--blue);
+  color: #fff;
+}
+
+.config-btn-active:hover {
+  background: #3a8eef;
+}
+
+/* Login & Model panel */
+.login-model-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.75rem;
+  background: var(--bg-panel);
+}
+
+.lm-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+  font-family: inherit;
+}
+
+.lm-table th {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-color);
+  font-weight: 500;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.lm-table td {
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid rgba(51, 51, 51, 0.5);
+  color: var(--text-primary);
+}
+
+.lm-default-row td {
+  border-bottom: 2px solid var(--border-color);
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
+.lm-select {
+  padding: 0.2rem 0.4rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.7rem;
+  border-radius: 3px;
+  cursor: pointer;
+  min-width: 7rem;
+}
+
+.lm-select:hover {
+  border-color: var(--blue);
+  color: var(--text-primary);
+}
+
+.lm-select option {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.lm-select.lm-override {
+  color: var(--blue);
+  border-color: var(--blue);
+}
+
+.lm-restart-btn {
+  padding: 0.15rem 0.5rem;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.65rem;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.lm-restart-btn:hover:not(:disabled) {
+  border-color: var(--orange);
+  color: var(--orange);
+  background: rgba(255, 149, 0, 0.1);
+}
+
+.lm-restart-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.lm-restart-btn.lm-restarting {
+  color: var(--orange);
+  border-color: var(--orange);
+  animation: pulse-red 1.5s ease-in-out infinite;
+}

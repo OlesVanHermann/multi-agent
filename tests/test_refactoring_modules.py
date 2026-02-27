@@ -10,8 +10,8 @@ import sys
 import json
 from unittest.mock import MagicMock, patch, PropertyMock
 
-# Add scripts/chrome_bridge/ to path for standalone imports (deployed structure)
-_REFACTORING = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'scripts', 'chrome_bridge'))
+# Add refactoring to path for standalone imports
+_REFACTORING = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'refactoring'))
 sys.path.insert(0, _REFACTORING)
 
 
@@ -435,3 +435,55 @@ class TestCDPCommandsModule:
         cdp.type_text("#input", "hello", clear=False)
         # Should have 1 evaluate call: focus only
         assert cdp.evaluate.call_count == 1
+
+    def test_safe_sel_escapes_single_quotes(self):
+        """_safe_sel échappe les quotes simples (R-SANIT, R-P1CLOSE)"""
+        from cdp_commands import CDPCommands
+        assert CDPCommands._safe_sel("div.class") == "div.class"
+        assert CDPCommands._safe_sel("a[href='x']") == "a[href=\\'x\\']"
+        malicious = "'; alert('xss'); '"
+        result = CDPCommands._safe_sel(malicious)
+        assert "'" not in result.replace("\\'", "")
+
+    def test_safe_sel_escapes_backslash(self):
+        """_safe_sel échappe les backslashes (R-P1CLOSE)"""
+        from cdp_commands import CDPCommands
+        assert CDPCommands._safe_sel("a\\b") == "a\\\\b"
+        assert CDPCommands._safe_sel("no\\backslash\\'quote") == "no\\\\backslash\\\\\\'quote"
+
+    def test_safe_sel_escapes_newlines(self):
+        """_safe_sel échappe les newlines et carriage returns (R-P1CLOSE)"""
+        from cdp_commands import CDPCommands
+        assert CDPCommands._safe_sel("a\nb") == "a\\nb"
+        assert CDPCommands._safe_sel("a\rb") == "a\\rb"
+        assert CDPCommands._safe_sel("a\n\rb") == "a\\n\\rb"
+
+    def test_safe_sel_combined_injection(self):
+        """_safe_sel bloque les tentatives d'injection combinées (R-P1CLOSE)"""
+        from cdp_commands import CDPCommands
+        # Attempt to break out of querySelector and inject JS
+        payload = "'); document.cookie='stolen'; ('"
+        result = CDPCommands._safe_sel(payload)
+        # The result should not contain unescaped quotes
+        assert result == "\\'); document.cookie=\\'stolen\\'; (\\'"
+
+    def test_timing_constants_defined(self):
+        """CDPCommands définit des constantes WAIT_* configurables (R-TIMING, R-P2PROVE)"""
+        from cdp_commands import CDPCommands
+        expected = ['WAIT_NAVIGATION', 'WAIT_HISTORY', 'WAIT_SUBMIT',
+                    'WAIT_CLICK', 'WAIT_SCROLL', 'WAIT_KEY', 'WAIT_SHORT', 'WAIT_POLL']
+        for const in expected:
+            assert hasattr(CDPCommands, const), f"Missing constant: {const}"
+            val = getattr(CDPCommands, const)
+            assert isinstance(val, (int, float)), f"{const} must be numeric"
+            assert val > 0, f"{const} must be positive"
+
+    def test_no_hardcoded_sleep_values(self):
+        """Aucun time.sleep avec valeur numérique en dur dans cdp_commands.py (R-P2PROVE)"""
+        import re
+        src_path = os.path.join(_REFACTORING, 'cdp_commands.py')
+        with open(src_path) as f:
+            content = f.read()
+        # Find time.sleep calls with numeric literals (e.g. time.sleep(0.5), time.sleep(2))
+        hardcoded = re.findall(r'time\.sleep\(\s*[0-9]', content)
+        assert hardcoded == [], f"Hardcoded time.sleep found: {hardcoded}"

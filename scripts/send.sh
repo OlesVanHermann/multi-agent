@@ -13,7 +13,7 @@ BASE_DIR="$SCRIPT_DIR/.."
 if [ -z "${MA_PREFIX:-}" ] && [ -f "$BASE_DIR/project-config.md" ]; then
     MA_PREFIX=$(grep '^MA_PREFIX=' "$BASE_DIR/project-config.md" 2>/dev/null | cut -d= -f2 | tr -d ' ' || true)
 fi
-MA_PREFIX="${MA_PREFIX:-ma}"
+MA_PREFIX="${MA_PREFIX:-A}"
 
 TO_AGENT=$1
 shift 2>/dev/null || true

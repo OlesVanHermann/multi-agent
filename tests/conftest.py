@@ -11,11 +11,19 @@ import subprocess
 import time
 from unittest.mock import MagicMock, patch
 
-# Add paths — deployed structure: scripts/chrome_bridge/ package
-_BASE = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+# Add paths — R-SYMLINKPROOF: robust path resolution via marker search
+def _find_project_root(start, markers=('CLAUDE.md', '.git')):
+    """Remonte les répertoires jusqu'à trouver un marqueur du projet (R-SYMLINKPROOF)."""
+    current = os.path.realpath(start)
+    while current != os.path.dirname(current):
+        if any(os.path.exists(os.path.join(current, m)) for m in markers):
+            return current
+        current = os.path.dirname(current)
+    raise FileNotFoundError(f"Marqueur {markers} introuvable en remontant depuis {start}")
+
+_BASE = _find_project_root(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, os.path.join(_BASE, 'core', 'agent-bridge'))
-sys.path.insert(0, os.path.join(_BASE, 'scripts', 'chrome_bridge'))
-sys.path.insert(0, os.path.join(_BASE, 'scripts'))
+sys.path.insert(0, os.path.join(os.path.realpath(os.path.dirname(__file__)), '..', 'refactoring'))
 
 
 @pytest.fixture

@@ -511,3 +511,49 @@ class TestCDPCommands:
         mouse_calls = [c for c in calls if c.get("method") == "Input.dispatchMouseEvent"]
         assert len(mouse_calls) == 1
         assert mouse_calls[0]["params"]["type"] == "mouseMoved"
+
+    def test_safe_sel_injection(self):
+        """Vérifie que _safe_sel bloque l'injection CSS/JS (R-P1CLOSE, R-SANIT)."""
+        from cdp_commands import CDPCommands
+        cdp = CDPCommands("MOCK_TAB")
+
+        # Single quote injection attempt
+        malicious = "'; alert('xss'); '"
+        result = cdp._safe_sel(malicious)
+        assert "\\'" in result
+        assert result == "\\'; alert(\\'xss\\'); \\'"
+
+        # Backslash injection
+        assert cdp._safe_sel("a\\b") == "a\\\\b"
+
+        # Newline injection
+        assert cdp._safe_sel("a\nb") == "a\\nb"
+
+        # Carriage return injection
+        assert cdp._safe_sel("a\rb") == "a\\rb"
+
+        # Combined attack vector
+        combined = "div'); document.cookie='stolen\n"
+        result = cdp._safe_sel(combined)
+        assert "\n" not in result
+        assert "\\'" in result
+        assert result == "div\\'); document.cookie=\\'stolen\\n"
+
+    def test_safe_sel_used_in_click(self):
+        """Vérifie que click() utilise _safe_sel pour le sélecteur (R-P1CLOSE)."""
+        cdp = self._make_cdp()
+        calls = []
+        cdp.ws.send = lambda d: calls.append(json.loads(d))
+        # Return null coords to trigger not-found (simpler than full flow)
+        cdp.ws.recv.return_value = json.dumps({
+            "id": 1, "result": {"result": {"type": "object", "value": None}}
+        })
+        # Malicious selector with quote
+        try:
+            cdp.click("div'; alert(1); '")
+        except Exception:
+            pass
+        # Verify the JS sent contains escaped selector
+        if calls:
+            js_code = calls[0].get("params", {}).get("expression", "")
+            assert "\\'" in js_code or "alert(1)" not in js_code

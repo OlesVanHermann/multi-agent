@@ -24,7 +24,7 @@ from io import BytesIO
 # Load 345-output/agent.py explicitly via importlib (NOT core/agent-bridge/agent.py)
 _HERE = os.path.dirname(os.path.realpath(__file__))
 _OUTPUT = os.path.abspath(os.path.join(_HERE, '..'))
-_AGENT_PATH = os.path.join(_OUTPUT, 'core', 'agent-bridge', 'agent.py')
+_AGENT_PATH = os.path.join(_OUTPUT, 'agent.py')
 
 if _OUTPUT not in sys.path:
     sys.path.insert(0, _OUTPUT)

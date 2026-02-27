@@ -28,7 +28,7 @@ class TestAlertingModule:
 
     def test_ct006_alerting_under_200_lines(self):
         """CT-006 : alerting.py < 200 lignes."""
-        path = os.path.join(_OUTPUT, 'core', 'agent-bridge', 'monitoring', 'alerting.py')
+        path = os.path.join(_OUTPUT, 'monitoring', 'alerting.py')
         with open(path) as f:
             lines = len(f.readlines())
         assert lines < 200, f"alerting.py = {lines}L, doit être < 200L (CT-006)"

@@ -25,7 +25,7 @@ DISABLED_DIR="$ROOT/prompts-disabled"
 if [ -z "${MA_PREFIX:-}" ] && [ -f "$ROOT/project-config.md" ]; then
     MA_PREFIX=$(grep '^MA_PREFIX=' "$ROOT/project-config.md" 2>/dev/null | cut -d= -f2 | tr -d ' ' || true)
 fi
-MA_PREFIX="${MA_PREFIX:-ma}"
+MA_PREFIX="${MA_PREFIX:-A}"
 
 # Colors
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'

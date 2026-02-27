@@ -51,7 +51,7 @@ KEYCLOAK_URL = os.environ.get("KEYCLOAK_URL", "http://localhost:8080")
 # Config
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
-MA_PREFIX = os.environ.get("MA_PREFIX", "ma")
+MA_PREFIX = os.environ.get("MA_PREFIX", "A")
 BASE_DIR = Path(os.environ.get("MA_BASE", Path.home() / "multi-agent"))
 
 # Redis connection pool
@@ -391,6 +391,12 @@ class AgentStatus(BaseModel):
 class SendMessage(BaseModel):
     message: str
     from_agent: str = "web"
+
+
+class LoginModelUpdate(BaseModel):
+    agent_id: str      # "300" or "default"
+    type: str          # "login" or "model"
+    value: str         # "claude2a" or "" to remove override
 
 
 # === Routes ===
@@ -733,6 +739,147 @@ async def get_agent(agent_id: str):
         tasks_completed=int(data.get("tasks_completed", 0)),
         mode=data.get("mode", "unknown")
     ).model_dump()
+
+
+@app.get("/api/config/logins-models")
+async def get_logins_models():
+    """Return available logins, models, defaults, and per-agent assignments."""
+    prompts_dir = BASE_DIR / "prompts"
+
+    # Collect non-symlink .login and .model files
+    logins = sorted(
+        f.stem for f in prompts_dir.glob("*.login")
+        if not f.is_symlink() and f.stem != "default"
+    )
+    models = sorted(
+        f.stem for f in prompts_dir.glob("*.model")
+        if not f.is_symlink() and f.stem != "default"
+    )
+
+    # Resolve default symlinks
+    default_login = ""
+    dl = prompts_dir / "default.login"
+    if dl.is_symlink():
+        target = os.readlink(dl)
+        default_login = Path(target).stem  # "claude1a.login" -> "claude1a"
+    elif dl.exists():
+        default_login = logins[0] if logins else ""
+
+    default_model = ""
+    dm = prompts_dir / "default.model"
+    if dm.is_symlink():
+        target = os.readlink(dm)
+        default_model = Path(target).stem
+    elif dm.exists():
+        default_model = models[0] if models else ""
+
+    # Gather agent IDs from cache + x45 detection
+    agent_ids = set()
+    for a in _cache.get("agents", []):
+        agent_ids.add(a["id"])
+    # Also scan prompts/ for numbered files/dirs that might not be running
+    for f in prompts_dir.iterdir():
+        m = re.match(r'^(\d{3})', f.name)
+        if m:
+            agent_ids.add(m.group(1))
+
+    # Build per-agent config
+    agents = []
+    for aid in sorted(agent_ids, key=lambda x: tuple(int(p) for p in x.split("-"))):
+        login_file = prompts_dir / f"{aid}.login"
+        model_file = prompts_dir / f"{aid}.model"
+
+        if login_file.is_symlink():
+            agent_login = Path(os.readlink(login_file)).stem
+            login_source = "override"
+        else:
+            agent_login = default_login
+            login_source = "default"
+
+        if model_file.is_symlink():
+            agent_model = Path(os.readlink(model_file)).stem
+            model_source = "override"
+        else:
+            agent_model = default_model
+            model_source = "default"
+
+        agents.append({
+            "id": aid,
+            "login": agent_login,
+            "login_source": login_source,
+            "model": agent_model,
+            "model_source": model_source,
+        })
+
+    return {
+        "logins": logins,
+        "models": models,
+        "default_login": default_login,
+        "default_model": default_model,
+        "agents": agents,
+    }
+
+
+@app.post("/api/config/logins-models")
+async def update_login_model(data: LoginModelUpdate):
+    """Create or remove a login/model symlink override for an agent."""
+    prompts_dir = BASE_DIR / "prompts"
+
+    if data.type not in ("login", "model"):
+        raise HTTPException(status_code=400, detail="type must be 'login' or 'model'")
+
+    # Validate agent_id format
+    if data.agent_id != "default" and not re.match(r'^\d{3}(-\d{3})?$', data.agent_id):
+        raise HTTPException(status_code=400, detail="invalid agent_id")
+
+    link_path = prompts_dir / f"{data.agent_id}.{data.type}"
+
+    if data.value == "":
+        # Remove override (only for non-default)
+        if data.agent_id == "default":
+            raise HTTPException(status_code=400, detail="cannot remove default")
+        if link_path.is_symlink() or link_path.exists():
+            link_path.unlink()
+        return {"status": "removed", "agent_id": data.agent_id, "type": data.type}
+
+    # Validate target exists
+    target_file = prompts_dir / f"{data.value}.{data.type}"
+    if not target_file.exists() or target_file.is_symlink():
+        raise HTTPException(status_code=400, detail=f"target {data.value}.{data.type} not found")
+
+    # Create/replace symlink
+    if link_path.is_symlink() or link_path.exists():
+        link_path.unlink()
+    link_path.symlink_to(f"{data.value}.{data.type}")
+
+    return {"status": "updated", "agent_id": data.agent_id, "type": data.type, "value": data.value}
+
+
+@app.post("/api/agent/{agent_id}/restart")
+async def restart_agent(agent_id: str):
+    """Restart an agent via ./scripts/agent.sh restart <id>."""
+    if not re.match(r'^\d{3}(-\d{3})?$', agent_id):
+        raise HTTPException(status_code=400, detail="invalid agent_id")
+
+    script = BASE_DIR / "scripts" / "agent.sh"
+    if not script.exists():
+        raise HTTPException(status_code=500, detail="agent.sh not found")
+
+    try:
+        result = await _run_subprocess(
+            ["bash", str(script), "restart", agent_id],
+            text=True, timeout=60
+        )
+        output = result.stdout.strip()
+        print(f"[restart] agent {agent_id}: {output}")
+
+        return {
+            "status": "restarted",
+            "agent_id": agent_id,
+            "output": output,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"restart failed: {e}")
 
 
 @app.get("/api/agent/{agent_id}/events")

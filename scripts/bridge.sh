@@ -18,7 +18,7 @@ PROMPTS_DIR="$BASE_DIR/prompts"
 if [ -z "${MA_PREFIX:-}" ] && [ -f "$BASE_DIR/project-config.md" ]; then
     MA_PREFIX=$(grep '^MA_PREFIX=' "$BASE_DIR/project-config.md" 2>/dev/null | cut -d= -f2 | tr -d ' ' || true)
 fi
-MA_PREFIX="${MA_PREFIX:-ma}"
+MA_PREFIX="${MA_PREFIX:-A}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; NC='\033[0m'

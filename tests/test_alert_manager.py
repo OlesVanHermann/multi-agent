@@ -1,9 +1,9 @@
 """
-Tests pour alert_manager.py — Tâche 004
+Tests pour alerting.py (migré depuis alert_manager.py — R-CLEANUP C3)
 Couvre : détection stale, stuck, error burst, alertes actives, acquittement
-
-CT-002 : pytest
-CT-004 : Mock Redis
+EF-004 : Système d'alerting structuré
+CT-004 : pytest + mock Redis
+CT-009 : XTRIM MAXLEN ~1000
 """
 import pytest
 import json
@@ -13,41 +13,40 @@ import sys
 import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from monitoring.alert_manager import (
-    AlertManager, AlertLevel, AlertType,
-    DEFAULT_STALE_THRESHOLD, DEFAULT_STUCK_CYCLES
+from monitoring.alerting import (
+    AlertManager, STALE_THRESHOLD, STUCK_CYCLES
 )
 
 
 class TestAlertManagerInit:
-    """Tests d'initialisation."""
+    """Tests d'initialisation — EF-004."""
 
     def test_init_defaults(self):
-        """Seuils par défaut configurés."""
+        """EF-004 : Seuils par défaut configurés."""
         redis = MagicMock()
         am = AlertManager(redis)
-        assert am.stale_threshold == DEFAULT_STALE_THRESHOLD
-        assert am.stuck_cycles == DEFAULT_STUCK_CYCLES
+        assert am.stale_threshold == STALE_THRESHOLD
+        assert am.stuck_cycles == STUCK_CYCLES
 
     def test_init_custom_thresholds(self):
-        """Seuils personnalisés acceptés."""
+        """EF-004 : Seuils personnalisés acceptés."""
         redis = MagicMock()
         am = AlertManager(redis, stale_threshold=60, stuck_cycles=3)
         assert am.stale_threshold == 60
         assert am.stuck_cycles == 3
 
     def test_init_custom_prefix(self):
-        """Préfixe personnalisé pour isolation (CT-004)."""
+        """CT-004 : Préfixe personnalisé pour isolation."""
         redis = MagicMock()
         am = AlertManager(redis, prefix="test")
         assert am.prefix == "test"
 
 
 class TestCheckAgentStale:
-    """Tests détection agent stale (Tâche 004 §1)."""
+    """Tests détection agent stale — EF-004, Tâche 004 §1."""
 
     def test_stale_agent_detected(self):
-        """Agent sans heartbeat depuis > seuil déclenche alerte."""
+        """EF-004 : Agent sans heartbeat depuis > seuil déclenche alerte."""
         redis = MagicMock()
         redis.hgetall.return_value = {
             "status": "busy",
@@ -60,12 +59,12 @@ class TestCheckAgentStale:
         alert = am.check_agent_stale("345")
 
         assert alert is not None
-        assert alert["type"] == AlertType.AGENT_STALE
+        assert alert["type"] == "agent_stale"
         assert alert["agent_id"] == "345"
         assert "300" in alert["message"] or "stale" in alert["message"]
 
     def test_fresh_agent_no_alert(self):
-        """Agent avec heartbeat récent ne déclenche pas d'alerte."""
+        """EF-004 : Agent avec heartbeat récent ne déclenche pas d'alerte."""
         redis = MagicMock()
         redis.hgetall.return_value = {
             "status": "idle",
@@ -78,7 +77,7 @@ class TestCheckAgentStale:
         assert alert is None
 
     def test_stale_critical_threshold(self):
-        """Agent très stale (3x seuil) → alerte CRITICAL."""
+        """EF-004 : Agent très stale (3x seuil) → alerte critical."""
         redis = MagicMock()
         redis.hgetall.return_value = {
             "status": "busy",
@@ -91,10 +90,10 @@ class TestCheckAgentStale:
         alert = am.check_agent_stale("345")
 
         assert alert is not None
-        assert alert["level"] == AlertLevel.CRITICAL
+        assert alert["level"] == "critical"
 
     def test_no_agent_data_no_alert(self):
-        """Agent inconnu ne déclenche pas d'alerte."""
+        """EF-004 : Agent inconnu ne déclenche pas d'alerte."""
         redis = MagicMock()
         redis.hgetall.return_value = {}
         am = AlertManager(redis, prefix="test")
@@ -104,7 +103,7 @@ class TestCheckAgentStale:
         assert alert is None
 
     def test_no_last_seen_no_alert(self):
-        """Agent sans last_seen ne déclenche pas d'alerte."""
+        """EF-004 : Agent sans last_seen ne déclenche pas d'alerte."""
         redis = MagicMock()
         redis.hgetall.return_value = {"status": "idle"}
         am = AlertManager(redis, prefix="test")
@@ -115,10 +114,10 @@ class TestCheckAgentStale:
 
 
 class TestCheckAgentStuck:
-    """Tests détection agent bloqué (Tâche 004 §2)."""
+    """Tests détection agent bloqué — EF-004, Tâche 004 §2."""
 
     def test_stuck_agent_detected(self):
-        """Agent sans progression depuis > N cycles déclenche alerte."""
+        """EF-004 : Agent sans progression depuis > N cycles déclenche alerte."""
         redis = MagicMock()
         redis.hgetall.return_value = {
             "cycles_completed": "3",
@@ -133,10 +132,10 @@ class TestCheckAgentStuck:
 
         # 7200 / 600 = 12 cycles elapsed > 2
         assert alert is not None
-        assert alert["type"] == AlertType.AGENT_STUCK
+        assert alert["type"] == "agent_stuck"
 
     def test_active_agent_no_alert(self):
-        """Agent actif ne déclenche pas d'alerte stuck."""
+        """EF-004 : Agent actif ne déclenche pas d'alerte stuck."""
         redis = MagicMock()
         redis.hgetall.return_value = {
             "cycles_completed": "5",
@@ -150,7 +149,7 @@ class TestCheckAgentStuck:
         assert alert is None
 
     def test_no_metrics_no_alert(self):
-        """Agent sans métriques ne déclenche pas d'alerte stuck."""
+        """EF-004 : Agent sans métriques ne déclenche pas d'alerte stuck."""
         redis = MagicMock()
         redis.hgetall.return_value = {}
         am = AlertManager(redis, prefix="test")
@@ -160,7 +159,7 @@ class TestCheckAgentStuck:
         assert alert is None
 
     def test_no_last_cycle_no_alert(self):
-        """Agent sans cycle précédent ne déclenche pas d'alerte."""
+        """EF-004 : Agent sans cycle précédent ne déclenche pas d'alerte."""
         redis = MagicMock()
         redis.hgetall.return_value = {"cycles_completed": "0"}
         am = AlertManager(redis, prefix="test")
@@ -171,10 +170,10 @@ class TestCheckAgentStuck:
 
 
 class TestCheckErrorBurst:
-    """Tests détection burst d'erreurs."""
+    """Tests détection burst d'erreurs — EF-004."""
 
     def test_error_burst_detected(self):
-        """Burst d'erreurs récent déclenche alerte CRITICAL."""
+        """EF-004 : Burst d'erreurs récent déclenche alerte critical."""
         redis = MagicMock()
         redis.hgetall.return_value = {
             "errors_total": "10",
@@ -188,11 +187,11 @@ class TestCheckErrorBurst:
         alert = am.check_error_burst("345")
 
         assert alert is not None
-        assert alert["type"] == AlertType.ERROR_BURST
-        assert alert["level"] == AlertLevel.CRITICAL
+        assert alert["type"] == "error_burst"
+        assert alert["level"] == "critical"
 
     def test_old_errors_no_alert(self):
-        """Erreurs anciennes ne déclenchent pas d'alerte burst."""
+        """EF-004 : Erreurs anciennes ne déclenchent pas d'alerte burst."""
         redis = MagicMock()
         redis.hgetall.return_value = {
             "errors_total": "10",
@@ -205,7 +204,7 @@ class TestCheckErrorBurst:
         assert alert is None
 
     def test_few_errors_no_alert(self):
-        """Peu d'erreurs ne déclenchent pas d'alerte burst."""
+        """EF-004 : Peu d'erreurs ne déclenchent pas d'alerte burst."""
         redis = MagicMock()
         redis.hgetall.return_value = {
             "errors_total": "2",
@@ -219,10 +218,10 @@ class TestCheckErrorBurst:
 
 
 class TestCheckAllAgents:
-    """Tests du check global."""
+    """Tests du check global — EF-004."""
 
     def test_check_all_agents(self):
-        """Check global retourne les alertes de tous les agents."""
+        """EF-004 : Check global retourne les alertes de tous les agents."""
         redis = MagicMock()
 
         # scan_iter retourne des clés agent
@@ -244,11 +243,11 @@ class TestCheckAllAgents:
         alerts = am.check_all_agents()
 
         # Au moins 1 alerte pour 345 (stale)
-        stale_alerts = [a for a in alerts if a["agent_id"] == "345" and a["type"] == AlertType.AGENT_STALE]
+        stale_alerts = [a for a in alerts if a["agent_id"] == "345" and a["type"] == "agent_stale"]
         assert len(stale_alerts) >= 1
 
     def test_check_all_no_agents(self):
-        """Check global sans agents retourne liste vide."""
+        """EF-004 : Check global sans agents retourne liste vide."""
         redis = MagicMock()
         redis.scan_iter.return_value = []
         am = AlertManager(redis, prefix="test")
@@ -259,10 +258,10 @@ class TestCheckAllAgents:
 
 
 class TestAlertPublishing:
-    """Tests de publication des alertes."""
+    """Tests de publication des alertes — CT-002, CT-009."""
 
     def test_alert_stored_in_redis(self):
-        """Alerte stockée dans hash Redis."""
+        """EF-004 : Alerte stockée dans hash Redis."""
         redis = MagicMock()
         redis.hgetall.return_value = {
             "status": "busy",
@@ -281,7 +280,7 @@ class TestAlertPublishing:
         assert len(hset_calls) >= 1
 
     def test_alert_added_to_active_set(self):
-        """Alerte ajoutée au set des alertes actives."""
+        """EF-004 : Alerte ajoutée au set des alertes actives."""
         redis = MagicMock()
         redis.hgetall.return_value = {
             "status": "busy",
@@ -296,7 +295,7 @@ class TestAlertPublishing:
         redis.sadd.assert_called()
 
     def test_alert_published_to_stream(self):
-        """Alerte publiée dans le stream Redis (CT-006)."""
+        """CT-002, CT-009 : Alerte publiée dans le stream Redis."""
         redis = MagicMock()
         redis.hgetall.return_value = {
             "status": "busy",
@@ -308,7 +307,7 @@ class TestAlertPublishing:
         am = AlertManager(redis, prefix="test", stale_threshold=120)
         am.check_agent_stale("345")
 
-        # Vérifier xadd avec format CT-006 (from, type, payload, timestamp)
+        # Vérifier xadd avec format CT-002 (from, type, payload, timestamp)
         xadd_calls = redis.xadd.call_args_list
         assert len(xadd_calls) >= 1
         stream_key, data = xadd_calls[0][0]
@@ -318,10 +317,10 @@ class TestAlertPublishing:
 
 
 class TestGetActiveAlerts:
-    """Tests de récupération des alertes actives."""
+    """Tests de récupération des alertes actives — EF-004."""
 
     def test_get_active_alerts(self):
-        """Récupération et parsing des alertes actives."""
+        """EF-004 : Récupération et parsing des alertes actives."""
         redis = MagicMock()
         redis.smembers.return_value = {"345:agent_stale:1000"}
         redis.hgetall.return_value = {
@@ -343,7 +342,7 @@ class TestGetActiveAlerts:
         assert alerts[0]["timestamp"] == 1000.0
 
     def test_get_active_alerts_empty(self):
-        """Pas d'alertes actives retourne liste vide."""
+        """EF-004 : Pas d'alertes actives retourne liste vide."""
         redis = MagicMock()
         redis.smembers.return_value = set()
         am = AlertManager(redis, prefix="test")
@@ -353,10 +352,10 @@ class TestGetActiveAlerts:
 
 
 class TestAcknowledgeAlert:
-    """Tests d'acquittement des alertes."""
+    """Tests d'acquittement des alertes — EF-004."""
 
     def test_acknowledge_existing_alert(self):
-        """Acquittement d'une alerte existante."""
+        """EF-004 : Acquittement d'une alerte existante."""
         redis = MagicMock()
         redis.srem.return_value = 1
         am = AlertManager(redis, prefix="test")
@@ -368,7 +367,7 @@ class TestAcknowledgeAlert:
         redis.hset.assert_called_once()
 
     def test_acknowledge_nonexistent_alert(self):
-        """Acquittement d'une alerte inexistante retourne False."""
+        """EF-004 : Acquittement d'une alerte inexistante retourne False."""
         redis = MagicMock()
         redis.srem.return_value = 0
         am = AlertManager(redis, prefix="test")
@@ -379,10 +378,10 @@ class TestAcknowledgeAlert:
 
 
 class TestClearAlerts:
-    """Tests de nettoyage des alertes."""
+    """Tests de nettoyage des alertes — EF-004."""
 
     def test_clear_all_alerts(self):
-        """Suppression de toutes les alertes."""
+        """EF-004 : Suppression de toutes les alertes."""
         redis = MagicMock()
         redis.smembers.return_value = {"alert1", "alert2"}
         am = AlertManager(redis, prefix="test")

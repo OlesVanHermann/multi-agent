@@ -3,6 +3,7 @@ import AgentGrid, { AGENT_LABELS } from './components/AgentGrid'
 import AgentSidebarX45 from './components/AgentSidebarX45'
 import Terminal from './components/Terminal'
 import FileViewer from './components/FileViewer'
+import LoginModelPanel from './components/LoginModelPanel'
 import StatusBar from './components/StatusBar'
 import { useAuth } from './AuthProvider'
 import { api, wsUrl } from './basePath'
@@ -134,6 +135,7 @@ function App() {
   }, [statusPoll])
 
   const [selectedFile, setSelectedFile] = useState(null)
+  const [showLoginModel, setShowLoginModel] = useState(false)
 
   const handleAgentClick = (agentId) => {
     setSelectedFile(null) // clear file view when selecting an agent
@@ -166,6 +168,12 @@ function App() {
     <div className="app">
       <header className="header">
         <h1>MULTI-AGENT DASHBOARD</h1>
+        <button
+          className={`config-btn ${showLoginModel ? 'config-btn-active' : ''}`}
+          onClick={() => setShowLoginModel(!showLoginModel)}
+        >
+          Login &amp; Model
+        </button>
         <div className="header-right">
           <span className="poll-group">
             <label className="poll-label">Terminal</label>
@@ -232,7 +240,9 @@ function App() {
           <div className="panel-header">
             <h2>AGENT {selectedAgent ? `(${selectedAgent}) — ${AGENT_LABELS[selectedAgent] || getAgentType(selectedAgent)}` : '---'}</h2>
           </div>
-          {selectedFile ? (
+          {showLoginModel ? (
+            <LoginModelPanel />
+          ) : selectedFile ? (
             <FileViewer filePath={selectedFile} />
           ) : selectedAgent ? (
             <Terminal agentId={selectedAgent} focused={activePanel === 'agent'} pollInterval={agentPoll} />

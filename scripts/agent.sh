@@ -19,7 +19,7 @@ PROFILES_DIR="$BASE_DIR/login"
 if [ -z "${MA_PREFIX:-}" ] && [ -f "$BASE_DIR/project-config.md" ]; then
     MA_PREFIX=$(grep '^MA_PREFIX=' "$BASE_DIR/project-config.md" 2>/dev/null | cut -d= -f2 | tr -d ' ' || true)
 fi
-MA_PREFIX="${MA_PREFIX:-ma}"
+MA_PREFIX="${MA_PREFIX:-A}"
 
 # Colors
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -391,16 +391,56 @@ do_stop() {
     log_ok "Done"
 }
 
+# ── Restart ──
+
+do_restart() {
+    local target=$1
+    if [ -z "$target" ]; then
+        show_help; exit 1
+    elif [ "$target" = "all" ]; then
+        stop_all
+        log_info "Waiting 5s before restarting..."
+        sleep 5
+        start_all
+    else
+        shift
+        for agent_id in "$target" "$@"; do
+            # x45 triangle? expand to all satellites
+            local tri_ids
+            tri_ids=$(get_triangle_ids "$agent_id" 2>/dev/null) || true
+            if [ -n "$tri_ids" ] && [ "$(echo $tri_ids | wc -w)" -gt 1 ]; then
+                log_info "x45 triangle $agent_id: $tri_ids"
+                for tid in $tri_ids; do
+                    stop_single "$tid"
+                done
+                log_info "Waiting 5s before restarting..."
+                sleep 5
+                for tid in $tri_ids; do
+                    start_single "$tid"
+                done
+            else
+                stop_single "$agent_id"
+                log_info "Waiting 5s before restarting $agent_id..."
+                sleep 5
+                start_single "$agent_id"
+            fi
+        done
+    fi
+    log_ok "Restart done"
+}
+
 # ── Help ──
 
 show_help() {
-    echo "Usage: $0 <start|stop> <agent_id|all>"
+    echo "Usage: $0 <start|stop|restart> <agent_id|all>"
     echo ""
     echo "  $0 start 300       Start agent 300"
     echo "  $0 start 300 301   Start agents 300 and 301"
     echo "  $0 start all       Start all agents from prompts/"
     echo "  $0 stop 300        Stop agent 300"
     echo "  $0 stop all        Stop all (except 000)"
+    echo "  $0 restart 300     Restart agent 300 (stop + 5s + start)"
+    echo "  $0 restart all     Restart all (except 000)"
     echo ""
     echo "  000 is protected — use infra.sh start / infra.sh stop"
 }
@@ -411,8 +451,9 @@ ACTION=$1
 shift 2>/dev/null || true
 
 case "$ACTION" in
-    start)  do_start "$@" ;;
-    stop)   do_stop "$@" ;;
+    start)   do_start "$@" ;;
+    stop)    do_stop "$@" ;;
+    restart) do_restart "$@" ;;
     -h|--help|help|"") show_help ;;
-    *)      log_error "Unknown action: $ACTION"; show_help; exit 1 ;;
+    *)       log_error "Unknown action: $ACTION"; show_help; exit 1 ;;
 esac

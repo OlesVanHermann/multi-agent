@@ -11,7 +11,17 @@ import stat
 import tempfile
 import shutil
 
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+# R-SYMLINKPROOF: robust path resolution via marker search
+def _find_project_root(start, markers=('CLAUDE.md', '.git')):
+    """Remonte les répertoires jusqu'à trouver un marqueur du projet (R-SYMLINKPROOF)."""
+    current = os.path.realpath(start)
+    while current != os.path.dirname(current):
+        if any(os.path.exists(os.path.join(current, m)) for m in markers):
+            return current
+        current = os.path.dirname(current)
+    raise FileNotFoundError(f"Marqueur {markers} introuvable en remontant depuis {start}")
+
+BASE_DIR = _find_project_root(os.path.dirname(os.path.realpath(__file__)))
 INFRA_SCRIPT = os.path.join(BASE_DIR, 'scripts', 'infra.sh')
 AGENT_SCRIPT = os.path.join(BASE_DIR, 'scripts', 'agent.sh')
 
