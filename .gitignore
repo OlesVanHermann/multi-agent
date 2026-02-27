@@ -61,7 +61,8 @@ pool-requests/specs/*
 pool-requests/tests/*
 !pool-requests/*/.gitkeep
 # Claude profiles (API credentials)
-login/
+login/*
+!login/.gitkeep
 
 web/backend/.pytest_cache/
 web/backend/venv/

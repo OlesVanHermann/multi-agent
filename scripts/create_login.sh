@@ -4,13 +4,13 @@
 #
 # Creates for each login:
 #   - login/<name>/ directory (CLAUDE_CONFIG_DIR)
-#   - prompts/login_<name> file
+#   - prompts/<name>.login file
 #   - Alias in ~/.bashrc_claude
 #   - Interactive claude auth
 #
 # Then assign to agents via symlinks:
-#   ln -sf login_claude1a default.login   # All agents
-#   ln -sf login_claude2a 300.login       # Agent 300 only
+#   ln -sf claude1a.login default.login   # All agents
+#   ln -sf claude2a.login 300.login       # Agent 300 only
 
 set -e
 
@@ -86,13 +86,13 @@ for PROFILE in "$@"; do
         echo -e "${GREEN}[OK]${NC}   Alias: $ALIAS_NAME added to .bashrc_claude"
     fi
 
-    # 3. Create prompts/login_<name> file
-    LOGIN_FILE="$BASE_DIR/prompts/login_${PROFILE}"
+    # 3. Create prompts/<name>.login file
+    LOGIN_FILE="$BASE_DIR/prompts/${PROFILE}.login"
     if [ -f "$LOGIN_FILE" ]; then
-        echo -e "${YELLOW}[WARN]${NC} prompts/login_${PROFILE} already exists"
+        echo -e "${YELLOW}[WARN]${NC} prompts/${PROFILE}.login already exists"
     else
         echo "$PROFILE" > "$LOGIN_FILE"
-        echo -e "${GREEN}[OK]${NC}   Login file: prompts/login_${PROFILE}"
+        echo -e "${GREEN}[OK]${NC}   Login file: prompts/${PROFILE}.login"
     fi
 
     CREATED_PROFILES+=("$PROFILE")
@@ -135,14 +135,14 @@ echo "  Aliases file:   $BASHRC_CLAUDE"
 echo ""
 echo "  Login files created in prompts/:"
 for PROFILE in "${CREATED_PROFILES[@]}"; do
-    echo "    prompts/login_${PROFILE}"
+    echo "    prompts/${PROFILE}.login"
 done
 echo ""
 echo "  Assign to agents via symlinks:"
 echo "    cd $BASE_DIR/prompts"
-echo "    ln -sf login_${1} default.login       # All agents → ${1}"
+echo "    ln -sf ${1}.login default.login       # All agents → ${1}"
 if [ ${#CREATED_PROFILES[@]} -gt 1 ]; then
-    echo "    ln -sf login_${CREATED_PROFILES[1]} 300.login   # Agent 300 → ${CREATED_PROFILES[1]}"
+    echo "    ln -sf ${CREATED_PROFILES[1]}.login 300.login   # Agent 300 → ${CREATED_PROFILES[1]}"
 fi
 echo ""
 echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
