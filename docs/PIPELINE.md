@@ -4,7 +4,7 @@
 
 ```
 ┌─────────────────────┐    ┌─────────────────────┐
-│ MAC 1 (claude2)     │    │ MAC 2 (claude3)     │
+│ MAC 1 (mx6)         │    │ MAC 2 (claude3)     │
 │                     │    │                     │
 │ ~/multi-agent/      │    │ ~/multi-agent/      │
 │   (working copy)    │    │   (working copy)    │
@@ -32,6 +32,8 @@
 │                                                           │
 │ /home/ubuntu/multi-agent-inception/ ← TEST BROKER         │
 │   MA_PREFIX=mi (isolé)                                    │
+│   Dashboard :8090 — Keycloak :8080 requis (pas de        │
+│   fallback SIMPLE_AUTH)                                    │
 │   rsync depuis multi-agent/ après chaque release          │
 └────────────────────┬─────────────────────────────────────┘
                      │ git push origin main --tags
@@ -304,6 +306,45 @@ Pour nettoyer l'historique existant : `git checkout --orphan fresh && git add -A
 
 ---
 
+## Infrastructure (mx9)
+
+### Ports
+
+| Port | Service | Requis |
+|------|---------|--------|
+| **8090** | Dashboard (uvicorn) | Oui |
+| **8080** | Keycloak (Docker) | Oui — pas de fallback, 503 si down |
+| **6379** | Redis | Oui |
+| **9222** | CDP Bridge (Chrome) | Optionnel |
+| **80** | Reverse proxy (`proxy.sh`) | Optionnel |
+
+### Keycloak
+
+Keycloak est **obligatoire** pour l'authentification. Il n'y a plus de fallback SIMPLE_AUTH.
+Si Keycloak est down, le login retourne 503.
+
+```bash
+# Installer Keycloak (Docker auto-installé si absent)
+./framework/install_keycloak.sh
+
+# Changer un mot de passe utilisateur
+./framework/change_passwd_keycloak.sh octave nouveau-mdp
+
+# Vérifier que Keycloak est up
+curl -s http://localhost:8080/health/ready
+```
+
+Données utilisateurs stockées dans le **volume Docker `ma-keycloak-data`** — un `git pull` ou upgrade ne les écrase pas.
+
+### Token refresh
+
+Le frontend gère automatiquement :
+- Check expiration JWT au chargement (token expiré → tente refresh, sinon logout)
+- Auto-refresh 60s avant expiration via `refresh_token`
+- Keycloak 503 → retry 30s en arrière-plan
+
+---
+
 ## Scripts
 
 | Script | Machine | Répertoire | Rôle |
@@ -313,6 +354,8 @@ Pour nettoyer l'historique existant : `git checkout --orphan fresh && git add -A
 | `scripts/hub-cherry-pick.sh` | mx9 | `/home/ubuntu/multi-agent/` | Cherry-pick un patch dans main |
 | `scripts/hub-release.sh` | mx9 | `/home/ubuntu/multi-agent/` | Tests + tag + push GitHub |
 | `hooks/post-receive` | mx9 | `/home/ubuntu/multi-agent.git/` | Log + auto-fetch à la réception |
+| `framework/install_keycloak.sh` | mx9/Mac | `~/multi-agent/` | Installe Docker + Keycloak (Mac/Ubuntu) |
+| `framework/change_passwd_keycloak.sh` | mx9/Mac | `~/multi-agent/` | Change mot de passe Keycloak via API |
 
 ---
 
@@ -345,8 +388,10 @@ Pour nettoyer l'historique existant : `git checkout --orphan fresh && git add -A
          git tag -a v2.5.1 -m "v2.5.1"
          git push hub main --tags
 
-7. mx9 : mettre à jour inception
+7. mx9 : mettre à jour inception (fichiers modifiés + frontend build)
          cp web/backend/server.py /home/ubuntu/multi-agent-inception/web/backend/
+         cd web/frontend && npm run build
+         cp -r dist/* /home/ubuntu/multi-agent-inception/web/frontend/dist/
 
 8. mx9 : nettoyer la branche patch
          git push hub --delete patch/project/fix-websocket-timeout
