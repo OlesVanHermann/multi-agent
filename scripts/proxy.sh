@@ -1,5 +1,5 @@
 #!/bin/bash
-# proxy.sh - Reverse proxy 0.0.0.0:80 → 127.0.0.1:8000
+# proxy.sh - Reverse proxy 0.0.0.0:80 → 127.0.0.1:8090
 # Usage: ./scripts/proxy.sh start   # Start proxy (needs sudo on Linux for port 80)
 #        ./scripts/proxy.sh stop    # Stop proxy
 
@@ -13,7 +13,7 @@ PID_FILE="$LOG_DIR/proxy.pid"
 LISTEN_HOST="0.0.0.0"
 LISTEN_PORT=80
 BACKEND_HOST="127.0.0.1"
-BACKEND_PORT=8000
+BACKEND_PORT=8090
 
 # Colors
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'

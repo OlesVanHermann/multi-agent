@@ -2,7 +2,7 @@
 # Test frontend stability for 2 hours
 # Check every 5 minutes
 
-FRONTEND_URL="http://127.0.0.1:8000"
+FRONTEND_URL="http://127.0.0.1:8090"
 INTERVAL=300  # 5 minutes
 ITERATIONS=24  # 2 hours (24 * 5min = 120min)
 LOG_FILE="$HOME/multi-agent/logs/000/frontend-stability-$(date +%Y%m%d_%H%M%S).log"

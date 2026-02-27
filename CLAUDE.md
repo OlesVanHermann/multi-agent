@@ -81,7 +81,7 @@ cd /chemin/multi-agent
 
 Ce script démarre automatiquement :
 1. Docker, Redis, Keycloak (via `infra.sh`)
-2. Le web dashboard (http://localhost:8000)
+2. Le web dashboard (http://localhost:8090)
 3. L'agent 000 (Architect) avec Claude + bridge
 4. Tous les agents définis dans `prompts/`
 
@@ -131,7 +131,7 @@ multi-agent/
 │   └── monitor.py               # Monitoring
 │
 ├── web/                         # Web dashboard
-│   ├── backend/                 # FastAPI + Uvicorn (port 8000)
+│   ├── backend/                 # FastAPI + Uvicorn (port 8090)
 │   ├── frontend/                # React + Vite
 │   ├── keycloak/                # Auth config (optionnel)
 │   ├── nginx/                   # Reverse proxy config

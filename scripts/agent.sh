@@ -258,7 +258,7 @@ ensure_infra() {
     fi
 
     # Dashboard
-    if ! lsof -iTCP:8000 -sTCP:LISTEN &>/dev/null 2>&1; then
+    if ! lsof -iTCP:8090 -sTCP:LISTEN &>/dev/null 2>&1; then
         log_info "Dashboard not running, starting..."
         "$SCRIPT_DIR/web.sh" start
     fi

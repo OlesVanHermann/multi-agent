@@ -14,7 +14,7 @@ Interface web pour gérer et monitorer les 1000 agents multi-agent sans avoir 10
 │                       (reverse proxy)                                │
 ├─────────────────────────────────────────────────────────────────────┤
 │  /                 → Frontend React (static)                         │
-│  /api/*            → Backend FastAPI :8000                           │
+│  /api/*            → Backend FastAPI :8090                           │
 │  /ws/terminal/*    → Backend → ttyd (WebSocket)                      │
 │  /auth/*           → Keycloak :8080                                  │
 └─────────────────────────────────────────────────────────────────────┘
@@ -23,7 +23,7 @@ Interface web pour gérer et monitorer les 1000 agents multi-agent sans avoir 10
                │                │                │
         ┌──────▼──────┐  ┌──────▼──────┐  ┌──────▼──────┐
         │  Keycloak   │  │   FastAPI   │  │    Redis    │
-        │    :8080    │  │    :8000    │  │    :6379    │
+        │    :8080    │  │    :8090    │  │    :6379    │
         │             │  │             │  │             │
         │ - Auth      │  │ - API REST  │  │ - Streams   │
         │ - JWT       │  │ - WebSocket │  │ - Status    │

@@ -30,8 +30,8 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 do_start() {
     mkdir -p "$LOG_DIR"
 
-    if lsof -iTCP:8000 -sTCP:LISTEN &>/dev/null 2>&1; then
-        log_ok "Dashboard already running on :8000"
+    if lsof -iTCP:8090 -sTCP:LISTEN &>/dev/null 2>&1; then
+        log_ok "Dashboard already running on :8090"
         return
     fi
 
@@ -64,22 +64,19 @@ do_start() {
         fi
     fi
 
-    # Simple auth fallback (used when Keycloak client is not configured)
-    SIMPLE_AUTH="${SIMPLE_AUTH:-octave:changeme:admin,operator:changeme:operator,viewer:changeme:viewer}"
-
     # Start uvicorn
     log_info "Starting dashboard..."
     cd "$WEB_DIR/backend"
-    MA_PREFIX=$MA_PREFIX SIMPLE_AUTH="$SIMPLE_AUTH" \
-        python3 -m uvicorn server:app --host 127.0.0.1 --port 8000 \
+    MA_PREFIX=$MA_PREFIX \
+        python3 -m uvicorn server:app --host 127.0.0.1 --port 8090 \
         >> "$LOG_DIR/dashboard.log" 2>&1 &
     DASHBOARD_PID=$!
     echo "$DASHBOARD_PID" > "$PID_FILE"
     cd "$BASE_DIR"
     sleep 2
 
-    if lsof -iTCP:8000 -sTCP:LISTEN &>/dev/null 2>&1; then
-        log_ok "Dashboard started on http://127.0.0.1:8000 (PID: $DASHBOARD_PID)"
+    if lsof -iTCP:8090 -sTCP:LISTEN &>/dev/null 2>&1; then
+        log_ok "Dashboard started on http://127.0.0.1:8090 (PID: $DASHBOARD_PID)"
     else
         log_warn "Dashboard may not have started. Check $LOG_DIR/dashboard.log"
     fi
@@ -97,11 +94,11 @@ do_stop() {
     fi
     # 2. Kill all uvicorn processes
     pkill -f "uvicorn server:app" 2>/dev/null && log_ok "Killed uvicorn processes" || true
-    # 3. Force-kill anything still holding port 8000
+    # 3. Force-kill anything still holding port 8090
     local pids
-    pids=$(lsof -ti:8000 2>/dev/null || true)
+    pids=$(lsof -ti:8090 2>/dev/null || true)
     if [ -n "$pids" ]; then
-        kill -9 $pids 2>/dev/null && log_ok "Force-killed stale processes on :8000" || true
+        kill -9 $pids 2>/dev/null && log_ok "Force-killed stale processes on :8090" || true
     fi
     sleep 1
 }
@@ -127,7 +124,7 @@ do_rebuild() {
 show_help() {
     echo "Usage: $0 <start|stop|rebuild>"
     echo ""
-    echo "  $0 start     Build frontend (if needed) + start uvicorn on :8000"
+    echo "  $0 start     Build frontend (if needed) + start uvicorn on :8090"
     echo "  $0 stop      Stop uvicorn"
     echo "  $0 rebuild   Stop + force rebuild frontend + start"
 }

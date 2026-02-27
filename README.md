@@ -140,7 +140,7 @@ export CLAUDE_CONFIG_DIR=~/.claude-profiles/mon-profil
 ./scripts/agent.sh stop 300      # Arrêter un agent
 
 # ── Dashboard web ──
-./scripts/web.sh start           # Build frontend (si besoin) + uvicorn :8000
+./scripts/web.sh start           # Build frontend (si besoin) + uvicorn :8090
 ./scripts/web.sh stop            # Arrêter uvicorn
 ./scripts/web.sh rebuild         # Stop + force rebuild frontend + start
 
@@ -149,7 +149,7 @@ export CLAUDE_CONFIG_DIR=~/.claude-profiles/mon-profil
 ./scripts/watch.sh 300           # Voir les réponses en temps réel
 
 # ── Proxy (optionnel) ──
-./scripts/proxy.sh start         # Reverse proxy 0.0.0.0:80 → 127.0.0.1:8000
+./scripts/proxy.sh start         # Reverse proxy 0.0.0.0:80 → 127.0.0.1:8090
 ./scripts/proxy.sh stop          # Arrêter le proxy
 
 # ── Monitoring ──
@@ -188,7 +188,7 @@ multi-agent/
 │   ├── infra.sh             # start/stop infrastructure + Agent 000
 │   ├── agent.sh             # start/stop agents workers
 │   ├── web.sh               # start/stop/rebuild dashboard
-│   ├── proxy.sh             # reverse proxy :80 → :8000
+│   ├── proxy.sh             # reverse proxy :80 → :8090
 │   ├── send.sh              # Envoyer message à un agent
 │   ├── watch.sh             # Voir réponses en temps réel
 │   ├── hub-receive.sh       # Lister patches reçus

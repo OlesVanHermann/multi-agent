@@ -20,9 +20,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 import json
-import base64
-import hashlib
-import hmac
 
 import redis.asyncio as redis
 import httpx
@@ -44,26 +41,6 @@ async def _run_subprocess(cmd, **kwargs):
     return await loop.run_in_executor(
         _tmux_executor, lambda: subprocess.run(cmd, **kwargs)
     )
-
-# Simple auth fallback (only used when Keycloak is unavailable)
-# Empty by default — all auth goes through Keycloak
-# For local dev without Keycloak, set SIMPLE_AUTH env var:
-#   SIMPLE_AUTH="user:pass:admin" python3 -m uvicorn server:app ...
-SIMPLE_AUTH_USERS = {}
-_simple_auth = os.environ.get("SIMPLE_AUTH", "")
-if _simple_auth:
-    for entry in _simple_auth.split(","):
-        parts = entry.strip().split(":")
-        if len(parts) >= 2:
-            SIMPLE_AUTH_USERS[parts[0]] = {
-                "password": parts[1],
-                "email": f"{parts[0]}@multi-agent.local",
-                "name": parts[0].capitalize(),
-                "roles": [parts[2]] if len(parts) > 2 else ["viewer"]
-            }
-
-# Secret for signing simple tokens
-_TOKEN_SECRET = hashlib.sha256(b"multi-agent-local-dev").hexdigest()
 
 # Frontend static files path
 FRONTEND_DIR = os.environ.get("FRONTEND_DIR", "../frontend/dist")
@@ -298,7 +275,7 @@ async def _refresh_cache_once():
         for did, d in x45_dirs:
             tri = {"worker": did}
             for f in d.glob(f"{did}-*-system.md"):
-                suffix = f.stem.replace(f"{did}-", "").replace("-system", "")
+                suffix = f.stem.replace(f"{did}-", "", 1).replace("-system", "")
                 if not suffix or not suffix[0].isdigit():
                     continue
                 role_digit = suffix[0]
@@ -1010,84 +987,10 @@ async def get_agent_output(agent_id: str, lines: int = 500):
 
 # === Keycloak Proxy ===
 
-def _make_simple_token(username: str, user_info: dict) -> str:
-    """Create a simple base64-encoded JWT-like token for local auth."""
-    header = base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()).decode().rstrip("=")
-    payload_data = {
-        "sub": username,
-        "preferred_username": username,
-        "email": user_info["email"],
-        "name": user_info["name"],
-        "roles": user_info["roles"],
-        "realm_access": {"roles": user_info["roles"]},
-        "iat": int(time.time()),
-        "exp": int(time.time()) + 86400,
-    }
-    payload = base64.urlsafe_b64encode(json.dumps(payload_data).encode()).decode().rstrip("=")
-    sig = hmac.new(_TOKEN_SECRET.encode(), f"{header}.{payload}".encode(), hashlib.sha256).hexdigest()[:16]
-    return f"{header}.{payload}.{sig}"
-
-
 @app.api_route("/auth/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 async def proxy_keycloak(request: Request, path: str):
-    """Auth endpoint: tries Keycloak first, falls back to simple local auth."""
+    """Auth endpoint: proxy to Keycloak. Returns 503 if Keycloak is unavailable."""
 
-    # Handle token requests locally if Keycloak is unavailable
-    if "openid-connect/token" in path and request.method == "POST":
-        body = await request.body()
-        params = dict(x.split("=", 1) for x in body.decode().split("&") if "=" in x)
-
-        from urllib.parse import unquote_plus
-        username = unquote_plus(params.get("username", ""))
-        password = unquote_plus(params.get("password", ""))
-
-        # Try Keycloak first
-        url = f"{KEYCLOAK_URL}/{path}"
-        headers = {k: v for k, v in request.headers.items() if k.lower() not in ["host"]}
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.request(
-                    method="POST", url=url, headers=headers, content=body,
-                    params=request.query_params, timeout=5.0
-                )
-                # Accept Keycloak response if client is configured
-                # Fall through to simple auth on invalid_client (realm/client not set up)
-                if response.status_code < 500:
-                    try:
-                        resp_body = response.json()
-                        if resp_body.get("error") == "invalid_client":
-                            pass  # Fall through to simple auth
-                        else:
-                            return Response(content=response.content, status_code=response.status_code,
-                                            headers=dict(response.headers))
-                    except Exception:
-                        return Response(content=response.content, status_code=response.status_code,
-                                        headers=dict(response.headers))
-        except Exception:
-            pass  # Keycloak not available, use simple auth
-
-        # Simple local auth fallback
-        user_info = SIMPLE_AUTH_USERS.get(username)
-        if user_info and user_info["password"] == password:
-            token = _make_simple_token(username, user_info)
-            return Response(
-                content=json.dumps({
-                    "access_token": token,
-                    "refresh_token": token,
-                    "token_type": "Bearer",
-                    "expires_in": 86400,
-                }),
-                status_code=200,
-                headers={"Content-Type": "application/json"},
-            )
-        else:
-            return Response(
-                content=json.dumps({"error": "invalid_grant", "error_description": "Invalid credentials"}),
-                status_code=401,
-                headers={"Content-Type": "application/json"},
-            )
-
-    # For other auth paths, proxy to Keycloak
     url = f"{KEYCLOAK_URL}/{path}"
     body = await request.body()
     headers = {k: v for k, v in request.headers.items() if k.lower() not in ["host"]}
@@ -1101,7 +1004,11 @@ async def proxy_keycloak(request: Request, path: str):
             return Response(content=response.content, status_code=response.status_code,
                             headers=dict(response.headers))
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Keycloak proxy error: {str(e)}")
+            return Response(
+                content=json.dumps({"error": "service_unavailable", "error_description": "Keycloak is not reachable. Start Keycloak first."}),
+                status_code=503,
+                headers={"Content-Type": "application/json"},
+            )
 
 
 # === WebSocket ===
@@ -1313,4 +1220,4 @@ if os.path.exists(frontend_path):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8090)
