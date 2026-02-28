@@ -32,7 +32,7 @@
 │                                                           │
 │ /home/ubuntu/multi-agent-inception/ ← TEST BROKER         │
 │   MA_PREFIX=mi (isolé)                                    │
-│   Dashboard :8090 — Keycloak :8080 requis (pas de        │
+│   Dashboard :8050 — Keycloak :8080 requis (pas de        │
 │   fallback SIMPLE_AUTH)                                    │
 │   rsync depuis multi-agent/ après chaque release          │
 └────────────────────┬─────────────────────────────────────┘
@@ -312,7 +312,7 @@ Pour nettoyer l'historique existant : `git checkout --orphan fresh && git add -A
 
 | Port | Service | Requis |
 |------|---------|--------|
-| **8090** | Dashboard (uvicorn) | Oui |
+| **8050** | Dashboard (uvicorn) | Oui |
 | **8080** | Keycloak (Docker) | Oui — pas de fallback, 503 si down |
 | **6379** | Redis | Oui |
 | **9222** | CDP Bridge (Chrome) | Optionnel |

@@ -213,7 +213,7 @@ do_start() {
     echo ""
     echo "  Redis:     $(redis-cli ping 2>/dev/null || echo 'NOT RUNNING')"
     echo "  CDP Bridge: $(curl -s http://127.0.0.1:9222/health >/dev/null 2>&1 && echo 'OK (port 9222)' || echo 'NOT RUNNING')"
-    echo "  Dashboard: http://localhost:8090"
+    echo "  Dashboard: http://localhost:8050"
     echo "  Agent 000: tmux attach -t $SESSION_NAME"
     echo ""
     echo "  Stop:      ./scripts/infra.sh stop"

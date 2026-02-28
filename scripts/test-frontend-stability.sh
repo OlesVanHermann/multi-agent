@@ -2,7 +2,7 @@
 # Test frontend stability for 2 hours
 # Check every 5 minutes
 
-FRONTEND_URL="http://127.0.0.1:8090"
+FRONTEND_URL="http://127.0.0.1:8050"
 INTERVAL=300  # 5 minutes
 ITERATIONS=24  # 2 hours (24 * 5min = 120min)
 LOG_FILE="$HOME/multi-agent/logs/000/frontend-stability-$(date +%Y%m%d_%H%M%S).log"
@@ -36,7 +36,7 @@ for i in $(seq 1 $ITERATIONS); do
     echo "  ⏱ Response time: ${response_time}s" | tee -a "$LOG_FILE"
 
     # Test 4: Process check
-    if pgrep -f "uvicorn server:app" > /dev/null; then
+    if pgrep -f "uvicorn multi_agent.backend:app" > /dev/null; then
         echo "  ✓ Process running" | tee -a "$LOG_FILE"
     else
         echo "  ✗ Process NOT running" | tee -a "$LOG_FILE"

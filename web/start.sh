@@ -30,14 +30,14 @@ if [ "$MODE" = "dev" ]; then
     npm run dev &
     VITE_PID=$!
 
-    echo "[backend] Starting FastAPI on :8090..."
+    echo "[backend] Starting FastAPI on :8050..."
     cd "$SCRIPT_DIR/backend"
-    MA_PREFIX="${MA_PREFIX:-A}" python3 -m uvicorn server:app --host 127.0.0.1 --port 8090 --reload &
+    MA_PREFIX="${MA_PREFIX:-A}" python3 -m uvicorn multi_agent.backend:app --host 127.0.0.1 --port 8050 --reload &
     BACKEND_PID=$!
 
     echo ""
     echo "Dashboard: http://localhost:3000"
-    echo "API:       http://localhost:8090"
+    echo "API:       http://localhost:8050"
     echo ""
     echo "Press Ctrl+C to stop"
 
@@ -55,9 +55,9 @@ else
     echo "[frontend] Building..."
     npm run build
 
-    echo "[backend] Starting FastAPI on :8090..."
+    echo "[backend] Starting FastAPI on :8050..."
     cd "$SCRIPT_DIR/backend"
-    MA_PREFIX="${MA_PREFIX:-A}" python3 -m uvicorn server:app --host 127.0.0.1 --port 8090
+    MA_PREFIX="${MA_PREFIX:-A}" python3 -m uvicorn multi_agent.backend:app --host 127.0.0.1 --port 8050
 
     # Backend serves frontend from ../frontend/dist
 fi

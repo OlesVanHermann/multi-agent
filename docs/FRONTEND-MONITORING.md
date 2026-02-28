@@ -24,7 +24,7 @@ nohup ./scripts/test-frontend-stability.sh > /dev/null 2>&1 &
 
 Le script effectue **24 vérifications** (toutes les 5 minutes pendant 2 heures) :
 
-1. **HTTP GET** : Le frontend répond à `http://127.0.0.1:8090`
+1. **HTTP GET** : Le frontend répond à `http://127.0.0.1:8050`
 2. **API** : L'endpoint `/api/agents` fonctionne
 3. **Response time** : Temps de réponse en secondes
 4. **Process** : Le processus uvicorn tourne
