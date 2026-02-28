@@ -1,5 +1,4 @@
 import React, { useState } from 'react'
-import { AGENT_LABELS } from './AgentGrid'
 
 function getStatusColor(status) {
   switch (status) {
@@ -14,9 +13,10 @@ function getStatusColor(status) {
   }
 }
 
-function getShortLabel(id) {
-  if (AGENT_LABELS[id]) return AGENT_LABELS[id]
-  return 'Agent ' + id
+function getShortLabel(id, agentNames) {
+  const baseId = id?.split('-')[0]
+  if (agentNames[baseId]) return `${id} — ${agentNames[baseId]}`
+  return id
 }
 
 function AgentCell({ id, label, agent, isSelected, onClick, onHover, onLeave, big }) {
@@ -60,7 +60,7 @@ function fp(agentId, type) {
   return `prompts/${parent}/${agentId}-${type}.md`
 }
 
-function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAgentClick, onFileClick }) {
+function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAgentClick, onFileClick, agentNames = {} }) {
   const [selectedTriangle, setSelectedTriangle] = useState(null)
   const [selectedSatellite, setSelectedSatellite] = useState(null)
   const [hoveredTop, setHoveredTop] = useState(null)
@@ -117,12 +117,12 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
     return null
   }
 
-  const topLabel = hoveredTop ? getShortLabel(hoveredTop) : null
+  const topLabel = hoveredTop ? getShortLabel(hoveredTop, agentNames) : null
 
   const hoverLabel = (h) => {
     if (!h) return null
     if (typeof h === 'string' && h.includes('/')) return h
-    return getShortLabel(h)
+    return getShortLabel(h, agentNames)
   }
 
   const mkCell = (id, big, hoverSet) => ({

@@ -258,16 +258,32 @@ async def _refresh_cache_once():
 
     agents.sort(key=lambda a: tuple(int(p) for p in a["id"].split("-")))
 
-    # --- Detect x45 mode ---
-    # A directory is x45 if it starts with 3 digits and contains {digits}-system.md
+    # --- Detect x45 mode + extract agent names ---
     prompts_dir = BASE_DIR / "prompts"
     x45_dirs = []  # list of (numeric_id, dir_path)
+    agent_names = {}  # id -> human name (e.g. "301" -> "build frontend")
+
+    # From directories: 301-build-frontend/
     for d in prompts_dir.iterdir():
         if not d.is_dir():
             continue
-        m = re.match(r'^(\d{3})', d.name)
-        if m and (d / f"{m.group(1)}-system.md").exists():
-            x45_dirs.append((m.group(1), d))
+        m = re.match(r'^(\d{3})(?:-(.+))?$', d.name)
+        if not m:
+            continue
+        did = m.group(1)
+        if m.group(2):
+            agent_names[did] = m.group(2).replace("-", " ")
+        if (d / f"{did}-system.md").exists():
+            x45_dirs.append((did, d))
+
+    # From flat .md files: 900-architect-chat.md (only if not already named by dir)
+    for f in prompts_dir.iterdir():
+        if not f.is_file() or f.suffix != ".md":
+            continue
+        m = re.match(r'^(\d{3})-(.+)\.md$', f.name)
+        if m and m.group(1) not in agent_names:
+            agent_names[m.group(1)] = m.group(2).replace("-", " ")
+
     mode = "x45" if x45_dirs else "pipeline"
 
     triangles = {}
@@ -300,6 +316,7 @@ async def _refresh_cache_once():
         _cache["health"] = health
         _cache["mode"] = mode
         _cache["triangles"] = triangles
+        _cache["agent_names"] = agent_names
         _cache["timestamp"] = now
 
 
@@ -716,6 +733,8 @@ async def list_agents():
         result["mode"] = _cache["mode"]
     if _cache.get("triangles"):
         result["triangles"] = _cache["triangles"]
+    if _cache.get("agent_names"):
+        result["agent_names"] = _cache["agent_names"]
     return result
 
 
@@ -1329,6 +1348,8 @@ async def websocket_status(websocket: WebSocket):
                 payload["mode"] = _cache["mode"]
             if _cache.get("triangles"):
                 payload["triangles"] = _cache["triangles"]
+            if _cache.get("agent_names"):
+                payload["agent_names"] = _cache["agent_names"]
             payload_str = json.dumps(payload, sort_keys=True)
 
             # Only send if data changed

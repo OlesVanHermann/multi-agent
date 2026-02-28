@@ -1,54 +1,8 @@
 import React, { useState } from 'react'
 
-// Agent descriptions for tooltips
-export const AGENT_LABELS = {
-  '100': 'Master Studies - Orchestration pipeline',
-  '300': 'Crawl - Téléchargement site web',
-  '301': 'Extract Index - Structure & types de pages',
-  '320': 'Templates - Analyse templates site',
-  '321': 'Sémantique - Analyse sémantique contenu',
-  '322': 'Liens - Maillage interne & countries.json',
-  '323': 'Agrégation SEO Technique',
-  '330': 'Trustpilot - Avis clients',
-  '331': 'Reddit - Discussions & mentions',
-  '332': 'WebHostingTalk - Forum hébergement',
-  '333': 'G2 - Avis B2B',
-  '334': 'YouTube - Chaîne & vidéos',
-  '335': 'Forums - Autres forums',
-  '336': 'Agrégation Réputation',
-  '340': 'PageSpeed - Performance web',
-  '341': 'Latence - Tests réseau multi-pays',
-  '342': 'BGP - Infrastructure réseau & AS',
-  '343': 'PTR - Reverse DNS',
-  '344': 'Pricing - Tarifs multi-pays',
-  '345': 'Infrastructure - Datacenters & tech',
-  '346': 'Sécurité - Audit sécurité',
-  '347': 'Agrégation Performance',
-  '348': 'Price Tracker - Suivi prix',
-  '349': 'PTR Analysis - Analyse reverse DNS',
-  '350': 'Support - Analyse support client',
-  '351': 'Offres Emploi - Recrutement',
-  '352': 'Key People - Dirigeants',
-  '353': 'LinkedIn - Profil entreprise',
-  '354': 'Agrégation Entreprise',
-  '355': 'X.com - Présence Twitter/X',
-  '356': 'News - Actualités presse',
-  '357': 'Mastodon - Présence Mastodon',
-  '360': 'SimilarWeb - Trafic & audience',
-  '364': 'Ahrefs - Backlinks & SEO',
-  '368': 'Ubersuggest - Mots-clés',
-  '373': 'SEO Google - Visibilité SERP',
-  '374': 'Agrégation SEO',
-  '390': 'Rapport Final - Génération rapport',
-  '391': 'Diff JSON - Comparaison données',
-  '392': 'Diff Changes - Alertes changements',
-  '393': 'Diff History - Historique évolutions',
-  '600': 'Release Studies - Publication PDF',
-  '601': 'Diff - Release comparaisons',
-  '900': 'Architect - Configuration système',
-}
+// Agent names come from the backend (extracted from prompt directory names)
 
-function AgentGrid({ agents, selectedAgent, controlAgent, onAgentClick }) {
+function AgentGrid({ agents, selectedAgent, controlAgent, onAgentClick, agentNames = {} }) {
   const [hoveredAgent, setHoveredAgent] = useState(null)
 
   // Get status color based on server-reported status
@@ -70,8 +24,10 @@ function AgentGrid({ agents, selectedAgent, controlAgent, onAgentClick }) {
 
   // Label to display at top
   const displayId = hoveredAgent || selectedAgent || controlAgent
+  const baseId = displayId?.split('-')[0]
+  const name = agentNames[baseId] || ''
   const displayLabel = displayId
-    ? `${displayId} - ${AGENT_LABELS[displayId] || 'Agent'}`
+    ? name ? `${displayId} — ${name}` : displayId
     : null
 
   // Group agents into rows: [000,100] [200] [3xx] [400,500,600,700,800] [900+]

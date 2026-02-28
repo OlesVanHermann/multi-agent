@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import AgentGrid, { AGENT_LABELS } from './components/AgentGrid'
+import AgentGrid from './components/AgentGrid'
 import AgentSidebarX45 from './components/AgentSidebarX45'
 import Terminal from './components/Terminal'
 import FileViewer from './components/FileViewer'
@@ -31,6 +31,7 @@ function App() {
   const [agents, setAgents] = useState([])
   const [mode, setMode] = useState('pipeline')
   const [triangles, setTriangles] = useState({})
+  const [agentNames, setAgentNames] = useState({})
   const [selectedAgent, setSelectedAgent] = useState(null)
   const [controlPlane, setControlPlane] = useState('000') // Super-Master by default
   const [activePanel, setActivePanel] = useState('control') // 'control' or 'agent'
@@ -54,6 +55,7 @@ function App() {
           setLastUpdate(new Date())
           if (data.mode) setMode(data.mode)
           if (data.triangles) setTriangles(data.triangles)
+          if (data.agent_names) setAgentNames(data.agent_names)
         }
       } catch (err) {
         console.error('Failed to fetch agents:', err)
@@ -100,6 +102,7 @@ function App() {
             setLastUpdate(new Date())
             if (data.mode) setMode(data.mode)
             if (data.triangles) setTriangles(data.triangles)
+            if (data.agent_names) setAgentNames(data.agent_names)
           }
         }
       }
@@ -210,6 +213,7 @@ function App() {
               controlAgent={controlPlane}
               onAgentClick={handleAgentClick}
               onFileClick={handleFileClick}
+              agentNames={agentNames}
             />
           ) : (
             <AgentGrid
@@ -217,6 +221,7 @@ function App() {
               selectedAgent={selectedAgent}
               controlAgent={controlPlane}
               onAgentClick={handleAgentClick}
+              agentNames={agentNames}
             />
           )}
         </section>
@@ -227,7 +232,7 @@ function App() {
           onMouseEnter={() => setActivePanel('control')}
         >
           <div className="panel-header">
-            <h2>CONTROL ({controlPlane}) — {AGENT_LABELS[controlPlane] || getAgentType(controlPlane)}</h2>
+            <h2>CONTROL ({controlPlane}) — {agentNames[controlPlane.split('-')[0]] || getAgentType(controlPlane)}</h2>
           </div>
           <Terminal agentId={controlPlane} focused={activePanel === 'control'} pollInterval={agentPoll} />
         </section>
@@ -238,7 +243,7 @@ function App() {
           onMouseEnter={() => setActivePanel('agent')}
         >
           <div className="panel-header">
-            <h2>AGENT {selectedAgent ? `(${selectedAgent}) — ${AGENT_LABELS[selectedAgent] || getAgentType(selectedAgent)}` : '---'}</h2>
+            <h2>AGENT {selectedAgent ? `(${selectedAgent}) — ${agentNames[selectedAgent.split('-')[0]] || getAgentType(selectedAgent)}` : '---'}</h2>
           </div>
           <LoginModelPanel hidden={!showLoginModel} />
           {!showLoginModel && (selectedFile ? (
