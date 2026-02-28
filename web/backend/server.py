@@ -146,7 +146,7 @@ async def _refresh_cache_once():
             'id="${s#' + MA_PREFIX + '-agent-}"; '
             'out=$(tmux capture-pane -t "$s:0.0" -p -J -S -30 2>/dev/null); '
             'busy=0; compacted=0; ctx=-1; done_compacting=0; prompt_loaded=0; ctx_limit=0; api_error=0; model_change=0; '
-            'if echo "$out" | grep "bypass permissions" | tail -1 | grep -q "esc to interrupt"; then busy=1; fi; '
+            'if echo "$out" | grep "bypass permissions" | tail -1 | grep -q "esc"; then busy=1; fi; '
             'if echo "$out" | grep -qiE "compacting conversation"; then compacted=1; fi; '
             'if echo "$out" | grep -qi "Conversation compacted"; then done_compacting=1; fi; '
             'if [ "$done_compacting" -eq 1 ] && echo "$out" | grep -qE "prompts/[0-9]+/${id}[.-]|prompts/${id}-"; then prompt_loaded=1; fi; '
