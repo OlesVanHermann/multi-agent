@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 
 function getStatusColor(status) {
   switch (status) {
-    case 'busy': return 'green'
+    case 'busy': return 'lightgreen'
     case 'active': case 'idle': case 'stale': return 'gray'
     case 'starting': case 'waiting_approval': return 'blue'
     case 'context_warning': return 'orange'

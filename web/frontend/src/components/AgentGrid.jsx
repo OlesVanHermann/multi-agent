@@ -8,7 +8,7 @@ function AgentGrid({ agents, selectedAgent, controlAgent, onAgentClick, agentNam
   // Get status color based on server-reported status
   const getStatusColor = (status) => {
     switch (status) {
-      case 'busy': return 'green'
+      case 'busy': return 'lightgreen'
       case 'active': return 'gray'
       case 'idle': return 'gray'
       case 'stale': return 'gray'

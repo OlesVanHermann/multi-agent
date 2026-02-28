@@ -342,10 +342,31 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
         {syncing && <span className="sync-indicator"> ⟳</span>}
         {paused && <span className="pause-indicator"> ⏸</span>}
       </div>
-      <pre className="terminal-output" ref={outputRef} onScroll={handleScroll}
-        onMouseDown={handleOutputMouseDown} onMouseUp={handleOutputMouseUp}>
-        {output}
-      </pre>
+      <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        <pre className="terminal-output" ref={outputRef} onScroll={handleScroll}
+          onMouseDown={handleOutputMouseDown} onMouseUp={handleOutputMouseUp}>
+          {output}
+        </pre>
+        {paused && (
+          <button
+            onClick={() => { resumeSync() }}
+            style={{
+              position: 'absolute',
+              bottom: '0.5rem',
+              right: '1rem',
+              background: 'rgba(30,30,50,0.85)',
+              border: '1px solid var(--border-color)',
+              color: 'var(--text-secondary)',
+              cursor: 'pointer',
+              fontSize: '1.1rem',
+              borderRadius: '4px',
+              padding: '0.15rem 0.5rem',
+              zIndex: 10,
+            }}
+            title="Scroll to bottom"
+          >{'\u2193'}</button>
+        )}
+      </div>
       <div className="terminal-input">
         <span className="prompt">❯</span>
         <textarea

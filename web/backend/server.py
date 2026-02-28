@@ -145,8 +145,12 @@ async def _refresh_cache_once():
             'for s in $(tmux ls -F "#{session_name}" 2>/dev/null | grep "^' + MA_PREFIX + '-agent-"); do '
             'id="${s#' + MA_PREFIX + '-agent-}"; '
             'out=$(tmux capture-pane -t "$s:0.0" -p -J -S -30 2>/dev/null); '
-            'busy=0; compacted=0; ctx=-1; done_compacting=0; prompt_loaded=0; ctx_limit=0; api_error=0; model_change=0; '
-            'if echo "$out" | grep "bypass permissions" | tail -1 | grep -q "esc"; then busy=1; fi; '
+            'busy=0; has_bashes=0; has_down=0; plan_mode=0; compacted=0; ctx=-1; done_compacting=0; prompt_loaded=0; ctx_limit=0; api_error=0; model_change=0; '
+            'bp_line=$(echo "$out" | grep "bypass permissions" | tail -1); '
+            'if echo "$bp_line" | grep -q "bashes"; then has_bashes=1; fi; '
+            'if echo "$bp_line" | grep -q "esc"; then busy=1; fi; '
+            'if echo "$bp_line" | grep -q "↓"; then has_down=1; fi; '
+            'if echo "$out" | grep -q "plan mode on"; then plan_mode=1; fi; '
             'if echo "$out" | grep -qiE "compacting conversation"; then compacted=1; fi; '
             'if echo "$out" | grep -qi "Conversation compacted"; then done_compacting=1; fi; '
             'if [ "$done_compacting" -eq 1 ] && echo "$out" | grep -qE "prompts/[0-9]+/${id}[.-]|prompts/${id}-"; then prompt_loaded=1; fi; '
@@ -156,7 +160,7 @@ async def _refresh_cache_once():
             'api_err_count=$(echo "$out" | grep -c "API Error:" 2>/dev/null || echo 0); '
             'if [ "$api_err_count" -ge 3 ]; then api_error=1; fi; '
             'if echo "$out" | grep -q "/model "; then model_change=1; fi; '
-            'echo "$id:$busy:$compacted:$ctx:$done_compacting:$prompt_loaded:$ctx_limit:$api_error:$model_change"; '
+            'echo "$id:$busy:$compacted:$ctx:$done_compacting:$prompt_loaded:$ctx_limit:$api_error:$model_change:$has_bashes:$plan_mode:$has_down"; '
             'done'
         )
         result = await _run_subprocess(
@@ -173,6 +177,9 @@ async def _refresh_cache_once():
                 ctx_limit = parts[6] == '1' if len(parts) >= 7 else False
                 api_error = parts[7] == '1' if len(parts) >= 8 else False
                 model_change = parts[8] == '1' if len(parts) >= 9 else False
+                has_bashes = parts[9] == '1' if len(parts) >= 10 else False
+                plan_mode = parts[10] == '1' if len(parts) >= 11 else False
+                has_down = parts[11] == '1' if len(parts) >= 12 else False
                 agent_states[parts[0]] = {
                     'busy': parts[1] == '1',
                     'compacted': parts[2] == '1',
@@ -182,6 +189,9 @@ async def _refresh_cache_once():
                     'context_limit': ctx_limit,
                     'api_error': api_error,
                     'model_change': model_change,
+                    'has_bashes': has_bashes,
+                    'has_down': has_down,
+                    'plan_mode': plan_mode,
                 }
     except Exception as e:
         print(f"[cache] tmux states error: {e}")
@@ -247,9 +257,11 @@ async def _refresh_cache_once():
         if override:
             status = override
 
+        state = agent_states.get(agent_id, {})
         agents.append({
             "id": agent_id,
             "status": status,
+            "has_down": state.get('has_down', False),
             "last_seen": int(data.get("last_seen", 0)) or now,
             "queue_size": int(data.get("queue_size", 0)),
             "tasks_completed": int(data.get("tasks_completed", 0)),
@@ -625,14 +637,19 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
                     await redis_pool.set(f"{MA_PREFIX}:agent:{aid}:reload_sent", str(now), ex=600)
             elif done_compacting:
                 # "Conversation compacted" visible → compacting finished
-                if state.get('busy'):
+                if state.get('has_bashes'):
+                    overrides[aid] = "has_bashes"
+                elif state.get('busy'):
                     overrides[aid] = "busy"
-                # else: no override = green (idle)
-            elif 1 <= ctx <= 5:
-                # Orange: context running low (1-5%)
-                overrides[aid] = "context_warning"
+                # else: no override (idle)
+            elif state.get('plan_mode'):
+                overrides[aid] = "plan_mode"
+            elif state.get('has_bashes'):
+                overrides[aid] = "has_bashes"
             elif state.get('busy'):
                 overrides[aid] = "busy"
+            elif 1 <= ctx <= 10:
+                overrides[aid] = "context_warning"
 
         # Step 3: After compacting finished, verify prompt retention
         # Conditions: flag exists + not compacting anymore + ctx != 0 (context refreshed) + waited >= 80s

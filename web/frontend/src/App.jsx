@@ -139,6 +139,7 @@ function App() {
 
   const [selectedFile, setSelectedFile] = useState(null)
   const [showLoginModel, setShowLoginModel] = useState(false)
+  const [showColors, setShowColors] = useState(false)
 
   const handleAgentClick = (agentId) => {
     setSelectedFile(null) // clear file view when selecting an agent
@@ -173,9 +174,15 @@ function App() {
         <h1>MULTI-AGENT DASHBOARD</h1>
         <button
           className={`config-btn ${showLoginModel ? 'config-btn-active' : ''}`}
-          onClick={() => setShowLoginModel(!showLoginModel)}
+          onClick={() => { setShowLoginModel(!showLoginModel); setShowColors(false) }}
         >
           Login &amp; Model
+        </button>
+        <button
+          className={`config-btn ${showColors ? 'config-btn-active' : ''}`}
+          onClick={() => { setShowColors(!showColors); setShowLoginModel(false) }}
+        >
+          Couleurs
         </button>
         <div className="header-right">
           <span className="poll-group">
@@ -246,7 +253,34 @@ function App() {
             <h2>AGENT {selectedAgent ? `(${selectedAgent}) — ${agentNames[selectedAgent.split('-')[0]] || getAgentType(selectedAgent)}` : '---'}</h2>
           </div>
           <LoginModelPanel hidden={!showLoginModel} />
-          {!showLoginModel && (selectedFile ? (
+          {showColors && (
+            <div className="color-legend">
+              <h3>Couleurs des agents</h3>
+              <table>
+                <thead>
+                  <tr><th>Couleur</th><th>Statut</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td><span className="agent-cell lightgreen" style={{width:28,height:16,display:'inline-flex',fontSize:'0.5rem'}}>345</span></td><td>busy - travaille activement</td></tr>
+                  <tr><td><span className="agent-cell gray" style={{width:28,height:16,display:'inline-flex',fontSize:'0.5rem'}}>200</span></td><td>active / idle / stale</td></tr>
+                  <tr><td><span className="agent-cell blue" style={{width:28,height:16,display:'inline-flex',fontSize:'0.5rem'}}>000</span></td><td>starting / waiting_approval</td></tr>
+                  <tr><td><span className="agent-cell orange" style={{width:28,height:16,display:'inline-flex',fontSize:'0.5rem'}}>500</span></td><td>context_warning / error / blocked</td></tr>
+                  <tr><td><span className="agent-cell red" style={{width:28,height:16,display:'inline-flex',fontSize:'0.5rem'}}>100</span></td><td>context_compacted (pulsing)</td></tr>
+                  <tr><td><span className="agent-cell darkgray" style={{width:28,height:16,display:'inline-flex',fontSize:'0.5rem'}}>600</span></td><td>stopped</td></tr>
+                </tbody>
+              </table>
+              <h3 style={{marginTop:'1rem'}}>Priorite visuelle</h3>
+              <ol style={{fontSize:'0.75rem',color:'#ccc',paddingLeft:'1.2rem',lineHeight:'1.8'}}>
+                <li><strong style={{color:'var(--red)'}}>Rouge pulsant</strong> - context compacted, action urgente</li>
+                <li><strong style={{color:'var(--orange)'}}>Orange</strong> - warning / erreur / bloque</li>
+                <li><strong style={{color:'var(--lightgreen)'}}>Vert clair</strong> - busy, agent actif</li>
+                <li><strong style={{color:'var(--blue)'}}>Bleu</strong> - demarrage / attente approbation</li>
+                <li><strong style={{color:'var(--gray)'}}>Gris</strong> - actif mais idle</li>
+                <li><strong style={{color:'#666'}}>Gris fonce</strong> - arrete</li>
+              </ol>
+            </div>
+          )}
+          {!showLoginModel && !showColors && (selectedFile ? (
             <FileViewer filePath={selectedFile} />
           ) : selectedAgent ? (
             <Terminal agentId={selectedAgent} focused={activePanel === 'agent'} pollInterval={agentPoll} />

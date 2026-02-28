@@ -293,6 +293,31 @@ class TmuxAgent:
 
             current = self._capture_pane(200)
 
+            # Detect queued message (Claude busy with bashes, prompt not processed)
+            if "Press up to edit queued messages" in current:
+                self._log("QUEUED MESSAGE detected — prompt not processed, returning")
+                return current
+
+            # Detect plan mode approval prompt — signal blue, wait for user
+            if "Would you like to proceed" in current:
+                if not getattr(self, '_plan_approval_logged', False):
+                    self._log("PLAN APPROVAL DETECTED — waiting for user")
+                    self._plan_approval_logged = True
+                try:
+                    self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", "status", "waiting_approval")
+                except Exception:
+                    pass
+
+            # Detect and dismiss Claude session survey
+            if "How is Claude doing" in current:
+                self._log("SURVEY DETECTED — auto-dismissing (0)")
+                self._send_keys("0")
+                time.sleep(2)
+                last_content = ""
+                stable_count = 0
+                last_printed = 0
+                continue
+
             # Detect context compaction
             if "Conversation compacted" in current:
                 self._log("COMPACTION DETECTED in tmux output")
@@ -309,7 +334,7 @@ class TmuxAgent:
 
             if current != last_content:
                 last_content = current
-                stable_count = 0
+                self._plan_approval_logged = False
                 if hash(current) != baseline_hash:
                     response_started = True
 
@@ -322,20 +347,54 @@ class TmuxAgent:
             else:
                 stable_count += 1
 
+            # Check if Claude is at a ready prompt (last non-empty lines show known status)
+            # "bypass permissions" = normal mode → ready
+            # "plan mode on" = plan mode → ready only after extended stability
+            non_empty = [l for l in current.split('\n') if l.strip()]
+            tail3 = ' '.join(non_empty[-3:])
+
+            # Stability based on prompt area only (last 3 non-empty lines)
+            # Background bashes and spinners change upper content but prompt area stays stable
+            tail3_key = tail3
+            if tail3_key != getattr(self, '_last_tail3_key', ''):
+                self._last_tail3_key = tail3_key
+                stable_count = 0
+            else:
+                stable_count += 1
+
+            at_normal_prompt = "bypass permissions" in tail3 or ("plan mode on" in tail3 and stable_count >= 15)
+
             current_lines = current.strip().split('\n')
             last_line = current_lines[-1].strip() if current_lines else ""
-            for marker in PROMPT_MARKERS:
-                if last_line.endswith(marker) or last_line == marker:
-                    if response_started and stable_count >= 2:
-                        response = '\n'.join(current_lines[:-1]).strip()
-                        return response
 
-            if stable_count > 10 and response_started:
-                response = '\n'.join(current_lines).strip()
+            if at_normal_prompt:
+                # Check prompt marker on last line OR last few non-empty lines
+                # (status bar like "bypass permissions · 2 bashes" may be below ❯)
+                has_marker = False
                 for marker in PROMPT_MARKERS:
-                    if response.endswith(marker):
-                        response = response[:-len(marker)].strip()
-                return response
+                    if last_line.endswith(marker) or last_line == marker:
+                        has_marker = True
+                        break
+                if not has_marker:
+                    for line in non_empty[-3:]:
+                        stripped = line.strip()
+                        for marker in PROMPT_MARKERS:
+                            if stripped == marker:
+                                has_marker = True
+                                break
+                        if has_marker:
+                            break
+
+                if has_marker and response_started and stable_count >= 2:
+                    response = '\n'.join(current_lines[:-1]).strip()
+                    return response
+
+                if stable_count > 10 and response_started:
+                    response = '\n'.join(current_lines).strip()
+                    for marker in PROMPT_MARKERS:
+                        if response.endswith(marker):
+                            response = response[:-len(marker)].strip()
+                    return response
 
         self._log("WARNING: Response timeout")
         return self._capture_pane(100)
@@ -659,6 +718,15 @@ class TmuxAgent:
                 self.state = State.IDLE
 
             self._set_redis_status()
+
+            # Check for background bashes after response
+            try:
+                pane = self._capture_pane(10)
+                if "bashes" in pane or "bash" in pane.split('\n')[-1]:
+                    self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", "status", "has_bashes")
+                    self._log("Background bashes detected — status set to has_bashes")
+            except Exception:
+                pass
 
     def send_to_agent(self, to_agent, prompt):
         """Send message to another agent"""
