@@ -3,10 +3,11 @@ import { api } from '../basePath'
 
 const RESTART_COOLDOWN = 60 // seconds
 
-function LoginModelPanel() {
+function LoginModelPanel({ hidden }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
   const [restartUntil, setRestartUntil] = useState({}) // { agentId: epoch_ms }
+  const [activeRestart, setActiveRestart] = useState(null) // agentId currently restarting (API call in flight)
   const [now, setNow] = useState(Date.now())
   const timerRef = useRef(null)
 
@@ -50,8 +51,10 @@ function LoginModelPanel() {
   }
 
   const handleRestart = async (agentId) => {
+    if (activeRestart) return // already one in flight
     const until = Date.now() + RESTART_COOLDOWN * 1000
     setRestartUntil(prev => ({ ...prev, [agentId]: until }))
+    setActiveRestart(agentId)
     setError(null)
     try {
       const res = await fetch(api(`api/agent/${agentId}/restart`), { method: 'POST' })
@@ -61,7 +64,8 @@ function LoginModelPanel() {
       }
     } catch (err) {
       setError(`restart ${agentId}: ${err.message}`)
-      // Don't clear cooldown on error — agent.sh may have partially executed
+    } finally {
+      setActiveRestart(null)
     }
   }
 
@@ -71,13 +75,13 @@ function LoginModelPanel() {
     return Math.max(0, Math.ceil((until - now) / 1000))
   }
 
-  if (error && !data) return <div className="login-model-panel"><p style={{ color: 'var(--red)' }}>Error: {error}</p></div>
-  if (!data) return <div className="login-model-panel"><p style={{ color: 'var(--text-secondary)' }}>Loading...</p></div>
+  if (error && !data) return <div className="login-model-panel" style={{ display: hidden ? 'none' : undefined }}><p style={{ color: 'var(--red)' }}>Error: {error}</p></div>
+  if (!data) return <div className="login-model-panel" style={{ display: hidden ? 'none' : undefined }}><p style={{ color: 'var(--text-secondary)' }}>Loading...</p></div>
 
   const { logins, models, default_login, default_model, agents } = data
 
   return (
-    <div className="login-model-panel">
+    <div className="login-model-panel" style={{ display: hidden ? 'none' : undefined }}>
       {error && <p style={{ color: 'var(--red)', fontSize: '0.7rem', margin: '0 0 0.5rem' }}>Error: {error}</p>}
       <table className="lm-table">
         <thead>
@@ -116,6 +120,8 @@ function LoginModelPanel() {
           {agents.map(agent => {
             const remaining = getRemaining(agent.id)
             const isCooling = remaining > 0
+            const isThis = activeRestart === agent.id
+            const blocked = !!activeRestart && !isThis
             return (
               <tr key={agent.id}>
                 <td>{agent.id}</td>
@@ -141,12 +147,12 @@ function LoginModelPanel() {
                 </td>
                 <td>
                   <button
-                    className={`lm-restart-btn ${isCooling ? 'lm-restarting' : ''}`}
+                    className={`lm-restart-btn ${isThis ? 'lm-restarting' : ''} ${isCooling ? 'lm-restarting' : ''}`}
                     onClick={() => handleRestart(agent.id)}
-                    disabled={isCooling}
-                    title={`./scripts/agent.sh restart ${agent.id}`}
+                    disabled={isCooling || blocked || isThis}
+                    title={blocked ? 'Wait for current restart to finish' : `./scripts/agent.sh restart ${agent.id}`}
                   >
-                    {isCooling ? `${remaining}s` : 'restart'}
+                    {isThis ? '...' : isCooling ? `${remaining}s` : 'restart'}
                   </button>
                 </td>
               </tr>

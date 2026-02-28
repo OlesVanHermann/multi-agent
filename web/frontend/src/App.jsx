@@ -240,9 +240,8 @@ function App() {
           <div className="panel-header">
             <h2>AGENT {selectedAgent ? `(${selectedAgent}) — ${AGENT_LABELS[selectedAgent] || getAgentType(selectedAgent)}` : '---'}</h2>
           </div>
-          {showLoginModel ? (
-            <LoginModelPanel />
-          ) : selectedFile ? (
+          <LoginModelPanel hidden={!showLoginModel} />
+          {!showLoginModel && (selectedFile ? (
             <FileViewer filePath={selectedFile} />
           ) : selectedAgent ? (
             <Terminal agentId={selectedAgent} focused={activePanel === 'agent'} pollInterval={agentPoll} />
@@ -250,7 +249,7 @@ function App() {
             <div className="no-selection">
               Select an agent from the grid
             </div>
-          )}
+          ))}
         </section>
       </main>
 
