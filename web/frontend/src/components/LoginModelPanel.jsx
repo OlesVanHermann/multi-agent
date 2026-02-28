@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { api } from '../basePath'
 
 const RESTART_COOLDOWN = 60 // seconds
+const TMUX_WIDTH_OPTIONS = [80, 90, 100, 110, 120, 132, 180, 220, 280]
 
 function LoginModelPanel({ hidden }) {
   const [data, setData] = useState(null)
@@ -9,6 +10,7 @@ function LoginModelPanel({ hidden }) {
   const [restartUntil, setRestartUntil] = useState({}) // { agentId: epoch_ms }
   const [activeRestart, setActiveRestart] = useState(null) // agentId currently restarting (API call in flight)
   const [now, setNow] = useState(Date.now())
+  const [tmuxWidth, setTmuxWidth] = useState(null)
   const timerRef = useRef(null)
 
   // Tick every second while any agent is in cooldown
@@ -35,6 +37,28 @@ function LoginModelPanel({ hidden }) {
   }
 
   useEffect(() => { fetchData() }, [])
+
+  // Fetch tmux width on mount
+  useEffect(() => {
+    fetch(api('api/config/tmux-width'))
+      .then(r => r.json())
+      .then(d => setTmuxWidth(d.width))
+      .catch(() => {})
+  }, [])
+
+  const handleTmuxWidth = async (newWidth) => {
+    try {
+      const res = await fetch(api('api/config/tmux-width'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ width: newWidth }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setTmuxWidth(newWidth)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
 
   const handleChange = async (agentId, type, value) => {
     try {
@@ -93,6 +117,24 @@ function LoginModelPanel({ hidden }) {
           </tr>
         </thead>
         <tbody>
+          {/* Tmux width row */}
+          <tr className="lm-default-row">
+            <td><strong>tmux</strong></td>
+            <td colSpan="3">
+              <span className="lm-width-group">
+                {TMUX_WIDTH_OPTIONS.map(w => (
+                  <button
+                    key={w}
+                    className={`lm-width-btn ${tmuxWidth === w ? 'lm-width-active' : ''}`}
+                    onClick={() => handleTmuxWidth(w)}
+                  >
+                    {w}
+                  </button>
+                ))}
+                <span className="lm-width-label">cols</span>
+              </span>
+            </td>
+          </tr>
           {/* Default row */}
           <tr className="lm-default-row">
             <td><strong>default</strong></td>

@@ -18,6 +18,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   const userScrolledRef = useRef(false)
   const scrollPauseRef = useRef(null)
   const pendingOutputRef = useRef(null) // latest output while paused
+  const selectingRef = useRef(false) // true while user is selecting text
 
   // Sync coordination refs (avoid stale closures in WebSocket handler)
   const lastLocalEditRef = useRef(0)
@@ -132,7 +133,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
         const data = JSON.parse(event.data)
 
         if (data.type === 'output') {
-          if (userScrolledRef.current) {
+          if (userScrolledRef.current || selectingRef.current) {
             pendingOutputRef.current = data.output || ''
           } else {
             setOutput(data.output || '')
@@ -190,6 +191,8 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       }
       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
       if (scrollPauseRef.current) clearTimeout(scrollPauseRef.current)
+      if (selectResumeRef.current) clearTimeout(selectResumeRef.current)
+      selectingRef.current = false
     }
   }, [agentId, pollInterval])
 
@@ -307,6 +310,22 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
     }
   }
 
+  // Pause updates while selecting text in terminal output
+  const selectResumeRef = useRef(null)
+  const handleOutputMouseDown = () => {
+    selectingRef.current = true
+    setPaused(true)
+    if (selectResumeRef.current) clearTimeout(selectResumeRef.current)
+  }
+  const handleOutputMouseUp = () => {
+    // Delay resume so user can copy selected text
+    if (selectResumeRef.current) clearTimeout(selectResumeRef.current)
+    selectResumeRef.current = setTimeout(() => {
+      selectingRef.current = false
+      if (!userScrolledRef.current) resumeSync()
+    }, 3000)
+  }
+
   // Click anywhere in terminal → focus input (unless selecting text)
   const handleTerminalClick = (e) => {
     // Don't steal focus from buttons or if user is selecting text
@@ -323,7 +342,8 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
         {syncing && <span className="sync-indicator"> ⟳</span>}
         {paused && <span className="pause-indicator"> ⏸</span>}
       </div>
-      <pre className="terminal-output" ref={outputRef} onScroll={handleScroll}>
+      <pre className="terminal-output" ref={outputRef} onScroll={handleScroll}
+        onMouseDown={handleOutputMouseDown} onMouseUp={handleOutputMouseUp}>
         {output}
       </pre>
       <div className="terminal-input">

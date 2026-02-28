@@ -874,6 +874,44 @@ async def update_login_model(data: LoginModelUpdate):
     return {"status": "updated", "agent_id": data.agent_id, "type": data.type, "value": data.value}
 
 
+@app.get("/api/config/tmux-width")
+async def get_tmux_width():
+    """Get current tmux window width from first agent session."""
+    try:
+        result = await _run_subprocess(
+            ["tmux", "list-sessions", "-F", "#{window_width}"],
+            text=True, capture_output=True, timeout=5
+        )
+        widths = [int(w) for w in result.stdout.strip().split('\n') if w.strip().isdigit()]
+        return {"width": widths[0] if widths else 80}
+    except Exception:
+        return {"width": 80}
+
+
+@app.post("/api/config/tmux-width")
+async def set_tmux_width(data: dict):
+    """Resize all tmux windows to the given width."""
+    width = data.get("width")
+    if not isinstance(width, int) or width < 80 or width > 400:
+        raise HTTPException(status_code=400, detail="width must be 80-400")
+    try:
+        result = await _run_subprocess(
+            ["tmux", "list-sessions", "-F", "#{session_name}"],
+            text=True, capture_output=True, timeout=5
+        )
+        sessions = [s.strip() for s in result.stdout.strip().split('\n') if s.strip()]
+        resized = 0
+        for s in sessions:
+            await _run_subprocess(
+                ["tmux", "resize-window", "-t", s, "-x", str(width), "-y", "50"],
+                text=True, capture_output=True, timeout=5
+            )
+            resized += 1
+        return {"status": "ok", "width": width, "sessions": resized}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/agent/{agent_id}/restart")
 async def restart_agent(agent_id: str):
     """Restart an agent via ./scripts/agent.sh restart <id>."""
