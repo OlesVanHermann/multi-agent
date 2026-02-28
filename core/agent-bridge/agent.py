@@ -274,6 +274,9 @@ class TmuxAgent:
             capture_output=True
         )
 
+    # Sentinel returned by _wait_for_response when compaction is detected
+    _COMPACTION_SENTINEL = "__COMPACTION_DETECTED__"
+
     def _wait_for_response(self, timeout=RESPONSE_TIMEOUT):
         """Wait for Claude to finish responding and return the output"""
         start_time = time.time()
@@ -289,6 +292,20 @@ class TmuxAgent:
             time.sleep(POLL_INTERVAL)
 
             current = self._capture_pane(200)
+
+            # Detect context compaction
+            if "Conversation compacted" in current:
+                self._log("COMPACTION DETECTED in tmux output")
+                # Wait for Claude to finish compacting and show prompt
+                for _ in range(30):
+                    time.sleep(POLL_INTERVAL)
+                    current = self._capture_pane(200)
+                    current_lines = current.strip().split('\n')
+                    last_line = current_lines[-1].strip() if current_lines else ""
+                    for marker in PROMPT_MARKERS:
+                        if last_line.endswith(marker) or last_line == marker:
+                            return self._COMPACTION_SENTINEL
+                return self._COMPACTION_SENTINEL
 
             if current != last_content:
                 last_content = current
@@ -551,6 +568,24 @@ class TmuxAgent:
                 if self.metrics:
                     self.metrics.record_error(self.agent_id, type(e).__name__, str(e)[:200])
                 response = f"[ERROR] {e}"
+
+            # Auto-reload on compaction
+            if response == self._COMPACTION_SENTINEL:
+                self._log("COMPACTION: auto-reloading agent prompt")
+                try:
+                    self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", "status", "context_compacted")
+                except Exception:
+                    pass
+                self._reload_prompt()
+                # Re-queue the original task so it runs after reload
+                if task.get('from_agent') not in ['auto_init', 'compaction_reload']:
+                    self._log(f"COMPACTION: re-queuing original task from {task.get('from_agent', '?')}")
+                    self.prompt_queue.put(task)
+                with self.state_lock:
+                    self.current_task = None
+                    self.state = State.IDLE
+                self._set_redis_status()
+                continue
 
             # R-INTEGRATE: record task end
             if self.metrics:
