@@ -151,6 +151,8 @@ async def _refresh_cache_once():
             'if echo "$bp_line" | grep -q "esc"; then busy=1; fi; '
             'if echo "$bp_line" | grep -q "↓"; then has_down=1; fi; '
             'if echo "$out" | grep -q "plan mode on"; then plan_mode=1; fi; '
+            'waiting_approval=0; '
+            'if echo "$out" | grep -q "Enter to select"; then waiting_approval=1; fi; '
             'if echo "$out" | grep -qiE "compacting conversation"; then compacted=1; fi; '
             'if echo "$out" | grep -qi "Conversation compacted"; then done_compacting=1; fi; '
             'if [ "$done_compacting" -eq 1 ] && echo "$out" | grep -qE "prompts/[0-9]+/${id}[.-]|prompts/${id}-"; then prompt_loaded=1; fi; '
@@ -160,7 +162,7 @@ async def _refresh_cache_once():
             'api_err_count=$(echo "$out" | grep -c "API Error:" 2>/dev/null || echo 0); '
             'if [ "$api_err_count" -ge 3 ]; then api_error=1; fi; '
             'if echo "$out" | grep -q "/model "; then model_change=1; fi; '
-            'echo "$id:$busy:$compacted:$ctx:$done_compacting:$prompt_loaded:$ctx_limit:$api_error:$model_change:$has_bashes:$plan_mode:$has_down"; '
+            'echo "$id:$busy:$compacted:$ctx:$done_compacting:$prompt_loaded:$ctx_limit:$api_error:$model_change:$has_bashes:$plan_mode:$has_down:$waiting_approval"; '
             'done'
         )
         result = await _run_subprocess(
@@ -180,6 +182,7 @@ async def _refresh_cache_once():
                 has_bashes = parts[9] == '1' if len(parts) >= 10 else False
                 plan_mode = parts[10] == '1' if len(parts) >= 11 else False
                 has_down = parts[11] == '1' if len(parts) >= 12 else False
+                waiting_approval = parts[12] == '1' if len(parts) >= 13 else False
                 agent_states[parts[0]] = {
                     'busy': parts[1] == '1',
                     'compacted': parts[2] == '1',
@@ -192,6 +195,7 @@ async def _refresh_cache_once():
                     'has_bashes': has_bashes,
                     'has_down': has_down,
                     'plan_mode': plan_mode,
+                    'waiting_approval': waiting_approval,
                 }
     except Exception as e:
         print(f"[cache] tmux states error: {e}")
@@ -642,6 +646,8 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
                 elif state.get('busy'):
                     overrides[aid] = "busy"
                 # else: no override (idle)
+            elif state.get('waiting_approval'):
+                overrides[aid] = "waiting_approval"  # blue — interactive prompt (Enter to select)
             elif state.get('plan_mode'):
                 overrides[aid] = "plan_mode"
             elif state.get('has_bashes'):
