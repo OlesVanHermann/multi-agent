@@ -43,7 +43,7 @@ function LoginModelPanel({ mode, panelConfig, onPanelChange, hidden }) {
     }
   }
 
-  useEffect(() => { fetchData() }, [])
+  useEffect(() => { if (!hidden) fetchData() }, [hidden])
 
   // Fetch tmux width on mount
   useEffect(() => {
