@@ -231,6 +231,27 @@ Exemples :
 
 ---
 
+## Règles pour Claude Code (preparation des patches)
+
+Quand l'utilisateur demande de pousser un patch :
+
+1. **Copier les fichiers modifies** dans `~/multi-agent-git/` (seulement les vrais changements, pas le bruit)
+2. **Creer la branche + commit** soi-meme avec les outils Bash :
+   ```bash
+   cd ~/multi-agent-git && git checkout -B patch/project/<slug> main && git add -A && git commit -m "<message>"
+   ```
+3. **Donner a l'utilisateur UNE SEULE commande a taper** (il a la clef SSH, pas toi) :
+   ```
+   cd ~/multi-agent-git && git push hub patch/project/<slug>
+   ```
+
+Ne PAS :
+- Demander a l'utilisateur de creer la branche ou commiter — c'est TON job
+- Donner une longue chaine de commandes — l'utilisateur veut juste le `git push`
+- Expliquer le process — juste faire et donner la commande finale
+
+---
+
 ## Règles pour les agents Mac
 
 1. **Ne JAMAIS pousser directement sur `main`** — toujours via une branche `patch/`
