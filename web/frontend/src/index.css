@@ -1174,3 +1174,38 @@ body {
   font-size: 0.65rem;
   margin-left: 0.2rem;
 }
+
+/* Panel toggle (M/D) */
+.lm-panel-toggle {
+  display: inline-flex;
+  gap: 1px;
+}
+
+.lm-panel-btn {
+  padding: 0.1rem 0.35rem;
+  font-family: inherit;
+  font-size: 0.65rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.lm-panel-btn:first-child {
+  border-radius: 3px 0 0 3px;
+}
+
+.lm-panel-btn:last-child {
+  border-radius: 0 3px 3px 0;
+}
+
+.lm-panel-btn:hover {
+  border-color: var(--blue);
+  color: var(--text-primary);
+}
+
+.lm-panel-btn.lm-panel-active {
+  background: var(--blue);
+  color: var(--bg-primary);
+  border-color: var(--blue);
+}

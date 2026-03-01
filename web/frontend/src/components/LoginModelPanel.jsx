@@ -4,7 +4,14 @@ import { api } from '../basePath'
 const RESTART_COOLDOWN = 60 // seconds
 const TMUX_WIDTH_OPTIONS = [80, 90, 100, 110, 120, 132, 180, 220, 280]
 
-function LoginModelPanel({ hidden }) {
+function getDefaultPanel(agentId, mode) {
+  const num = parseInt(agentId)
+  const suffixNum = agentId.includes('-') ? parseInt(agentId.split('-')[1]) : num
+  const isControl = mode === 'x45' ? (suffixNum < 200) : (num < 200 || num >= 900)
+  return isControl ? 'control' : 'agent'
+}
+
+function LoginModelPanel({ mode, panelConfig, onPanelChange, hidden }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
   const [restartUntil, setRestartUntil] = useState({}) // { agentId: epoch_ms }
@@ -93,6 +100,22 @@ function LoginModelPanel({ hidden }) {
     }
   }
 
+  const handlePanelToggle = async (agentId, panel) => {
+    const def = getDefaultPanel(agentId, mode)
+    const sendPanel = panel === def ? '' : panel
+    try {
+      const res = await fetch(api('api/config/panel'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_id: agentId, panel: sendPanel }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      if (onPanelChange) onPanelChange(agentId, sendPanel)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   const getRemaining = (agentId) => {
     const until = restartUntil[agentId]
     if (!until) return 0
@@ -113,6 +136,7 @@ function LoginModelPanel({ hidden }) {
             <th>Agent</th>
             <th>Login</th>
             <th>Model</th>
+            <th>Panel</th>
             <th>Restart</th>
           </tr>
         </thead>
@@ -120,7 +144,7 @@ function LoginModelPanel({ hidden }) {
           {/* Tmux width row */}
           <tr className="lm-default-row">
             <td><strong>tmux</strong></td>
-            <td colSpan="3">
+            <td colSpan="4">
               <span className="lm-width-group">
                 {TMUX_WIDTH_OPTIONS.map(w => (
                   <button
@@ -157,6 +181,7 @@ function LoginModelPanel({ hidden }) {
               </select>
             </td>
             <td></td>
+            <td></td>
           </tr>
           {/* Agent rows */}
           {agents.map(agent => {
@@ -186,6 +211,24 @@ function LoginModelPanel({ hidden }) {
                     <option value="">({default_model})</option>
                     {models.map(m => <option key={m} value={m}>{m}</option>)}
                   </select>
+                </td>
+                <td>
+                  {(() => {
+                    const def = getDefaultPanel(agent.id, mode)
+                    const current = (panelConfig && panelConfig[agent.id]) || def
+                    return (
+                      <span className="lm-panel-toggle">
+                        <button
+                          className={`lm-panel-btn ${current === 'control' ? 'lm-panel-active' : ''}`}
+                          onClick={() => handlePanelToggle(agent.id, 'control')}
+                        >M</button>
+                        <button
+                          className={`lm-panel-btn ${current === 'agent' ? 'lm-panel-active' : ''}`}
+                          onClick={() => handlePanelToggle(agent.id, 'agent')}
+                        >D</button>
+                      </span>
+                    )
+                  })()}
                 </td>
                 <td>
                   <button

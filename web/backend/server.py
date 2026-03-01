@@ -53,6 +53,23 @@ REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 MA_PREFIX = os.environ.get("MA_PREFIX", "A")
 BASE_DIR = Path(os.environ.get("MA_BASE", Path.home() / "multi-agent"))
+PANEL_CONFIG_PATH = BASE_DIR / "web" / "panel-config.json"
+
+
+def _read_panel_config() -> dict:
+    """Read panel-config.json, return {"overrides": {}} if missing/corrupt."""
+    try:
+        return json.loads(PANEL_CONFIG_PATH.read_text())
+    except Exception:
+        return {"overrides": {}}
+
+
+def _write_panel_config(data: dict):
+    """Atomic write: .tmp + rename."""
+    tmp = PANEL_CONFIG_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    tmp.rename(PANEL_CONFIG_PATH)
+
 
 # Redis connection pool
 redis_pool: Optional[redis.Redis] = None
@@ -430,6 +447,11 @@ class LoginModelUpdate(BaseModel):
     agent_id: str      # "300" or "default"
     type: str          # "login" or "model"
     value: str         # "claude2a" or "" to remove override
+
+
+class PanelConfigUpdate(BaseModel):
+    agent_id: str      # "301", "500", etc.
+    panel: str         # "control", "agent", or "" to remove override
 
 
 # === Routes ===
@@ -933,6 +955,34 @@ async def set_tmux_width(data: dict):
         return {"status": "ok", "width": width, "sessions": resized}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/config/panel")
+async def get_panel_config():
+    """Return panel overrides and current mode."""
+    cfg = _read_panel_config()
+    return {"overrides": cfg.get("overrides", {}), "mode": _cache.get("mode", "pipeline")}
+
+
+@app.post("/api/config/panel")
+async def update_panel_config(data: PanelConfigUpdate):
+    """Set or remove a panel override for an agent."""
+    if not re.match(r'^\d{3}(-\d{3})?$', data.agent_id):
+        raise HTTPException(status_code=400, detail="invalid agent_id")
+    if data.panel not in ("control", "agent", ""):
+        raise HTTPException(status_code=400, detail="panel must be 'control', 'agent', or ''")
+
+    cfg = _read_panel_config()
+    overrides = cfg.get("overrides", {})
+
+    if data.panel == "":
+        overrides.pop(data.agent_id, None)
+    else:
+        overrides[data.agent_id] = data.panel
+
+    cfg["overrides"] = overrides
+    _write_panel_config(cfg)
+    return {"status": "ok", "overrides": overrides}
 
 
 @app.post("/api/agent/{agent_id}/restart")

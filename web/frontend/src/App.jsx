@@ -140,9 +140,40 @@ function App() {
   const [selectedFile, setSelectedFile] = useState(null)
   const [showLoginModel, setShowLoginModel] = useState(false)
   const [showColors, setShowColors] = useState(false)
+  const [panelConfig, setPanelConfig] = useState({})
+
+  useEffect(() => {
+    fetch(api('api/config/panel'))
+      .then(r => r.json())
+      .then(d => setPanelConfig(d.overrides || {}))
+      .catch(() => {})
+  }, [])
+
+  const handlePanelChange = (agentId, panel) => {
+    setPanelConfig(prev => {
+      const next = { ...prev }
+      if (panel === '') {
+        delete next[agentId]
+      } else {
+        next[agentId] = panel
+      }
+      return next
+    })
+  }
 
   const handleAgentClick = (agentId) => {
     setSelectedFile(null) // clear file view when selecting an agent
+    const override = panelConfig[agentId]
+    if (override) {
+      if (override === 'control') {
+        setControlPlane(agentId)
+        setActivePanel('control')
+      } else {
+        setSelectedAgent(agentId)
+        setActivePanel('agent')
+      }
+      return
+    }
     const num = parseInt(agentId)
     // For compound IDs (341-141), use suffix to determine role
     const suffixNum = agentId.includes('-') ? parseInt(agentId.split('-')[1]) : num
@@ -252,7 +283,7 @@ function App() {
           <div className="panel-header">
             <h2>AGENT {selectedAgent ? `(${selectedAgent}) — ${agentNames[selectedAgent.split('-')[0]] || getAgentType(selectedAgent)}` : '---'}</h2>
           </div>
-          <LoginModelPanel hidden={!showLoginModel} />
+          <LoginModelPanel hidden={!showLoginModel} mode={mode} panelConfig={panelConfig} onPanelChange={handlePanelChange} />
           {showColors && (
             <div className="color-legend">
               <h3>Couleurs des agents</h3>
