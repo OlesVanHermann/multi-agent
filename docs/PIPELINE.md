@@ -245,6 +245,8 @@ Quand l'utilisateur demande de pousser un patch :
    cd ~/multi-agent-git && git push hub patch/project/<slug>
    ```
 
+**Auteur des commits** : toujours utiliser `--author="OlesVanHermann <octave.klaba@ovh.com>"` — jamais Claude comme auteur.
+
 Ne PAS :
 - Demander a l'utilisateur de creer la branche ou commiter — c'est TON job
 - Donner une longue chaine de commandes — l'utilisateur veut juste le `git push`
