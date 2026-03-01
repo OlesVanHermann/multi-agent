@@ -1219,6 +1219,23 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
         raise HTTPException(status_code=500, detail=f"Failed to update input: {str(e)}")
 
 
+@app.get("/api/agent/{agent_id}/history")
+async def get_agent_history(agent_id: str):
+    """Read prompt history file for an agent."""
+    prompts_dir = BASE_DIR / "prompts"
+    parent_id = agent_id.split('-')[0] if '-' in agent_id else agent_id
+    parent_dir = _resolve_prompts_dir(prompts_dir, parent_id)
+    if parent_dir:
+        history_file = parent_dir / f"{agent_id}.history"
+    else:
+        history_file = prompts_dir / f"{agent_id}.history"
+    if not history_file.exists():
+        return {"lines": [], "file": str(history_file)}
+    text = history_file.read_text(errors="replace")
+    lines = [l for l in text.splitlines() if l.strip()]
+    return {"lines": lines, "file": str(history_file)}
+
+
 ALLOWED_KEYS = {"Enter", "C-c", "Escape", "C-u", "C-d", "C-l", "C-z", "Up", "Down", "Tab", "Space", "y", "n"}
 
 

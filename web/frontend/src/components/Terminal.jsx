@@ -8,6 +8,8 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   const [connected, setConnected] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [paused, setPaused] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
+  const [historyLines, setHistoryLines] = useState(null)
   const outputRef = useRef(null)
   const wsRef = useRef(null)
   const inputRef = useRef(null)
@@ -327,6 +329,23 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   }
 
   // Click anywhere in terminal → focus input (unless selecting text)
+  const toggleHistory = async () => {
+    if (showHistory) {
+      setShowHistory(false)
+      return
+    }
+    try {
+      const res = await fetch(api(`api/agent/${agentId}/history`))
+      const data = await res.json()
+      setHistoryLines(data.lines || [])
+      setShowHistory(true)
+      setTimeout(() => { if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight }, 50)
+    } catch {
+      setHistoryLines(['(erreur lecture historique)'])
+      setShowHistory(true)
+    }
+  }
+
   const handleTerminalClick = (e) => {
     // Don't steal focus from buttons or if user is selecting text
     if (e.target.closest('button') || e.target.closest('textarea')) return
@@ -341,11 +360,13 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
         Agent {agentId} {connected ? '(live)' : '(disconnected)'}
         {syncing && <span className="sync-indicator"> ⟳</span>}
         {paused && <span className="pause-indicator"> ⏸</span>}
+        <button onClick={toggleHistory} className={`config-btn${showHistory ? ' config-btn-active' : ''}`}
+          style={{marginLeft:'auto'}} title="Voir historique des prompts">{showHistory ? 'terminal' : 'historique'}</button>
       </div>
       <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <pre className="terminal-output" ref={outputRef} onScroll={handleScroll}
           onMouseDown={handleOutputMouseDown} onMouseUp={handleOutputMouseUp}>
-          {output}
+          {showHistory ? (historyLines && historyLines.length > 0 ? historyLines.join('\n') : '(aucun historique)') : output}
         </pre>
         {paused && (
           <button
@@ -391,6 +412,9 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
         </button>
         <button onClick={() => sendKeys('C-c')} className="key-btn danger" title="Ctrl+C">
           ^C
+        </button>
+        <button onClick={() => sendKeys('Down')} className="key-btn" title="Down arrow (↓ to view)">
+          ↓
         </button>
       </div>
     </div>
