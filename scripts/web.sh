@@ -88,19 +88,30 @@ do_stop() {
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
         if kill "$PID" 2>/dev/null; then
+            # Wait for process to actually die (max 5s)
+            for i in $(seq 1 50); do
+                kill -0 "$PID" 2>/dev/null || break
+                sleep 0.1
+            done
+            # Still alive? SIGKILL
+            if kill -0 "$PID" 2>/dev/null; then
+                kill -9 "$PID" 2>/dev/null || true
+                sleep 0.5
+            fi
             log_ok "Killed dashboard (PID: $PID)"
         fi
         mv "$PID_FILE" "$PID_FILE.old" 2>/dev/null || true
     fi
-    # 2. Kill all uvicorn processes
-    pkill -f "uvicorn multi_agent.backend:app" 2>/dev/null && log_ok "Killed uvicorn processes" || true
+    # 2. Kill all uvicorn processes matching our app
+    pkill -9 -f "uvicorn multi_agent.backend:app" 2>/dev/null && log_ok "Killed uvicorn processes" || true
+    sleep 0.5
     # 3. Force-kill anything still holding port 8050
     local pids
     pids=$(lsof -ti:8050 2>/dev/null || true)
     if [ -n "$pids" ]; then
         kill -9 $pids 2>/dev/null && log_ok "Force-killed stale processes on :8050" || true
+        sleep 0.5
     fi
-    sleep 1
 }
 
 do_rebuild() {
@@ -110,8 +121,8 @@ do_rebuild() {
     if command -v npm &>/dev/null; then
         cd "$WEB_DIR/frontend"
         rm -rf dist
-        npm install --silent 2>/dev/null
-        npm run build 2>/dev/null
+        npm install --silent 2>&1 || true
+        npm run build || { log_error "Frontend build failed"; exit 1; }
         cd "$BASE_DIR"
         log_ok "Frontend rebuilt"
     else

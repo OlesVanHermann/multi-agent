@@ -465,6 +465,28 @@ async def health():
 # _get_agent_states removed — replaced by background _cache_loop
 
 
+def _log_prompt_history(agent_id: str, text: str):
+    """Append submitted prompt to agent history file.
+    Flat agents: prompts/{agent_id}.history
+    x45 agents:  prompts/{parent-dir}/{agent_id}.history
+    """
+    try:
+        prompts_dir = BASE_DIR / "prompts"
+        parent_id = agent_id.split('-')[0] if '-' in agent_id else agent_id
+        # Try x45 directory first
+        parent_dir = _resolve_prompts_dir(prompts_dir, parent_id)
+        if parent_dir:
+            history_file = parent_dir / f"{agent_id}.history"
+        else:
+            history_file = prompts_dir / f"{agent_id}.history"
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        line = text.replace("\n", " ").replace("\r", "")
+        with open(history_file, "a") as f:
+            f.write(f"{ts} | {line}\n")
+    except Exception:
+        pass  # never break the submit flow
+
+
 def _resolve_prompts_dir(prompts_dir: Path, numeric_id: str) -> Optional[Path]:
     """Resolve a numeric agent ID to its prompts directory.
     Handles both plain (345/) and named (345-develop-fonction-beta/) directories.
@@ -1157,8 +1179,8 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
             raise HTTPException(status_code=404, detail=f"Agent {agent_id} session not found")
 
         # Incremental diff: only send backspaces + new chars
-        prev = data.previous or ""
-        new = data.text or ""
+        prev = (data.previous or "").rstrip()
+        new = (data.text or "").rstrip()
 
         # Find common prefix
         i = 0
@@ -1184,6 +1206,7 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
             await _run_subprocess(
                 ["tmux", "send-keys", "-t", target, "Enter"], check=True
             )
+            _log_prompt_history(agent_id, data.text)
 
         return {
             "status": "updated",
