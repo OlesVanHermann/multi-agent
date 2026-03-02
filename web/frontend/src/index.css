@@ -17,6 +17,9 @@
   --gray: #555;
   --blue: #4a9eff;
   --lightgreen: #44cc88;
+  --yellow: #e2b93d;
+  --darkred: #8b1a1a;
+  --darkblue: #1a3a8a;
 }
 
 body {
@@ -187,6 +190,15 @@ body {
 .agent-cell.blue { background: var(--blue); color: #fff; }
 .agent-cell.lightgreen { background: var(--lightgreen); color: #000; }
 .agent-cell.darkgray { background: #333; color: #666; }
+.agent-cell.yellow { background: var(--yellow); color: #000; }
+.agent-cell.darkred { background: var(--darkred); color: #ccc; }
+.agent-cell.white { background: #ddd; color: #000; }
+.agent-cell.darkblue { background: var(--darkblue); color: #aac; }
+
+.agent-cell.border-red { box-shadow: inset 0 0 0 2px var(--red); }
+.agent-cell.border-orange { box-shadow: inset 0 0 0 2px var(--orange); }
+.agent-cell.border-red.selected { box-shadow: inset 0 0 0 2px var(--red), 0 0 0 2px var(--blue); }
+.agent-cell.border-orange.selected { box-shadow: inset 0 0 0 2px var(--orange), 0 0 0 2px var(--blue); }
 
 .agent-cell.pulsing {
   animation: pulse-red 1.5s ease-in-out infinite;
@@ -1207,5 +1219,53 @@ body {
 .lm-panel-btn.lm-panel-active {
   background: var(--blue);
   color: var(--bg-primary);
+  border-color: var(--blue);
+}
+
+/* DevChat */
+.devchat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  font-size: 0.7rem;
+}
+
+.devchat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.devchat-line {
+  color: var(--text-secondary);
+  font-family: inherit;
+  line-height: 1.3;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.devchat-input {
+  display: flex;
+  gap: 0.3rem;
+  padding: 0.3rem 0.4rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.devchat-input input {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.7rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: 3px;
+  outline: none;
+}
+
+.devchat-input input:focus {
   border-color: var(--blue);
 }

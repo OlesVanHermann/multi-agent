@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react'
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react'
 
 const AuthContext = createContext(null)
 
@@ -7,22 +7,136 @@ const KEYCLOAK_URL = '/auth'
 const REALM = 'multi-agent'
 const CLIENT_ID = 'multi-agent-web'
 
+// Refresh token 60s before expiration
+const REFRESH_MARGIN_S = 60
+
+function decodeJwtPayload(token) {
+  try {
+    return JSON.parse(atob(token.split('.')[1]))
+  } catch {
+    return null
+  }
+}
+
+function isTokenExpired(token) {
+  const payload = decodeJwtPayload(token)
+  if (!payload || !payload.exp) return true
+  return Date.now() / 1000 >= payload.exp
+}
+
+function tokenExpiresInSec(token) {
+  const payload = decodeJwtPayload(token)
+  if (!payload || !payload.exp) return 0
+  return Math.max(0, payload.exp - Date.now() / 1000)
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [token, setToken] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const refreshTimerRef = useRef(null)
+
+  const clearSession = useCallback(() => {
+    setToken(null)
+    setUser(null)
+    localStorage.removeItem('access_token')
+    localStorage.removeItem('refresh_token')
+    localStorage.removeItem('user')
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current)
+      refreshTimerRef.current = null
+    }
+  }, [])
+
+  const applyTokens = useCallback((accessToken, refreshToken) => {
+    const payload = decodeJwtPayload(accessToken)
+    if (!payload) return false
+
+    const userInfo = {
+      username: payload.preferred_username,
+      email: payload.email,
+      name: payload.name,
+      roles: payload.roles || payload.realm_access?.roles || [],
+    }
+
+    setToken(accessToken)
+    setUser(userInfo)
+    localStorage.setItem('access_token', accessToken)
+    if (refreshToken) localStorage.setItem('refresh_token', refreshToken)
+    localStorage.setItem('user', JSON.stringify(userInfo))
+
+    // Schedule auto-refresh
+    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current)
+    const expiresIn = tokenExpiresInSec(accessToken)
+    const refreshIn = Math.max(10, (expiresIn - REFRESH_MARGIN_S)) * 1000
+    refreshTimerRef.current = setTimeout(() => refreshAccessToken(), refreshIn)
+
+    return true
+  }, [])
+
+  const refreshAccessToken = useCallback(async () => {
+    const storedRefresh = localStorage.getItem('refresh_token')
+    if (!storedRefresh) {
+      clearSession()
+      return false
+    }
+
+    try {
+      const response = await fetch(
+        `${KEYCLOAK_URL}/realms/${REALM}/protocol/openid-connect/token`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'refresh_token',
+            client_id: CLIENT_ID,
+            refresh_token: storedRefresh,
+          }),
+        }
+      )
+
+      if (response.status === 503) {
+        // Keycloak down — keep current session, retry in 30s
+        refreshTimerRef.current = setTimeout(() => refreshAccessToken(), 30000)
+        return false
+      }
+
+      if (!response.ok) {
+        // Refresh token expired or invalid — force re-login
+        clearSession()
+        return false
+      }
+
+      const data = await response.json()
+      return applyTokens(data.access_token, data.refresh_token)
+    } catch {
+      // Network error — retry in 30s
+      refreshTimerRef.current = setTimeout(() => refreshAccessToken(), 30000)
+      return false
+    }
+  }, [clearSession, applyTokens])
 
   // Check for existing session on mount
   useEffect(() => {
     const storedToken = localStorage.getItem('access_token')
-    const storedUser = localStorage.getItem('user')
 
-    if (storedToken && storedUser) {
-      setToken(storedToken)
-      setUser(JSON.parse(storedUser))
+    if (storedToken) {
+      if (isTokenExpired(storedToken)) {
+        // Token expired — try refresh
+        refreshAccessToken().finally(() => setLoading(false))
+        return
+      }
+      applyTokens(storedToken, localStorage.getItem('refresh_token'))
     }
     setLoading(false)
+  }, [])
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current)
+    }
   }, [])
 
   const login = async (username, password) => {
@@ -34,9 +148,7 @@ export function AuthProvider({ children }) {
         `${KEYCLOAK_URL}/realms/${REALM}/protocol/openid-connect/token`,
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: new URLSearchParams({
             grant_type: 'password',
             client_id: CLIENT_ID,
@@ -56,23 +168,7 @@ export function AuthProvider({ children }) {
       }
 
       const data = await response.json()
-
-      // Decode JWT to get user info
-      const payload = JSON.parse(atob(data.access_token.split('.')[1]))
-
-      const userInfo = {
-        username: payload.preferred_username,
-        email: payload.email,
-        name: payload.name,
-        roles: payload.roles || payload.realm_access?.roles || [],
-      }
-
-      setToken(data.access_token)
-      setUser(userInfo)
-
-      localStorage.setItem('access_token', data.access_token)
-      localStorage.setItem('refresh_token', data.refresh_token)
-      localStorage.setItem('user', JSON.stringify(userInfo))
+      applyTokens(data.access_token, data.refresh_token)
 
       // Redirect to root after login
       if (window.location.pathname !== '/') {
@@ -88,13 +184,7 @@ export function AuthProvider({ children }) {
     }
   }
 
-  const logout = () => {
-    setToken(null)
-    setUser(null)
-    localStorage.removeItem('access_token')
-    localStorage.removeItem('refresh_token')
-    localStorage.removeItem('user')
-  }
+  const logout = () => clearSession()
 
   const hasRole = (role) => {
     return user?.roles?.includes(role) || false

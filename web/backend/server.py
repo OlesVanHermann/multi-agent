@@ -1236,6 +1236,40 @@ async def get_agent_history(agent_id: str):
     return {"lines": lines, "file": str(history_file)}
 
 
+CHAT_STREAM = f"{MA_PREFIX}:devchat"
+
+
+class ChatMessage(BaseModel):
+    text: str
+    user: str = "anon"
+
+
+@app.get("/api/chat")
+async def get_chat(last: int = 50):
+    """Read last N dev chat messages from Redis stream."""
+    if not redis_pool:
+        return {"lines": []}
+    try:
+        raw = await redis_pool.xrevrange(CHAT_STREAM, count=last)
+        lines = []
+        for msg_id, data in reversed(raw):
+            lines.append(data.get("line", ""))
+        return {"lines": lines}
+    except Exception:
+        return {"lines": []}
+
+
+@app.post("/api/chat")
+async def post_chat(msg: ChatMessage):
+    """Post a dev chat message to Redis stream."""
+    if not redis_pool:
+        raise HTTPException(status_code=503, detail="Redis not available")
+    ts = time.strftime("%H:%M")
+    line = f"{ts} {msg.user}: {msg.text.replace(chr(10), ' ').replace(chr(13), '')}"
+    await redis_pool.xadd(CHAT_STREAM, {"line": line}, maxlen=200)
+    return {"status": "ok"}
+
+
 ALLOWED_KEYS = {"Enter", "C-c", "Escape", "C-u", "C-d", "C-l", "C-z", "Up", "Down", "Tab", "Space", "y", "n"}
 
 

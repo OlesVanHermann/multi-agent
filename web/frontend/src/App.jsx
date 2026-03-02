@@ -4,8 +4,9 @@ import AgentSidebarX45 from './components/AgentSidebarX45'
 import Terminal from './components/Terminal'
 import FileViewer from './components/FileViewer'
 import LoginModelPanel from './components/LoginModelPanel'
+import DevChat from './components/DevChat'
 import StatusBar from './components/StatusBar'
-import { useAuth } from './AuthProvider'
+import { useAuth, LoginForm } from './AuthProvider'
 import { api, wsUrl } from './basePath'
 
 // Polling timing options
@@ -27,7 +28,7 @@ function usePollSetting(key, defaultVal) {
 }
 
 function App() {
-  const { user, logout, isOperator } = useAuth()
+  const { user, logout, isOperator, isAuthenticated } = useAuth()
   const [agents, setAgents] = useState([])
   const [mode, setMode] = useState('pipeline')
   const [triangles, setTriangles] = useState({})
@@ -193,6 +194,8 @@ function App() {
     setActivePanel('agent')
   }
 
+  if (!isAuthenticated) return <LoginForm />
+
   const activeCount = agents.filter(a =>
     a.status === 'active' || a.status === 'busy' || a.status === 'idle'
   ).length
@@ -252,15 +255,21 @@ function App() {
               onAgentClick={handleAgentClick}
               onFileClick={handleFileClick}
               agentNames={agentNames}
+              chatElement={<DevChat />}
             />
           ) : (
-            <AgentGrid
-              agents={agents}
-              selectedAgent={selectedAgent}
-              controlAgent={controlPlane}
-              onAgentClick={handleAgentClick}
-              agentNames={agentNames}
-            />
+            <>
+              <AgentGrid
+                agents={agents}
+                selectedAgent={selectedAgent}
+                controlAgent={controlPlane}
+                onAgentClick={handleAgentClick}
+                agentNames={agentNames}
+              />
+              <div style={{height: '180px', borderTop: '1px solid var(--border-color)'}}>
+                <DevChat />
+              </div>
+            </>
           )}
         </section>
 

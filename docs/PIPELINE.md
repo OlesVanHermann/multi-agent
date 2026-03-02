@@ -351,7 +351,7 @@ Si Keycloak est down, le login retourne 503.
 ./framework/install_keycloak.sh
 
 # Changer un mot de passe utilisateur
-./framework/change_passwd_keycloak.sh octave nouveau-mdp
+./framework/keycloak_passwd_modify.sh octave nouveau-mdp
 
 # Vérifier que Keycloak est up
 curl -s http://localhost:8080/health/ready
@@ -378,7 +378,10 @@ Le frontend gère automatiquement :
 | `scripts/hub-release.sh` | mx9 | `/home/ubuntu/multi-agent/` | Tests + tag + push GitHub |
 | `hooks/post-receive` | mx9 | `/home/ubuntu/multi-agent.git/` | Log + auto-fetch à la réception |
 | `framework/install_keycloak.sh` | mx9/Mac | `~/multi-agent/` | Installe Docker + Keycloak (Mac/Ubuntu) |
-| `framework/change_passwd_keycloak.sh` | mx9/Mac | `~/multi-agent/` | Change mot de passe Keycloak via API |
+| `framework/keycloak_user_create.sh` | mx9/Mac | `~/multi-agent/` | Creer utilisateur Keycloak |
+| `framework/keycloak_user_list.sh` | mx9/Mac | `~/multi-agent/` | Lister utilisateurs Keycloak |
+| `framework/keycloak_user_delete.sh` | mx9/Mac | `~/multi-agent/` | Supprimer utilisateur Keycloak |
+| `framework/keycloak_passwd_modify.sh` | mx9/Mac | `~/multi-agent/` | Change mot de passe Keycloak via API |
 
 ---
 

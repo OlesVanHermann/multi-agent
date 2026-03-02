@@ -3,14 +3,53 @@ import React, { useState } from 'react'
 function getStatusColor(status) {
   switch (status) {
     case 'busy': return 'lightgreen'
+    case 'has_bashes': return 'green'
+    case 'plan_mode': return 'darkblue'
     case 'active': case 'idle': case 'stale': return 'gray'
     case 'starting': case 'waiting_approval': return 'blue'
     case 'context_warning': return 'orange'
     case 'context_compacted': return 'red'
-    case 'error': case 'blocked': return 'orange'
+    case 'error': case 'blocked': return 'darkred'
     case 'stopped': return 'darkgray'
     default: return 'gray'
   }
+}
+
+// Activity priority for composite triangle fill color
+const COLOR_PRIORITY = ['blue', 'darkblue', 'white', 'green', 'lightgreen', 'gray', 'darkgray']
+
+function getTriangleColors(workerId, triangleData, agentMap) {
+  // Collect all agents in this triangle
+  const memberIds = [workerId]
+  const roles = ['master', 'observer', 'indexer', 'curator', 'coach', 'tri_architect']
+  roles.forEach(r => { if (triangleData[r]) memberIds.push(triangleData[r]) })
+
+  let bestFill = 'darkgray'
+  let worstBorder = ''
+  let pulsing = false
+
+  memberIds.forEach(id => {
+    const a = agentMap[id]
+    if (!a) return
+    const color = getStatusColor(a.status)
+
+    // Fill: best activity level
+    const idx = COLOR_PRIORITY.indexOf(color)
+    const bestIdx = COLOR_PRIORITY.indexOf(bestFill)
+    if (idx !== -1 && idx < bestIdx) bestFill = color
+    if (idx === -1 && color === 'orange') bestFill = bestFill === 'darkgray' ? 'orange' : bestFill
+    if (idx === -1 && color === 'red') bestFill = bestFill === 'darkgray' ? 'red' : bestFill
+
+    // Border: worst problem
+    if (a.status === 'context_compacted' || a.status === 'error' || a.status === 'blocked') {
+      worstBorder = 'border-red'
+      pulsing = true
+    } else if (a.status === 'context_warning' && worstBorder !== 'border-red') {
+      worstBorder = 'border-orange'
+    }
+  })
+
+  return { fillColor: bestFill, borderColor: worstBorder, pulsing }
 }
 
 function getShortLabel(id, agentNames) {
@@ -60,7 +99,7 @@ function fp(agentId, type) {
   return `prompts/${parent}/${agentId}-${type}.md`
 }
 
-function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAgentClick, onFileClick, agentNames = {} }) {
+function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAgentClick, onFileClick, agentNames = {}, chatElement }) {
   const [selectedTriangle, setSelectedTriangle] = useState(null)
   const [selectedSatellite, setSelectedSatellite] = useState(null)
   const [hoveredTop, setHoveredTop] = useState(null)
@@ -87,6 +126,10 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
     if (triangleWorkerIds.has(agentId)) {
       const newTri = selectedTriangle === agentId ? null : agentId
       setSelectedTriangle(newTri)
+      setSelectedSatellite(null)
+    } else {
+      // Non-triangle agent: clear triangle/satellite selection
+      setSelectedTriangle(null)
       setSelectedSatellite(null)
     }
     onAgentClick(agentId)
@@ -427,12 +470,20 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
         })().map((row, ri) => (
           <div key={ri} className="x45-grid">
             {row.map(a => {
-              const color = getStatusColor(a.status)
+              let color, isPulsing, borderClass = ''
+              if (triangleWorkerIds.has(a.id) && triangles[a.id]) {
+                const tc = getTriangleColors(a.id, triangles[a.id], agentMap)
+                color = tc.fillColor
+                isPulsing = tc.pulsing
+                borderClass = tc.borderColor
+              } else {
+                color = getStatusColor(a.status)
+                isPulsing = a.status === 'context_compacted'
+              }
               const isSelected = a.id === selectedTriangle || a.id === selectedAgent || a.id === controlAgent
-              const isPulsing = a.status === 'context_compacted'
               return (
                 <div key={a.id}
-                  className={`agent-cell ${color} ${isSelected ? 'selected' : ''} ${isPulsing ? 'pulsing' : ''}`}
+                  className={`agent-cell ${color} ${borderClass} ${isSelected ? 'selected' : ''} ${isPulsing ? 'pulsing' : ''}`}
                   onMouseDown={e => e.preventDefault()}
                   onClick={() => handleTopClick(a.id)}
                   onMouseEnter={() => setHoveredTop(a.id)}
@@ -448,7 +499,9 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
       <div className="x45-third x45-border-top">{renderMiddle()}</div>
 
       {/* BOTTOM */}
-      <div className="x45-third x45-border-top">{renderBottom()}</div>
+      <div className="x45-third x45-border-top">
+        {selectedSatellite && selectedTri ? renderBottom() : (chatElement || <div className="x45-empty">{'\u00A0'}</div>)}
+      </div>
     </div>
   )
 }

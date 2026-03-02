@@ -156,6 +156,101 @@ if [ $ELAPSED -ge $MAX_WAIT ]; then
     exit 1
 fi
 
+# ── Ensure profile scope exists (for JWT preferred_username) ──
+
+log_info "Ensuring client scopes are configured..."
+
+KEYCLOAK_URL="${KEYCLOAK_URL:-http://localhost:8080}"
+KC_REALM="multi-agent"
+KC_CLIENT_ID="multi-agent-web"
+
+KC_ADMIN_TOKEN=$(curl -s --max-time 10 \
+    -d "grant_type=password&client_id=admin-cli&username=admin&password=admin" \
+    "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" 2>/dev/null \
+    | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null)
+
+if [ -n "$KC_ADMIN_TOKEN" ]; then
+    # Get client UUID
+    KC_CLIENT_UUID=$(curl -s -H "Authorization: Bearer $KC_ADMIN_TOKEN" \
+        "$KEYCLOAK_URL/admin/realms/$KC_REALM/clients?clientId=$KC_CLIENT_ID" 2>/dev/null \
+        | python3 -c "import sys,json; c=json.load(sys.stdin); print(c[0]['id'] if c else '')" 2>/dev/null)
+
+    if [ -n "$KC_CLIENT_UUID" ]; then
+        # Check if profile scope already exists
+        HAS_PROFILE=$(curl -s -H "Authorization: Bearer $KC_ADMIN_TOKEN" \
+            "$KEYCLOAK_URL/admin/realms/$KC_REALM/client-scopes" 2>/dev/null \
+            | python3 -c "import sys,json; print(any(s['name']=='profile' for s in json.load(sys.stdin)))" 2>/dev/null)
+
+        if [ "$HAS_PROFILE" != "True" ]; then
+            log_info "Creating 'profile' scope with preferred_username mapper..."
+
+            # Create profile scope
+            curl -s -X POST -H "Authorization: Bearer $KC_ADMIN_TOKEN" -H "Content-Type: application/json" \
+                "$KEYCLOAK_URL/admin/realms/$KC_REALM/client-scopes" \
+                -d '{"name":"profile","protocol":"openid-connect","attributes":{"include.in.token.scope":"true"}}' >/dev/null 2>&1
+
+            # Get profile scope ID
+            PROFILE_SCOPE_ID=$(curl -s -H "Authorization: Bearer $KC_ADMIN_TOKEN" \
+                "$KEYCLOAK_URL/admin/realms/$KC_REALM/client-scopes" 2>/dev/null \
+                | python3 -c "import sys,json; [print(s['id']) for s in json.load(sys.stdin) if s['name']=='profile']" 2>/dev/null)
+
+            if [ -n "$PROFILE_SCOPE_ID" ]; then
+                # Add preferred_username mapper
+                curl -s -X POST -H "Authorization: Bearer $KC_ADMIN_TOKEN" -H "Content-Type: application/json" \
+                    "$KEYCLOAK_URL/admin/realms/$KC_REALM/client-scopes/$PROFILE_SCOPE_ID/protocol-mappers/models" \
+                    -d '{"name":"preferred_username","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper","config":{"user.attribute":"username","claim.name":"preferred_username","jsonType.label":"String","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true"}}' >/dev/null 2>&1
+
+                # Add full name mapper
+                curl -s -X POST -H "Authorization: Bearer $KC_ADMIN_TOKEN" -H "Content-Type: application/json" \
+                    "$KEYCLOAK_URL/admin/realms/$KC_REALM/client-scopes/$PROFILE_SCOPE_ID/protocol-mappers/models" \
+                    -d '{"name":"full name","protocol":"openid-connect","protocolMapper":"oidc-full-name-mapper","config":{"id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true"}}' >/dev/null 2>&1
+
+                # Assign to client as default scope
+                curl -s -X PUT -H "Authorization: Bearer $KC_ADMIN_TOKEN" \
+                    "$KEYCLOAK_URL/admin/realms/$KC_REALM/clients/$KC_CLIENT_UUID/default-client-scopes/$PROFILE_SCOPE_ID" >/dev/null 2>&1
+
+                log_ok "Profile scope created and assigned"
+            fi
+        else
+            log_ok "Profile scope already exists"
+        fi
+
+        # Check if email scope exists
+        HAS_EMAIL=$(curl -s -H "Authorization: Bearer $KC_ADMIN_TOKEN" \
+            "$KEYCLOAK_URL/admin/realms/$KC_REALM/client-scopes" 2>/dev/null \
+            | python3 -c "import sys,json; print(any(s['name']=='email' for s in json.load(sys.stdin)))" 2>/dev/null)
+
+        if [ "$HAS_EMAIL" != "True" ]; then
+            log_info "Creating 'email' scope..."
+
+            curl -s -X POST -H "Authorization: Bearer $KC_ADMIN_TOKEN" -H "Content-Type: application/json" \
+                "$KEYCLOAK_URL/admin/realms/$KC_REALM/client-scopes" \
+                -d '{"name":"email","protocol":"openid-connect","attributes":{"include.in.token.scope":"true"}}' >/dev/null 2>&1
+
+            EMAIL_SCOPE_ID=$(curl -s -H "Authorization: Bearer $KC_ADMIN_TOKEN" \
+                "$KEYCLOAK_URL/admin/realms/$KC_REALM/client-scopes" 2>/dev/null \
+                | python3 -c "import sys,json; [print(s['id']) for s in json.load(sys.stdin) if s['name']=='email']" 2>/dev/null)
+
+            if [ -n "$EMAIL_SCOPE_ID" ]; then
+                curl -s -X POST -H "Authorization: Bearer $KC_ADMIN_TOKEN" -H "Content-Type: application/json" \
+                    "$KEYCLOAK_URL/admin/realms/$KC_REALM/client-scopes/$EMAIL_SCOPE_ID/protocol-mappers/models" \
+                    -d '{"name":"email","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper","config":{"user.attribute":"email","claim.name":"email","jsonType.label":"String","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true"}}' >/dev/null 2>&1
+
+                curl -s -X PUT -H "Authorization: Bearer $KC_ADMIN_TOKEN" \
+                    "$KEYCLOAK_URL/admin/realms/$KC_REALM/clients/$KC_CLIENT_UUID/default-client-scopes/$EMAIL_SCOPE_ID" >/dev/null 2>&1
+
+                log_ok "Email scope created and assigned"
+            fi
+        else
+            log_ok "Email scope already exists"
+        fi
+    else
+        log_warn "Client '$KC_CLIENT_ID' not found — scopes not configured"
+    fi
+else
+    log_warn "Could not get admin token — skipping scope check"
+fi
+
 # ── Summary ──
 
 echo ""
@@ -167,7 +262,10 @@ echo "  Admin console: http://localhost:8080/admin"
 echo "  Admin user:    admin / admin"
 echo "  Health check:  http://localhost:8080/health/ready"
 echo ""
-echo "  Change password:"
-echo "    ./framework/change_passwd_keycloak.sh <username> <new-password>"
+echo "  Manage users:"
+echo "    ./framework/keycloak_user_create.sh <username> <password>"
+echo "    ./framework/keycloak_user_list.sh"
+echo "    ./framework/keycloak_user_delete.sh <username>"
+echo "    ./framework/keycloak_passwd_modify.sh <username> <new-password>"
 echo ""
 echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
