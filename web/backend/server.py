@@ -54,6 +54,7 @@ REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 MA_PREFIX = os.environ.get("MA_PREFIX", "A")
 BASE_DIR = Path(os.environ.get("MA_BASE", Path.home() / "multi-agent"))
 PANEL_CONFIG_PATH = BASE_DIR / "web" / "panel-config.json"
+PROMPT_HISTORY_STREAM = f"{MA_PREFIX}:prompt:history"
 
 
 def _read_panel_config() -> dict:
@@ -378,6 +379,40 @@ async def _cache_loop():
         await asyncio.sleep(interval)
 
 
+async def _seed_prompt_history():
+    """Load existing .history files into Redis stream on startup."""
+    if not redis_pool:
+        return
+    try:
+        existing = await redis_pool.xlen(PROMPT_HISTORY_STREAM)
+        if existing > 0:
+            return  # already seeded
+        prompts_dir = BASE_DIR / "prompts"
+        all_entries = []
+        for hf in prompts_dir.glob("**/*.history"):
+            # Extract agent ID from filename (e.g. 305.history -> 305)
+            agent_id = hf.stem.split('-')[0]
+            for line in hf.read_text(errors="replace").splitlines():
+                if " | " not in line:
+                    continue
+                ts_part, text_part = line.split(" | ", 1)
+                ts_part = ts_part.strip()
+                # Parse "YYYY-MM-DD HH:MM:SS"
+                hm = ts_part[11:16] if len(ts_part) >= 16 else ts_part
+                all_entries.append((ts_part, hm, agent_id, text_part[:20]))
+        all_entries.sort(key=lambda x: x[0])
+        for _, hm, agent, text in all_entries[-50:]:
+            await redis_pool.xadd(
+                PROMPT_HISTORY_STREAM,
+                {"time": hm, "agent": agent, "text": text},
+                maxlen=50,
+            )
+        if all_entries:
+            print(f"Seeded prompt history: {min(len(all_entries), 50)} entries")
+    except Exception as e:
+        print(f"WARNING: Failed to seed prompt history: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown events"""
@@ -392,6 +427,9 @@ async def lifespan(app: FastAPI):
         print(f"Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
     except Exception as e:
         print(f"WARNING: Redis connection failed: {e}")
+
+    # Seed prompt history stream from existing .history files
+    await _seed_prompt_history()
 
     # Start background cache refresh
     _cache_task = asyncio.create_task(_cache_loop())
@@ -1234,6 +1272,25 @@ async def get_agent_history(agent_id: str):
     text = history_file.read_text(errors="replace")
     lines = [l for l in text.splitlines() if l.strip()]
     return {"lines": lines, "file": str(history_file)}
+
+
+@app.get("/api/history/recent")
+async def get_recent_history(n: int = 10):
+    """Return last N prompts (all agents) from Redis stream."""
+    if not redis_pool:
+        return {"entries": []}
+    try:
+        raw = await redis_pool.xrevrange(PROMPT_HISTORY_STREAM, count=n)
+        entries = []
+        for _msg_id, data in reversed(raw):
+            entries.append({
+                "time": data.get("time", ""),
+                "agent": data.get("agent", ""),
+                "text": data.get("text", ""),
+            })
+        return {"entries": entries}
+    except Exception:
+        return {"entries": []}
 
 
 CHAT_STREAM = f"{MA_PREFIX}:devchat"

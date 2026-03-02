@@ -1,4 +1,5 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
+import { api } from '../basePath'
 
 function getStatusColor(status) {
   switch (status) {
@@ -105,6 +106,19 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
   const [hoveredTop, setHoveredTop] = useState(null)
   const [hoveredMid, setHoveredMid] = useState(null)
   const [hoveredBot, setHoveredBot] = useState(null)
+  const [promptHistory, setPromptHistory] = useState([])
+
+  useEffect(() => {
+    const fetchHistory = () => {
+      fetch(api('api/history/recent?n=20'))
+        .then(r => r.ok ? r.json() : { entries: [] })
+        .then(d => setPromptHistory(d.entries || []))
+        .catch(() => {})
+    }
+    fetchHistory()
+    const iv = setInterval(fetchHistory, 5000)
+    return () => clearInterval(iv)
+  }, [])
 
   const agentMap = {}
   agents.forEach(a => { agentMap[a.id] = a })
@@ -202,7 +216,20 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
   //        Curator            Coach             Observer
   //
   const renderMiddle = () => {
-    if (!selectedTri) return <div className="x45-empty">{'\u00A0'}</div>
+    if (!selectedTri) return (
+      <div className="prompt-history">
+        {promptHistory.length === 0
+          ? <div className="x45-empty">{'\u00A0'}</div>
+          : promptHistory.map((e, i) => (
+            <div key={i} className="prompt-history-line">
+              <span className="ph-time">{e.time}</span>
+              <span className="ph-agent">{e.agent}</span>
+              <span className="ph-text">{e.text}</span>
+            </div>
+          ))
+        }
+      </div>
+    )
     const wid = selectedTriangle
 
     const boxClick = (path) => ({
@@ -220,7 +247,7 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
             const mid = selectedTri.master || `${wid}-1${wid.slice(1)}`
             return <LabeledCell id={mid} label={sfx(mid)} role="Master" agent={agentMap[mid]}
               isSelected={mid === selectedAgent || mid === controlAgent}
-              onClick={(id) => { setSelectedSatellite(id); onAgentClick(id) }}
+              onClick={handleSatelliteClick}
               onHover={setHoveredMid} onLeave={() => setHoveredMid(null)} />
           })()}
           <div />

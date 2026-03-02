@@ -11,7 +11,7 @@
   --text-primary: #e0e0e0;
   --text-secondary: #888;
   --border-color: #333;
-  --green: #00ff88;
+  --green: #1a8a4a;
   --orange: #ff9500;
   --red: #ff4444;
   --gray: #555;
@@ -191,9 +191,9 @@ body {
 .agent-cell.lightgreen { background: var(--lightgreen); color: #000; }
 .agent-cell.darkgray { background: #333; color: #666; }
 .agent-cell.yellow { background: var(--yellow); color: #000; }
-.agent-cell.darkred { background: var(--darkred); color: #ccc; }
-.agent-cell.white { background: #ddd; color: #000; }
-.agent-cell.darkblue { background: var(--darkblue); color: #aac; }
+.agent-cell.darkred { background: var(--darkred); color: #fff; }
+.agent-cell.white { background: #ffffff; color: #000; }
+.agent-cell.darkblue { background: var(--darkblue); color: #fff; }
 
 .agent-cell.border-red { box-shadow: inset 0 0 0 2px var(--red); }
 .agent-cell.border-orange { box-shadow: inset 0 0 0 2px var(--orange); }
@@ -1268,4 +1268,39 @@ body {
 
 .devchat-input input:focus {
   border-color: var(--blue);
+}
+
+/* Prompt history (middle section) */
+.prompt-history {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.3rem 0.5rem;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  min-height: 0;
+}
+
+.prompt-history-line {
+  display: flex;
+  gap: 0.4rem;
+  padding: 1px 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.ph-time {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.ph-agent {
+  color: var(--blue);
+  flex-shrink: 0;
+}
+
+.ph-text {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
