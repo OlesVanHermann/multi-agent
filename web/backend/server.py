@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
@@ -492,6 +492,26 @@ class PanelConfigUpdate(BaseModel):
     panel: str         # "control", "agent", or "" to remove override
 
 
+class CrontabCreate(BaseModel):
+    agent_id: str      # "300", "309", etc.
+    period: int        # 10, 30, 60, or 120
+    prompt: str        # prompt content
+
+class CrontabUpdate(BaseModel):
+    agent_id: str
+    period: int
+    prompt: Optional[str] = None
+    action: Optional[str] = None  # "suspend" or "resume"
+
+class CrontabDelete(BaseModel):
+    agent_id: str
+    period: int
+
+
+CRONTAB_DIR = BASE_DIR / "crontab"
+VALID_CRONTAB_PERIODS = {10, 30, 60, 120}
+
+
 # === Routes ===
 
 @app.get("/api/health")
@@ -825,6 +845,35 @@ async def read_prompt_file(path: str = "", reverse: bool = False):
     return {"path": path, "content": content}
 
 
+MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100 MB
+
+@app.post("/api/upload")
+async def upload_file(file: UploadFile):
+    """Upload a file to /tmp and return its path."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="no filename")
+    # Sanitize: strip path components, replace spaces, remove ..
+    safe_name = os.path.basename(file.filename).replace(" ", "_")
+    safe_name = re.sub(r'[^\w.\-]', '_', safe_name)
+    if not safe_name or safe_name.startswith('.'):
+        safe_name = f"upload_{int(time.time())}"
+    dest = Path("/tmp") / safe_name
+    size = 0
+    try:
+        with open(dest, "wb") as f:
+            while chunk := await file.read(8192):
+                size += len(chunk)
+                if size > MAX_UPLOAD_SIZE:
+                    dest.unlink(missing_ok=True)
+                    raise HTTPException(status_code=413, detail="file too large (max 100MB)")
+                f.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"upload failed: {e}")
+    return {"path": str(dest), "name": safe_name, "size": size}
+
+
 @app.get("/api/agents")
 async def list_agents():
     """List all agents — reads from background cache (instant)"""
@@ -1045,9 +1094,115 @@ async def update_panel_config(data: PanelConfigUpdate):
     return {"status": "ok", "overrides": overrides}
 
 
-@app.post("/api/agent/{agent_id}/restart")
-async def restart_agent(agent_id: str):
-    """Restart an agent via ./scripts/agent.sh restart <id>."""
+# === Crontab Config ===
+
+@app.get("/api/config/crontab")
+async def get_crontab():
+    """List all crontab entries (active + suspended)."""
+    CRONTAB_DIR.mkdir(parents=True, exist_ok=True)
+    entries = []
+    for f in sorted(CRONTAB_DIR.iterdir()):
+        if not f.is_file():
+            continue
+        name = f.name
+        suspended = name.endswith(".prompt.suspended")
+        if not suspended and not name.endswith(".prompt"):
+            continue
+        # Parse: {agent}_{period}.prompt[.suspended]
+        base = name.replace(".suspended", "")
+        m = re.match(r'^(\d{3}(?:-\d{3})?)_(\d+)\.prompt$', base)
+        if not m:
+            continue
+        try:
+            prompt = f.read_text(errors="replace").strip()
+        except Exception:
+            prompt = ""
+        entries.append({
+            "agent_id": m.group(1),
+            "period": int(m.group(2)),
+            "prompt": prompt,
+            "suspended": suspended,
+        })
+    return {"entries": entries}
+
+
+@app.post("/api/config/crontab")
+async def create_crontab(data: CrontabCreate):
+    """Create a new crontab entry."""
+    if not re.match(r'^\d{3}(-\d{3})?$', data.agent_id):
+        raise HTTPException(status_code=400, detail="invalid agent_id")
+    if data.period not in VALID_CRONTAB_PERIODS:
+        raise HTTPException(status_code=400, detail=f"period must be one of {sorted(VALID_CRONTAB_PERIODS)}")
+    if not data.prompt.strip():
+        raise HTTPException(status_code=400, detail="prompt cannot be empty")
+
+    CRONTAB_DIR.mkdir(parents=True, exist_ok=True)
+    filepath = CRONTAB_DIR / f"{data.agent_id}_{data.period}.prompt"
+    if filepath.exists() or filepath.with_suffix(".prompt.suspended").exists():
+        raise HTTPException(status_code=409, detail="Entry already exists")
+    filepath.write_text(data.prompt.strip() + "\n")
+    return {"status": "created", "file": filepath.name}
+
+
+@app.put("/api/config/crontab")
+async def update_crontab(data: CrontabUpdate):
+    """Update, suspend, or resume a crontab entry."""
+    if not re.match(r'^\d{3}(-\d{3})?$', data.agent_id):
+        raise HTTPException(status_code=400, detail="invalid agent_id")
+    if data.period not in VALID_CRONTAB_PERIODS:
+        raise HTTPException(status_code=400, detail=f"period must be one of {sorted(VALID_CRONTAB_PERIODS)}")
+
+    base = f"{data.agent_id}_{data.period}.prompt"
+    active = CRONTAB_DIR / base
+    suspended = CRONTAB_DIR / f"{base}.suspended"
+
+    if data.action == "suspend":
+        if not active.exists():
+            raise HTTPException(status_code=404, detail="Active entry not found")
+        active.rename(suspended)
+        return {"status": "suspended", "file": suspended.name}
+
+    elif data.action == "resume":
+        if not suspended.exists():
+            raise HTTPException(status_code=404, detail="Suspended entry not found")
+        suspended.rename(active)
+        return {"status": "resumed", "file": active.name}
+
+    else:
+        # Update prompt content
+        target = active if active.exists() else suspended if suspended.exists() else None
+        if not target:
+            raise HTTPException(status_code=404, detail="Entry not found")
+        if data.prompt is not None:
+            target.write_text(data.prompt.strip() + "\n")
+        return {"status": "updated", "file": target.name}
+
+
+@app.delete("/api/config/crontab")
+async def delete_crontab(data: CrontabDelete):
+    """Delete a crontab entry (moves to removed/)."""
+    if not re.match(r'^\d{3}(-\d{3})?$', data.agent_id):
+        raise HTTPException(status_code=400, detail="invalid agent_id")
+
+    base = f"{data.agent_id}_{data.period}.prompt"
+    active = CRONTAB_DIR / base
+    suspended = CRONTAB_DIR / f"{base}.suspended"
+
+    target = active if active.exists() else suspended if suspended.exists() else None
+    if not target:
+        raise HTTPException(status_code=404, detail="Entry not found")
+
+    # Safe remove: move to removed/
+    removed_dir = BASE_DIR / "removed"
+    removed_dir.mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    dest = removed_dir / f"{ts}_{target.name}"
+    target.rename(dest)
+    return {"status": "deleted", "moved_to": str(dest)}
+
+
+async def _agent_lifecycle(agent_id: str, action: str):
+    """Start, stop, or restart an agent via ./scripts/agent.sh."""
     if not re.match(r'^\d{3}(-\d{3})?$', agent_id):
         raise HTTPException(status_code=400, detail="invalid agent_id")
 
@@ -1057,19 +1212,34 @@ async def restart_agent(agent_id: str):
 
     try:
         result = await _run_subprocess(
-            ["bash", str(script), "restart", agent_id],
+            ["bash", str(script), action, agent_id],
             text=True, timeout=60
         )
         output = result.stdout.strip()
-        print(f"[restart] agent {agent_id}: {output}")
+        print(f"[{action}] agent {agent_id}: {output}")
 
         return {
-            "status": "restarted",
+            "status": action,
             "agent_id": agent_id,
             "output": output,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"restart failed: {e}")
+        raise HTTPException(status_code=500, detail=f"{action} failed: {e}")
+
+
+@app.post("/api/agent/{agent_id}/start")
+async def start_agent(agent_id: str):
+    return await _agent_lifecycle(agent_id, "start")
+
+
+@app.post("/api/agent/{agent_id}/stop")
+async def stop_agent(agent_id: str):
+    return await _agent_lifecycle(agent_id, "stop")
+
+
+@app.post("/api/agent/{agent_id}/restart")
+async def restart_agent(agent_id: str):
+    return await _agent_lifecycle(agent_id, "restart")
 
 
 @app.get("/api/agent/{agent_id}/events")

@@ -141,6 +141,13 @@ function App() {
   const [selectedFile, setSelectedFile] = useState(null)
   const [showLoginModel, setShowLoginModel] = useState(false)
   const [showColors, setShowColors] = useState(false)
+  const [showCrontab, setShowCrontab] = useState(false)
+  const [crontabEntries, setCrontabEntries] = useState([])
+  const [crontabForm, setCrontabForm] = useState(false)
+  const [crontabEdit, setCrontabEdit] = useState(null)
+  const [cronAgent, setCronAgent] = useState('')
+  const [cronPeriod, setCronPeriod] = useState(10)
+  const [cronPrompt, setCronPrompt] = useState('')
   const [panelConfig, setPanelConfig] = useState({})
 
   useEffect(() => {
@@ -194,6 +201,107 @@ function App() {
     setActivePanel('agent')
   }
 
+  // Crontab helpers
+  const fetchCrontab = async () => {
+    try {
+      const res = await fetch(api('api/config/crontab'))
+      const data = await res.json()
+      setCrontabEntries(data.entries || [])
+    } catch (err) { console.error('crontab fetch:', err) }
+  }
+
+  useEffect(() => { if (showCrontab) fetchCrontab() }, [showCrontab])
+
+  const cronCreate = async () => {
+    if (!cronAgent) return alert('Selectionnez un agent')
+    if (!cronPrompt.trim()) return alert('Le prompt ne peut pas etre vide')
+    const res = await fetch(api('api/config/crontab'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent_id: cronAgent, period: cronPeriod, prompt: cronPrompt })
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      return alert(err.detail || 'Erreur creation')
+    }
+    setCrontabForm(false); setCronAgent(''); setCronPeriod(10); setCronPrompt('')
+    fetchCrontab()
+  }
+
+  const cronUpdate = async () => {
+    if (!crontabEdit) return
+    if (!cronAgent) return alert('Selectionnez un agent')
+    if (!cronPrompt.trim()) return alert('Le prompt ne peut pas etre vide')
+    const agentChanged = cronAgent !== crontabEdit.agent_id
+    const periodChanged = cronPeriod !== crontabEdit.period
+    if (agentChanged || periodChanged) {
+      await fetch(api('api/config/crontab'), {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_id: crontabEdit.agent_id, period: crontabEdit.period })
+      })
+      const res = await fetch(api('api/config/crontab'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_id: cronAgent, period: cronPeriod, prompt: cronPrompt })
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        return alert(err.detail || 'Erreur modification')
+      }
+    } else {
+      await fetch(api('api/config/crontab'), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_id: crontabEdit.agent_id, period: crontabEdit.period, prompt: cronPrompt })
+      })
+    }
+    setCrontabEdit(null); setCrontabForm(false); setCronPrompt('')
+    fetchCrontab()
+  }
+
+  const cronSuspendResume = async (entry) => {
+    await fetch(api('api/config/crontab'), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent_id: entry.agent_id, period: entry.period, action: entry.suspended ? 'resume' : 'suspend' })
+    })
+    fetchCrontab()
+  }
+
+  const cronDelete = async (entry) => {
+    await fetch(api('api/config/crontab'), {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent_id: entry.agent_id, period: entry.period })
+    })
+    fetchCrontab()
+  }
+
+  const cronStartEdit = (entry) => {
+    setCrontabEdit(entry)
+    setCronAgent(entry.agent_id)
+    setCronPeriod(entry.period)
+    setCronPrompt(entry.prompt)
+    setCrontabForm(true)
+  }
+
+  const cronStartCopy = (entry) => {
+    setCrontabEdit(null)
+    setCronAgent(entry.agent_id)
+    setCronPeriod(entry.period)
+    setCronPrompt(entry.prompt)
+    setCrontabForm(true)
+  }
+
+  const cronStartNew = () => {
+    setCrontabEdit(null)
+    setCronAgent(agents.length > 0 ? agents[0].id : '')
+    setCronPeriod(10)
+    setCronPrompt('')
+    setCrontabForm(true)
+  }
+
   if (!isAuthenticated) return <LoginForm />
 
   const activeCount = agents.filter(a =>
@@ -208,15 +316,21 @@ function App() {
         <h1>MULTI-AGENT DASHBOARD</h1>
         <button
           className={`config-btn ${showLoginModel ? 'config-btn-active' : ''}`}
-          onClick={() => { setShowLoginModel(!showLoginModel); setShowColors(false) }}
+          onClick={() => { setShowLoginModel(!showLoginModel); setShowColors(false); setShowCrontab(false) }}
         >
           Login &amp; Model
         </button>
         <button
           className={`config-btn ${showColors ? 'config-btn-active' : ''}`}
-          onClick={() => { setShowColors(!showColors); setShowLoginModel(false) }}
+          onClick={() => { setShowColors(!showColors); setShowLoginModel(false); setShowCrontab(false) }}
         >
           Couleurs
+        </button>
+        <button
+          className={`config-btn ${showCrontab ? 'config-btn-active' : ''}`}
+          onClick={() => { setShowCrontab(!showCrontab); setShowLoginModel(false); setShowColors(false) }}
+        >
+          Crontab
         </button>
         <div className="header-right">
           <span className="poll-group">
@@ -295,32 +409,103 @@ function App() {
           <LoginModelPanel hidden={!showLoginModel} mode={mode} panelConfig={panelConfig} onPanelChange={handlePanelChange} />
           {showColors && (
             <div className="color-legend">
-              <h3>Couleurs des agents</h3>
+              <h3>Status — Couleurs</h3>
               <table>
-                <thead>
-                  <tr><th>Couleur</th><th>Statut</th></tr>
-                </thead>
+                <thead><tr><th>Status</th><th>Couleur</th><th>Description</th></tr></thead>
                 <tbody>
-                  <tr><td><span className="agent-cell lightgreen" style={{width:28,height:16,display:'inline-flex',fontSize:'0.5rem'}}>345</span></td><td>busy - travaille activement</td></tr>
-                  <tr><td><span className="agent-cell gray" style={{width:28,height:16,display:'inline-flex',fontSize:'0.5rem'}}>200</span></td><td>active / idle / stale</td></tr>
-                  <tr><td><span className="agent-cell blue" style={{width:28,height:16,display:'inline-flex',fontSize:'0.5rem'}}>000</span></td><td>starting / waiting_approval</td></tr>
-                  <tr><td><span className="agent-cell orange" style={{width:28,height:16,display:'inline-flex',fontSize:'0.5rem'}}>500</span></td><td>context_warning / error / blocked</td></tr>
-                  <tr><td><span className="agent-cell red" style={{width:28,height:16,display:'inline-flex',fontSize:'0.5rem'}}>100</span></td><td>context_compacted (pulsing)</td></tr>
-                  <tr><td><span className="agent-cell darkgray" style={{width:28,height:16,display:'inline-flex',fontSize:'0.5rem'}}>600</span></td><td>stopped</td></tr>
+                  <tr><td><span className="agent-cell blue" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Bleu</td><td>waiting_approval — En attente de confirmation</td></tr>
+                  <tr><td><span className="agent-cell darkblue" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Bleu fonce</td><td>plan_mode — Mode plan active</td></tr>
+                  <tr><td><span className="agent-cell white" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Blanc</td><td>starting — Demarrage en cours</td></tr>
+                  <tr><td><span className="agent-cell green" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Vert fonce</td><td>has_bashes — Bashes en cours d'execution</td></tr>
+                  <tr><td><span className="agent-cell lightgreen" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Vert clair</td><td>busy — Claude en cours (esc to interrupt)</td></tr>
+                  <tr><td><span className="agent-cell orange" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Orange</td><td>context_warning — Contexte restant 1-10%</td></tr>
+                  <tr><td><span className="agent-cell red" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Rouge</td><td>context_compacted — Contexte compacte</td></tr>
+                  <tr><td><span className="agent-cell darkred" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Rouge fonce</td><td>error / blocked — Erreur ou bloque</td></tr>
+                  <tr><td><span className="agent-cell gray" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Gris</td><td>idle / stale — Inactif</td></tr>
+                  <tr><td><span className="agent-cell darkgray" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Gris fonce</td><td>stopped — Arrete</td></tr>
                 </tbody>
               </table>
-              <h3 style={{marginTop:'1rem'}}>Priorite visuelle</h3>
-              <ol style={{fontSize:'0.75rem',color:'#ccc',paddingLeft:'1.2rem',lineHeight:'1.8'}}>
-                <li><strong style={{color:'var(--red)'}}>Rouge pulsant</strong> - context compacted, action urgente</li>
-                <li><strong style={{color:'var(--orange)'}}>Orange</strong> - warning / erreur / bloque</li>
-                <li><strong style={{color:'var(--lightgreen)'}}>Vert clair</strong> - busy, agent actif</li>
-                <li><strong style={{color:'var(--blue)'}}>Bleu</strong> - demarrage / attente approbation</li>
-                <li><strong style={{color:'var(--gray)'}}>Gris</strong> - actif mais idle</li>
-                <li><strong style={{color:'#666'}}>Gris fonce</strong> - arrete</li>
+              <h3 style={{marginTop:'1rem'}}>Priorite (haute → basse)</h3>
+              <ol style={{margin:'0.5rem 0',paddingLeft:'1.5rem',color:'#ccc',fontSize:'0.85rem'}}>
+                <li>context_limit / api_error</li>
+                <li>context_compacted (compacting)</li>
+                <li>plan_mode</li>
+                <li>has_bashes</li>
+                <li>busy</li>
+                <li>context_warning (1-10%)</li>
+                <li>active / idle</li>
               </ol>
             </div>
           )}
-          {!showLoginModel && !showColors && (selectedFile ? (
+          {showCrontab && (
+            <div className="crontab-split">
+              <div className="crontab-top">
+                <div className="crontab-header">
+                  <h3>TACHES PLANIFIEES</h3>
+                  <button className="crontab-add-btn" onClick={cronStartNew}>+ Nouveau</button>
+                </div>
+                <table className="crontab-table">
+                  <thead>
+                    <tr><th>Agent</th><th>Periode</th><th>Prompt</th><th>Status</th><th>Actions</th></tr>
+                  </thead>
+                  <tbody>
+                    {crontabEntries.map((e, i) => (
+                      <tr key={i} className={e.suspended ? 'crontab-suspended' : ''}>
+                        <td>{e.agent_id}</td>
+                        <td>{e.period} min</td>
+                        <td className="crontab-prompt-cell">{e.prompt.length > 60 ? e.prompt.slice(0, 60) + '...' : e.prompt}</td>
+                        <td><span className={`crontab-status ${e.suspended ? 'crontab-status-off' : 'crontab-status-on'}`}>{e.suspended ? 'Suspendu' : 'Actif'}</span></td>
+                        <td className="crontab-actions">
+                          <button title="Modifier" onClick={() => cronStartEdit(e)}>Modifier</button>
+                          <button title="Copier vers un autre agent/periode" onClick={() => cronStartCopy(e)}>Copier</button>
+                          <button title={e.suspended ? 'Reactiver la tache' : 'Suspendre la tache'} className={e.suspended ? 'crontab-resume' : 'crontab-suspend'} onClick={() => cronSuspendResume(e)}>
+                            {e.suspended ? 'Activer' : 'Suspendre'}
+                          </button>
+                          <button title="Supprimer la tache" className="crontab-del" onClick={() => cronDelete(e)}>Supprimer</button>
+                        </td>
+                      </tr>
+                    ))}
+                    {crontabEntries.length === 0 && (
+                      <tr><td colSpan={5} style={{textAlign:'center',color:'var(--text-secondary)',fontStyle:'italic'}}>Aucune tache planifiee</td></tr>
+                    )}
+                  </tbody>
+                </table>
+                {crontabForm && (
+                  <div className="crontab-form">
+                    <h4>{crontabEdit ? `Modifier ${crontabEdit.agent_id}-${crontabEdit.period}` : 'Nouvelle tache'}</h4>
+                    <div className="crontab-form-row">
+                      <label>Agent</label>
+                      <select value={cronAgent} onChange={e => setCronAgent(e.target.value)}>
+                        <option value="">--</option>
+                        {agents.map(a => <option key={a.id} value={a.id}>{a.id}</option>)}
+                      </select>
+                    </div>
+                    <div className="crontab-form-row">
+                      <label>Periode</label>
+                      <select value={cronPeriod} onChange={e => setCronPeriod(Number(e.target.value))}>
+                        {[10, 30, 60, 120].map(v => <option key={v} value={v}>{v} min</option>)}
+                      </select>
+                    </div>
+                    <div className="crontab-form-row">
+                      <label>Prompt</label>
+                      <textarea rows={3} value={cronPrompt} onChange={e => setCronPrompt(e.target.value)} placeholder="Contenu du prompt..." />
+                    </div>
+                    <div className="crontab-form-actions">
+                      <button onClick={crontabEdit ? cronUpdate : cronCreate}>
+                        {crontabEdit ? 'Modifier' : 'Ajouter'}
+                      </button>
+                      <button onClick={() => { setCrontabForm(false); setCrontabEdit(null) }}>Annuler</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="crontab-bottom">
+                <div className="crontab-terminal-header">SCHEDULER — 001-crontab</div>
+                <Terminal agentId="001-crontab" focused={activePanel === 'agent'} pollInterval={agentPoll} />
+              </div>
+            </div>
+          )}
+          {!showLoginModel && !showColors && !showCrontab && (selectedFile ? (
             <FileViewer filePath={selectedFile} />
           ) : selectedAgent ? (
             <Terminal agentId={selectedAgent} focused={activePanel === 'agent'} pollInterval={agentPoll} />
