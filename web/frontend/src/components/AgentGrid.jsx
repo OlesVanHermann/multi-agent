@@ -8,15 +8,16 @@ function AgentGrid({ agents, selectedAgent, controlAgent, onAgentClick, agentNam
   // Get status color based on server-reported status
   const getStatusColor = (status) => {
     switch (status) {
+      case 'has_bashes': return 'green'
       case 'busy': return 'lightgreen'
       case 'active': return 'gray'
-      case 'idle': return 'gray'
-      case 'stale': return 'gray'
-      case 'starting': case 'waiting_approval': return 'blue'
+      case 'idle': case 'stale': return 'gray'
+      case 'starting': return 'white'
+      case 'waiting_approval': return 'blue'
+      case 'plan_mode': return 'darkblue'
       case 'context_warning': return 'orange'
       case 'context_compacted': return 'red'
-      case 'error':
-      case 'blocked': return 'orange'
+      case 'error': case 'blocked': return 'darkred'
       case 'stopped': return 'darkgray'
       default: return 'gray'
     }

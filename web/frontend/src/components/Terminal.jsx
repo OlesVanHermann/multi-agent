@@ -13,6 +13,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   const outputRef = useRef(null)
   const wsRef = useRef(null)
   const inputRef = useRef(null)
+  const fileRef = useRef(null)
   const lastSentInput = useRef('')
   const syncTimeoutRef = useRef(null)
 
@@ -346,6 +347,36 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
     }
   }
 
+  const [uploading, setUploading] = useState(false)
+
+  const handleUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const res = await fetch(api('api/upload'), { method: 'POST', body: form })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        alert(`Upload failed: ${err.detail || res.statusText}`)
+        return
+      }
+      const data = await res.json()
+      setInput(prev => prev + data.path)
+      inputValueRef.current += data.path
+      lastLocalEditRef.current = Date.now()
+      setSyncing(true)
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
+      syncTimeoutRef.current = setTimeout(() => doSyncToTmux(inputValueRef.current), 150)
+    } catch (err) {
+      alert(`Upload error: ${err.message}`)
+    } finally {
+      setUploading(false)
+      e.target.value = ''
+    }
+  }
+
   const handleTerminalClick = (e) => {
     // Don't steal focus from buttons or if user is selecting text
     if (e.target.closest('button') || e.target.closest('textarea')) return
@@ -362,6 +393,9 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
         {paused && <span className="pause-indicator"> ⏸</span>}
         <button onClick={toggleHistory} className={`config-btn${showHistory ? ' config-btn-active' : ''}`}
           style={{marginLeft:'auto'}} title="Voir historique des prompts">{showHistory ? 'terminal' : 'historique'}</button>
+        <input type="file" ref={fileRef} hidden onChange={handleUpload} />
+        <button onClick={() => fileRef.current?.click()} className="config-btn" title="Upload file to /tmp" disabled={uploading}>
+          {uploading ? '...' : 'upload'}</button>
       </div>
       <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <pre className="terminal-output" ref={outputRef} onScroll={handleScroll}

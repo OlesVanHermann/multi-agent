@@ -81,20 +81,20 @@ function LoginModelPanel({ mode, panelConfig, onPanelChange, hidden }) {
     }
   }
 
-  const handleRestart = async (agentId) => {
+  const handleAction = async (agentId, action) => {
     if (activeRestart) return // already one in flight
     const until = Date.now() + RESTART_COOLDOWN * 1000
     setRestartUntil(prev => ({ ...prev, [agentId]: until }))
     setActiveRestart(agentId)
     setError(null)
     try {
-      const res = await fetch(api(`api/agent/${agentId}/restart`), { method: 'POST' })
+      const res = await fetch(api(`api/agent/${agentId}/${action}`), { method: 'POST' })
       if (!res.ok) {
         const detail = await res.json().catch(() => ({}))
         throw new Error(detail.detail || `HTTP ${res.status}`)
       }
     } catch (err) {
-      setError(`restart ${agentId}: ${err.message}`)
+      setError(`${action} ${agentId}: ${err.message}`)
     } finally {
       setActiveRestart(null)
     }
@@ -137,7 +137,7 @@ function LoginModelPanel({ mode, panelConfig, onPanelChange, hidden }) {
             <th>Login</th>
             <th>Model</th>
             <th>Panel</th>
-            <th>Restart</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -231,14 +231,18 @@ function LoginModelPanel({ mode, panelConfig, onPanelChange, hidden }) {
                   })()}
                 </td>
                 <td>
-                  <button
-                    className={`lm-restart-btn ${isThis ? 'lm-restarting' : ''} ${isCooling ? 'lm-restarting' : ''}`}
-                    onClick={() => handleRestart(agent.id)}
-                    disabled={isCooling || blocked || isThis}
-                    title={blocked ? 'Wait for current restart to finish' : `./scripts/agent.sh restart ${agent.id}`}
-                  >
-                    {isThis ? '...' : isCooling ? `${remaining}s` : 'restart'}
-                  </button>
+                  <span className="lm-actions-group">
+                    {['start', 'stop', 'restart'].map(act => (
+                      <button key={act}
+                        className={`lm-restart-btn ${isThis ? 'lm-restarting' : ''}`}
+                        onClick={() => handleAction(agent.id, act)}
+                        disabled={isCooling || blocked || isThis}
+                        title={`./scripts/agent.sh ${act} ${agent.id}`}
+                      >
+                        {isThis ? '...' : isCooling ? `${remaining}s` : act}
+                      </button>
+                    ))}
+                  </span>
                 </td>
               </tr>
             )
