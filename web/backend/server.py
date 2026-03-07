@@ -508,6 +508,11 @@ class CrontabDelete(BaseModel):
     period: int
 
 
+class EffortUpdate(BaseModel):
+    agent_id: str      # "300" or "default"
+    level: str         # "L", "M", "H", or "" to remove override
+
+
 CRONTAB_DIR = BASE_DIR / "crontab"
 VALID_CRONTAB_PERIODS = {10, 30, 60, 120}
 
@@ -892,6 +897,111 @@ async def list_agents():
     return result
 
 
+@app.get("/api/usage")
+async def get_usage():
+    """Return Claude Code token usage from Redis (updated every 30min)."""
+    if not redis_pool:
+        return {"global": {}, "sessions": []}
+
+    # Global totals
+    g = await redis_pool.hgetall("mi:usage:global")
+
+    # Active session IDs
+    sids = await redis_pool.smembers("mi:usage:sessions")
+
+    # Per-session details
+    sessions = []
+    for sid in sorted(sids):
+        data = await redis_pool.hgetall(f"mi:usage:session:{sid}")
+        if data:
+            data["id"] = sid
+            sessions.append(data)
+
+    # Plan usage bars — read per-profile JSON files
+    profiles = {}
+    usage_glob = str(BASE_DIR / "keepalive" / "usage_*.json")
+    for fpath in _glob.glob(usage_glob):
+        try:
+            with open(fpath) as _f:
+                pdata = json.load(_f)
+                pname = pdata.get("profile", "")
+                if pname and pdata.get("bars"):
+                    profiles[pname] = pdata
+        except Exception:
+            pass
+
+    # Aggregate: take max % per bar label across profiles
+    plan = None
+    if profiles:
+        agg = {}
+        for pdata in profiles.values():
+            for b in pdata["bars"]:
+                lbl = b["label"]
+                if lbl not in agg or b["percent"] > agg[lbl]["percent"]:
+                    agg[lbl] = b
+        plan = {
+            "bars": list(agg.values()),
+            "profiles": profiles,
+            "last_scan": max(p.get("last_scan", 0) for p in profiles.values()),
+        }
+
+    return {"global": g, "sessions": sessions, "plan": plan}
+
+
+@app.get("/api/usage/{agent_id}")
+async def get_usage_for_agent(agent_id: str):
+    """Return plan usage bars for the login associated with this agent."""
+    prompts_dir = BASE_DIR / "prompts"
+
+    # Resolve login
+    login = None
+
+    # Special case: keepalive agents 002-{profile}
+    if agent_id.startswith("002-"):
+        login = agent_id[4:]
+    else:
+        for candidate in [agent_id, agent_id.split("-")[0]]:
+            lf = prompts_dir / f"{candidate}.login"
+            if lf.exists():
+                try:
+                    if lf.is_symlink():
+                        login = Path(os.readlink(lf)).stem
+                    else:
+                        login = lf.read_text().strip()
+                except Exception:
+                    pass
+                if login:
+                    break
+        if not login:
+            dl = prompts_dir / "default.login"
+            if dl.exists():
+                try:
+                    login = Path(os.readlink(dl)).stem if dl.is_symlink() else dl.read_text().strip()
+                except Exception:
+                    login = "claude1a"
+
+    # Read keepalive/usage_{login}.json
+    candidates = [login]
+    if login and login.endswith("a"):
+        candidates.append(login[:-1] + "b")
+    elif login and login.endswith("b"):
+        candidates.append(login[:-1] + "a")
+
+    for candidate_login in candidates:
+        usage_file = BASE_DIR / "keepalive" / f"usage_{candidate_login}.json"
+        if usage_file.exists():
+            try:
+                with open(usage_file) as f:
+                    data = json.load(f)
+                    if data.get("bars"):
+                        data["login"] = login
+                        return data
+            except Exception:
+                pass
+
+    return {"login": login, "bars": [], "last_scan": 0}
+
+
 @app.get("/api/agent/{agent_id}")
 async def get_agent(agent_id: str):
     """Get single agent details"""
@@ -946,6 +1056,12 @@ async def get_logins_models():
     elif dm.exists():
         default_model = models[0] if models else ""
 
+    # Read default effort
+    default_effort = "H"
+    de = prompts_dir / "default.effort"
+    if de.exists():
+        default_effort = de.read_text().strip() or "H"
+
     # Gather agent IDs from cache + x45 detection
     agent_ids = set()
     x45_base_ids = set()  # bare IDs that are x45 groups (not standalone agents)
@@ -996,12 +1112,26 @@ async def get_logins_models():
             agent_model = default_model
             model_source = "default"
 
+        # Effort: agent override -> parent override -> default
+        effort_file = prompts_dir / f"{aid}.effort"
+        if effort_file.exists():
+            agent_effort = effort_file.read_text().strip()
+            effort_source = "override"
+        elif parent_id and (prompts_dir / f"{parent_id}.effort").exists():
+            agent_effort = (prompts_dir / f"{parent_id}.effort").read_text().strip()
+            effort_source = "default"
+        else:
+            agent_effort = default_effort
+            effort_source = "default"
+
         agents.append({
             "id": aid,
             "login": agent_login,
             "login_source": login_source,
             "model": agent_model,
             "model_source": model_source,
+            "effort": agent_effort,
+            "effort_source": effort_source,
         })
 
     return {
@@ -1009,6 +1139,7 @@ async def get_logins_models():
         "models": models,
         "default_login": default_login,
         "default_model": default_model,
+        "default_effort": default_effort,
         "agents": agents,
     }
 
@@ -1046,6 +1177,30 @@ async def update_login_model(data: LoginModelUpdate):
     link_path.symlink_to(f"{data.value}.{data.type}")
 
     return {"status": "updated", "agent_id": data.agent_id, "type": data.type, "value": data.value}
+
+
+@app.post("/api/config/effort")
+async def update_effort(data: EffortUpdate):
+    """Create, update, or remove an effort override for an agent."""
+    prompts_dir = BASE_DIR / "prompts"
+
+    if data.agent_id != "default" and not re.match(r'^\d{3}(-\d{3})?$', data.agent_id):
+        raise HTTPException(status_code=400, detail="invalid agent_id")
+
+    if data.level == "":
+        if data.agent_id == "default":
+            raise HTTPException(status_code=400, detail="cannot remove default effort")
+        effort_path = prompts_dir / f"{data.agent_id}.effort"
+        if effort_path.exists():
+            effort_path.unlink()
+        return {"status": "removed", "agent_id": data.agent_id}
+
+    if data.level not in ("L", "M", "H"):
+        raise HTTPException(status_code=400, detail="level must be L, M, or H")
+
+    effort_path = prompts_dir / f"{data.agent_id}.effort"
+    effort_path.write_text(data.level + "\n")
+    return {"status": "updated", "agent_id": data.agent_id, "level": data.level}
 
 
 @app.get("/api/config/tmux-width")
@@ -1659,7 +1814,7 @@ async def post_chat(msg: ChatMessage):
     return {"status": "ok"}
 
 
-ALLOWED_KEYS = {"Enter", "C-c", "Escape", "C-u", "C-d", "C-l", "C-z", "Up", "Down", "Tab", "Space", "y", "n"}
+ALLOWED_KEYS = {"Enter", "C-c", "Escape", "C-u", "C-d", "C-l", "C-z", "Up", "Down", "Left", "Right", "Tab", "Space", "y", "n"}
 
 
 @app.post("/api/agent/{agent_id}/keys")

@@ -659,6 +659,53 @@ body {
   font-size: 0.7rem;
 }
 
+.usage-bars {
+  display: inline-flex;
+  gap: 0.8rem;
+  margin-left: auto;
+  margin-right: 0.4rem;
+  align-items: center;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.usage-bar-profile {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.usage-bar-name {
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  margin-right: 2px;
+}
+.usage-bar-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.75rem;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
+.usage-bar-track {
+  display: inline-block;
+  width: 3.5rem;
+  height: 0.65rem;
+  background: #222;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.usage-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--green, #4caf50);
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+.usage-bar-pct {
+  color: var(--text-primary);
+  font-size: 0.7rem;
+  min-width: 1.5rem;
+}
+
 .terminal-output {
   flex: 1;
   padding: 0.75rem;
@@ -756,6 +803,11 @@ body {
 .terminal-input .key-btn.danger:hover {
   color: var(--red);
   border-color: var(--red);
+}
+
+.key-group {
+  display: inline-flex;
+  gap: 1px;
 }
 
 /* No selection state */
@@ -1314,6 +1366,65 @@ body {
 .lm-actions-group {
   display: inline-flex;
   gap: 2px;
+}
+
+.usage-panel {
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.55rem;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
+.usage-header {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-primary);
+  font-weight: bold;
+  margin-bottom: 2px;
+}
+.usage-sessions { color: var(--text-secondary); font-weight: normal; }
+.usage-row {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-secondary);
+}
+.usage-msgs {
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+.lm-effort-toggle {
+  display: inline-flex;
+  gap: 1px;
+}
+.lm-effort-btn {
+  padding: 0.1rem 0.35rem;
+  font-family: inherit;
+  font-size: 0.65rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.lm-effort-btn:first-child {
+  border-radius: 3px 0 0 3px;
+}
+.lm-effort-btn:last-child {
+  border-radius: 0 3px 3px 0;
+}
+.lm-effort-btn:hover {
+  border-color: var(--blue);
+  color: var(--text-primary);
+}
+.lm-effort-btn.lm-effort-active {
+  background: var(--blue);
+  color: var(--bg-primary);
+  border-color: var(--blue);
+}
+.lm-effort-btn.lm-effort-override {
+  background: var(--blue);
+  color: var(--bg-primary);
+  border-color: var(--blue);
+  box-shadow: 0 0 0 1px var(--blue);
 }
 
 /* Crontab split layout */

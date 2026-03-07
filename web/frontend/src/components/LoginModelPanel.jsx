@@ -101,6 +101,20 @@ function LoginModelPanel({ mode, panelConfig, onPanelChange, hidden, runningAgen
     }
   }
 
+  const handleEffort = async (agentId, level) => {
+    try {
+      const res = await fetch(api('api/config/effort'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_id: agentId, level }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      await fetchData()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   const handlePanelToggle = async (agentId, panel) => {
     const def = getDefaultPanel(agentId, mode)
     const sendPanel = panel === def ? '' : panel
@@ -126,7 +140,7 @@ function LoginModelPanel({ mode, panelConfig, onPanelChange, hidden, runningAgen
   if (error && !data) return <div className="login-model-panel" style={{ display: hidden ? 'none' : undefined }}><p style={{ color: 'var(--red)' }}>Error: {error}</p></div>
   if (!data) return <div className="login-model-panel" style={{ display: hidden ? 'none' : undefined }}><p style={{ color: 'var(--text-secondary)' }}>Loading...</p></div>
 
-  const { logins, models, default_login, default_model, agents } = data
+  const { logins, models, default_login, default_model, default_effort, agents } = data
 
   return (
     <div className="login-model-panel" style={{ display: hidden ? 'none' : undefined }}>
@@ -137,6 +151,7 @@ function LoginModelPanel({ mode, panelConfig, onPanelChange, hidden, runningAgen
             <th>Agent</th>
             <th>Login</th>
             <th>Model</th>
+            <th>Effort</th>
             <th>Panel</th>
             <th>Actions</th>
           </tr>
@@ -145,7 +160,7 @@ function LoginModelPanel({ mode, panelConfig, onPanelChange, hidden, runningAgen
           {/* Tmux width row */}
           <tr className="lm-default-row">
             <td><strong>tmux</strong></td>
-            <td colSpan="4">
+            <td colSpan="5">
               <span className="lm-width-group">
                 {TMUX_WIDTH_OPTIONS.map(w => (
                   <button
@@ -180,6 +195,16 @@ function LoginModelPanel({ mode, panelConfig, onPanelChange, hidden, runningAgen
               >
                 {models.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
+            </td>
+            <td>
+              <span className="lm-effort-toggle">
+                {['L', 'M', 'H'].map(lvl => (
+                  <button key={lvl}
+                    className={`lm-effort-btn ${(default_effort || 'H') === lvl ? 'lm-effort-active' : ''}`}
+                    onClick={() => handleEffort('default', lvl)}
+                  >{lvl}</button>
+                ))}
+              </span>
             </td>
             <td></td>
             <td></td>
@@ -221,6 +246,20 @@ function LoginModelPanel({ mode, panelConfig, onPanelChange, hidden, runningAgen
                     <option value="">({default_model})</option>
                     {models.map(m => <option key={m} value={m}>{m}</option>)}
                   </select>
+                </td>
+                <td>
+                  <span className="lm-effort-toggle">
+                    {['L', 'M', 'H'].map(lvl => {
+                      const isActive = agent.effort === lvl
+                      const isOverride = agent.effort_source === 'override'
+                      return (
+                        <button key={lvl}
+                          className={`lm-effort-btn ${isActive ? (isOverride ? 'lm-effort-override' : 'lm-effort-active') : ''}`}
+                          onClick={() => handleEffort(agent.id, isActive && isOverride ? '' : lvl)}
+                        >{lvl}</button>
+                      )
+                    })}
+                  </span>
                 </td>
                 <td>
                   {(() => {

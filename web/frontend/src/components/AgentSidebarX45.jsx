@@ -61,6 +61,13 @@ function getShortLabel(id, agentNames) {
   return id
 }
 
+function fmtTokens(n) {
+  n = parseInt(n) || 0
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M'
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K'
+  return String(n)
+}
+
 function AgentCell({ id, label, agent, isSelected, onClick, onHover, onLeave, big }) {
   const color = agent ? getStatusColor(agent.status) : 'darkgray'
   const isPulsing = agent && agent.status === 'context_compacted'
@@ -109,6 +116,14 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
   const [hoveredMid, setHoveredMid] = useState(null)
   const [hoveredBot, setHoveredBot] = useState(null)
   const [promptHistory, setPromptHistory] = useState([])
+  const [usage, setUsage] = useState(null)
+
+  useEffect(() => {
+    fetch(api('api/usage'))
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setUsage(d))
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     const fetchHistory = () => {

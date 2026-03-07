@@ -1,6 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { api, wsUrl } from '../basePath'
 
+function UsageBars({ usage }) {
+  if (!usage) return null
+  return (
+    <span className="usage-bars">
+      <span className="usage-bar-name">{usage.login}</span>
+      {usage.bars?.length ? usage.bars.map((b, i) => (
+        <span key={i} className="usage-bar-item" title={`${b.label}: ${b.percent}% used${b.resets ? ' — Resets ' + b.resets : ''}`}>
+          <span className="usage-bar-track">
+            <span className="usage-bar-fill" style={{width: `${Math.min(b.percent, 100)}%`}} />
+          </span>
+          <span className="usage-bar-pct">{b.percent}%</span>
+        </span>
+      )) : <span className="usage-bar-pct" title="Usage data unavailable (personal account)">N/A</span>}
+    </span>
+  )
+}
+
 function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   const [output, setOutput] = useState('')
   const [input, setInput] = useState('')
@@ -10,12 +27,22 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   const [paused, setPaused] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
   const [historyLines, setHistoryLines] = useState(null)
+  const [planUsage, setPlanUsage] = useState(null)
   const outputRef = useRef(null)
   const wsRef = useRef(null)
   const inputRef = useRef(null)
   const fileRef = useRef(null)
   const lastSentInput = useRef('')
   const syncTimeoutRef = useRef(null)
+
+  // Fetch plan usage for this agent's login
+  useEffect(() => {
+    if (!agentId) return
+    fetch(api(`api/usage/${agentId}`))
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.login) setPlanUsage(d) })
+      .catch(() => {})
+  }, [agentId])
 
   // Scroll/pause refs
   const userScrolledRef = useRef(false)
@@ -391,8 +418,9 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
         Agent {agentId} {connected ? '(live)' : '(disconnected)'}
         {syncing && <span className="sync-indicator"> ⟳</span>}
         {paused && <span className="pause-indicator"> ⏸</span>}
+        <UsageBars usage={planUsage} />
         <button onClick={toggleHistory} className={`config-btn${showHistory ? ' config-btn-active' : ''}`}
-          style={{marginLeft:'auto'}} title="Voir historique des prompts">{showHistory ? 'terminal' : 'historique'}</button>
+          title="Voir historique des prompts">{showHistory ? 'terminal' : 'historique'}</button>
         <input type="file" ref={fileRef} hidden onChange={handleUpload} />
         <button onClick={() => fileRef.current?.click()} className="config-btn" title="Upload file to /tmp" disabled={uploading}>
           {uploading ? '...' : 'upload'}</button>
@@ -438,18 +466,16 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
           placeholder={`Co-edit with tmux...`}
           disabled={sending}
         />
-        <button onClick={handleSubmit} disabled={sending} title="Send (Enter)">
-          ⏎
-        </button>
-        <button onClick={() => sendKeys('Escape')} className="key-btn" title="Escape">
-          Esc
-        </button>
-        <button onClick={() => sendKeys('C-c')} className="key-btn danger" title="Ctrl+C">
-          ^C
-        </button>
-        <button onClick={() => sendKeys('Down')} className="key-btn" title="Down arrow (↓ to view)">
-          ↓
-        </button>
+        <span className="key-group">
+          <button onClick={handleSubmit} disabled={sending} title="Send (Enter)">⏎</button>
+          <button onClick={() => sendKeys('Escape')} className="key-btn" title="Escape">Esc</button>
+          <button onClick={() => sendKeys('C-c')} className="key-btn danger" title="Ctrl+C">^C</button>
+        </span>
+        <span className="key-group">
+          <button onClick={() => sendKeys('Left')} className="key-btn" title="Left arrow">←</button>
+          <button onClick={() => sendKeys('Down')} className="key-btn" title="Down arrow">↓</button>
+          <button onClick={() => sendKeys('Right')} className="key-btn" title="Right arrow">→</button>
+        </span>
       </div>
     </div>
   )

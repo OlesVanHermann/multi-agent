@@ -18,9 +18,11 @@ Launch in tmux:
 
 import os
 import re
+import json
 import time
 import glob
 import subprocess
+import concurrent.futures
 import redis
 
 CRONTAB_DIR = os.environ.get("CRONTAB_DIR", os.path.join(os.path.dirname(__file__), "..", "crontab"))
@@ -31,6 +33,8 @@ MA_PREFIX = os.environ.get("MA_PREFIX", "A")
 
 VALID_PERIODS = {10, 30, 60, 120}
 KEEPALIVE_PERIOD = 1440  # 24 hours
+USAGE_PERIOD = 30  # minutes
+CLAUDE_PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
 TICK_INTERVAL = 10  # seconds
 
 # Track last execution to avoid double-fire within same aligned window
@@ -120,48 +124,348 @@ def scan_and_execute(r):
             print(f"ERROR sending to {agent_id}: {e}")
 
 
+KEEPALIVE_USAGE_PERIOD = 30  # minutes — scrape /settings Usage every 30 min
+
+
+def _scrape_usage_tab(session_name):
+    """Send /status to a tmux session, capture info, navigate to Usage tab, scrape, Escape.
+
+    Process: /status Enter → capture info → Right → Right → scrape usage → Escape
+
+    Returns (bars, info) tuple. bars is list of dicts or None, info is dict.
+    """
+    try:
+        subprocess.run(
+            ["tmux", "send-keys", "-t", session_name, "/status", "Enter"],
+            timeout=5
+        )
+        time.sleep(2)
+
+        # Capture Status tab (info fields)
+        cap_info = subprocess.run(
+            ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-30"],
+            capture_output=True, text=True, timeout=5
+        )
+        info = {}
+        if cap_info.returncode == 0:
+            for line in cap_info.stdout.split('\n'):
+                line = line.strip()
+                for field in ["Login method", "Organization", "Email", "Model", "cwd", "Memory"]:
+                    if line.startswith(f"{field}:"):
+                        info[field.lower().replace(" ", "_")] = line.split(":", 1)[1].strip()
+
+        # Navigate: Status → Config → Usage (Right, Right — one at a time)
+        subprocess.run(
+            ["tmux", "send-keys", "-t", session_name, "Right"],
+            timeout=5
+        )
+        time.sleep(1)
+        subprocess.run(
+            ["tmux", "send-keys", "-t", session_name, "Right"],
+            timeout=5
+        )
+
+        # Wait for usage data to load
+        # Poll every 2s up to 10s total
+        output = ""
+        for _ in range(5):
+            time.sleep(2)
+            cap = subprocess.run(
+                ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-30"],
+                capture_output=True, text=True, timeout=5
+            )
+            output = cap.stdout
+            if "% used" in output:
+                break
+            if "Loading" not in output:
+                break  # dialog closed or something else
+
+        # Close settings
+        subprocess.run(
+            ["tmux", "send-keys", "-t", session_name, "Escape"],
+            timeout=5
+        )
+
+        # Parse bars: "Current session\n  ██████▌   15% used\n  Resets ..."
+        bars = []
+        lines = output.split("\n")
+        for i, line in enumerate(lines):
+            pct_match = re.search(r'(\d+)%\s+used', line)
+            if not pct_match:
+                continue
+            pct = int(pct_match.group(1))
+            label = ""
+            for j in range(i - 1, max(i - 4, -1), -1):
+                stripped = lines[j].strip()
+                if stripped.startswith("Current") or stripped.startswith("Daily") or stripped.startswith("Weekly"):
+                    label = stripped
+                    break
+            resets = ""
+            for j in range(i + 1, min(i + 3, len(lines))):
+                reset_match = re.search(r'Resets\s+(.+)', lines[j])
+                if reset_match:
+                    resets = reset_match.group(1).strip()
+                    break
+            bars.append({"label": label, "percent": pct, "resets": resets})
+
+        return (bars if bars else None, info)
+
+    except Exception as e:
+        # Try to close settings on error
+        try:
+            subprocess.run(
+                ["tmux", "send-keys", "-t", session_name, "Escape"],
+                timeout=5
+            )
+        except Exception:
+            pass
+        ts = time.strftime("%H:%M:%S")
+        print(f"{ts} KEEPALIVE usage scrape error [{session_name}]: {e}")
+        return (None, {})
+
+
 def scan_keepalive():
-    """Scan keepalive dir and send heartbeat to active sessions."""
+    """Scan keepalive dir: heartbeat (24h) + usage scraping (30min)."""
     now = time.localtime()
     minute = now.tm_min
     hour = now.tm_hour
 
-    if not is_aligned(minute, hour, KEEPALIVE_PERIOD):
+    do_heartbeat = is_aligned(minute, hour, KEEPALIVE_PERIOD)
+    do_usage = is_aligned(minute, hour, KEEPALIVE_USAGE_PERIOD)
+
+    if not do_heartbeat and not do_usage:
         return
 
     pattern = os.path.join(KEEPALIVE_DIR, "*.active")
     for filepath in glob.glob(pattern):
         filename = os.path.basename(filepath)
         profile = filename.replace(".active", "")
-
-        # Double-fire check
-        key = fire_key(hour, minute, KEEPALIVE_PERIOD)
-        fkey = f"keepalive:{profile}"
-        if _last_fired.get(fkey) == key:
-            continue
-
-        # Read prompt content
-        try:
-            with open(filepath, 'r') as f:
-                prompt = f.read().strip() or "/status"
-        except Exception:
-            prompt = "/status"
-
-        # Send via tmux send-keys (no bridge needed)
         session = f"{MA_PREFIX}-agent-002-{profile}"
-        try:
-            result = subprocess.run(
-                ["tmux", "send-keys", "-t", session, prompt, "Enter"],
-                capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0:
-                _last_fired[fkey] = key
-                ts = time.strftime("%H:%M:%S")
-                print(f"{ts} KEEPALIVE profile={profile} prompt={prompt[:40]}")
-            else:
-                print(f"KEEPALIVE SKIP {profile}: session not found")
-        except Exception as e:
-            print(f"KEEPALIVE ERROR {profile}: {e}")
+
+        # --- Heartbeat (every 24h) ---
+        # Just send Escape (close any open dialog) + Space + Backspace
+        # to keep the session alive without opening /status dialog.
+        if do_heartbeat:
+            hb_key = fire_key(hour, minute, KEEPALIVE_PERIOD)
+            fkey = f"keepalive:{profile}"
+            if _last_fired.get(fkey) != hb_key:
+                try:
+                    subprocess.run(
+                        ["tmux", "send-keys", "-t", session, "Escape"],
+                        capture_output=True, timeout=5
+                    )
+                    time.sleep(0.3)
+                    subprocess.run(
+                        ["tmux", "send-keys", "-t", session, " "],
+                        capture_output=True, timeout=5
+                    )
+                    result = subprocess.run(
+                        ["tmux", "send-keys", "-t", session, "BSpace"],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if result.returncode == 0:
+                        _last_fired[fkey] = hb_key
+                        ts = time.strftime("%H:%M:%S")
+                        print(f"{ts} KEEPALIVE heartbeat {profile}")
+                    else:
+                        print(f"KEEPALIVE SKIP {profile}: session not found")
+                except Exception as e:
+                    print(f"KEEPALIVE ERROR {profile}: {e}")
+
+    # --- Usage scraping (every 30min) — all profiles in parallel ---
+    if do_usage:
+        usage_key = fire_key(hour, minute, KEEPALIVE_USAGE_PERIOD)
+        profiles_to_scrape = []
+        for filepath in glob.glob(pattern):
+            filename = os.path.basename(filepath)
+            profile = filename.replace(".active", "")
+            session = f"{MA_PREFIX}-agent-002-{profile}"
+            ukey = f"keepalive_usage:{profile}"
+            if _last_fired.get(ukey) != usage_key:
+                # Check tmux session exists
+                check = subprocess.run(
+                    ["tmux", "has-session", "-t", session],
+                    capture_output=True, timeout=5
+                )
+                if check.returncode != 0:
+                    _last_fired[ukey] = usage_key
+                    continue
+                profiles_to_scrape.append((profile, session))
+
+        if profiles_to_scrape:
+            def _scrape_one(args):
+                profile, session = args
+                bars, info = _scrape_usage_tab(session)
+
+                # Write static info file
+                if info:
+                    info_path = os.path.join(KEEPALIVE_DIR, f"info_{profile}.json")
+                    try:
+                        with open(info_path, "w") as f:
+                            json.dump(info, f, indent=2)
+                    except Exception:
+                        pass
+                usage_data = {
+                    "profile": profile,
+                    "bars": bars or [],
+                    "last_scan": int(time.time()),
+                }
+                out_path = os.path.join(KEEPALIVE_DIR, f"usage_{profile}.json")
+                try:
+                    with open(out_path, "w") as f:
+                        json.dump(usage_data, f, indent=2)
+                except Exception as e:
+                    ts = time.strftime("%H:%M:%S")
+                    print(f"{ts} KEEPALIVE usage write error {out_path}: {e}")
+
+                if bars:
+                    bar_summary = " | ".join(f"{b['percent']}%" for b in bars)
+                    ts = time.strftime("%H:%M:%S")
+                    print(f"{ts} KEEPALIVE usage {profile}: {bar_summary}")
+                else:
+                    ts = time.strftime("%H:%M:%S")
+                    print(f"{ts} KEEPALIVE usage {profile}: no bars (personal account?)")
+                return profile
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(profiles_to_scrape)) as pool:
+                for profile in pool.map(_scrape_one, profiles_to_scrape):
+                    _last_fired[f"keepalive_usage:{profile}"] = usage_key
+
+
+def scan_usage(r):
+    """Scan Claude Code JSONL sessions and publish usage to Redis."""
+    now = time.localtime()
+    if not is_aligned(now.tm_min, now.tm_hour, USAGE_PERIOD):
+        return
+
+    key = fire_key(now.tm_hour, now.tm_min, USAGE_PERIOD)
+    if _last_fired.get("usage_scan") == key:
+        return
+
+    cutoff = time.time() - 86400  # 24h
+
+    global_totals = {
+        "input_tokens": 0, "output_tokens": 0,
+        "cache_read": 0, "cache_creation": 0,
+        "total_sessions": 0, "total_messages": 0,
+    }
+    active_sessions = []
+
+    try:
+        project_dirs = glob.glob(CLAUDE_PROJECTS_DIR + "/*/")
+    except Exception:
+        project_dirs = []
+
+    for project_dir in project_dirs:
+        project_name = os.path.basename(project_dir.rstrip("/"))
+
+        for jsonl_path in glob.glob(project_dir + "*.jsonl"):
+            try:
+                if os.path.getmtime(jsonl_path) < cutoff:
+                    continue
+            except OSError:
+                continue
+
+            session_file = os.path.basename(jsonl_path)
+            session_id = session_file.replace(".jsonl", "")[:8]
+
+            # Parse JSONL: deduplicate by message ID (streaming sends multiple chunks)
+            msg_usage = {}  # msg_id -> {usage dict}
+            model = ""
+            last_activity = 0
+
+            try:
+                with open(jsonl_path, "r") as f:
+                    for line in f:
+                        try:
+                            obj = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        msg = obj.get("message")
+                        if not isinstance(msg, dict):
+                            continue
+                        usage = msg.get("usage")
+                        if not usage:
+                            continue
+                        mid = msg.get("id", "")
+                        if not mid:
+                            continue
+                        msg_usage[mid] = usage
+                        if msg.get("model"):
+                            model = msg["model"]
+            except Exception:
+                continue
+
+            if not msg_usage:
+                continue
+
+            # Sum usage across deduplicated messages
+            s_input = 0
+            s_output = 0
+            s_cache_read = 0
+            s_cache_creation = 0
+
+            for usage in msg_usage.values():
+                s_input += usage.get("input_tokens", 0)
+                s_output += usage.get("output_tokens", 0)
+                s_cache_read += usage.get("cache_read_input_tokens", 0)
+                s_cache_creation += usage.get("cache_creation_input_tokens", 0)
+
+            msg_count = len(msg_usage)
+
+            try:
+                last_activity = int(os.path.getmtime(jsonl_path))
+            except OSError:
+                last_activity = 0
+
+            # Publish per-session
+            session_key = f"mi:usage:session:{session_id}"
+            try:
+                r.hset(session_key, mapping={
+                    "project": project_name,
+                    "model": model,
+                    "input_tokens": s_input,
+                    "output_tokens": s_output,
+                    "cache_read": s_cache_read,
+                    "cache_creation": s_cache_creation,
+                    "messages": msg_count,
+                    "last_activity": last_activity,
+                })
+                r.expire(session_key, 86400)
+            except Exception:
+                pass
+
+            active_sessions.append(session_id)
+
+            global_totals["input_tokens"] += s_input
+            global_totals["output_tokens"] += s_output
+            global_totals["cache_read"] += s_cache_read
+            global_totals["cache_creation"] += s_cache_creation
+            global_totals["total_sessions"] += 1
+            global_totals["total_messages"] += msg_count
+
+    # Publish global totals
+    global_totals["last_scan"] = int(time.time())
+    try:
+        r.hset("mi:usage:global", mapping=global_totals)
+        # Update active sessions set
+        if active_sessions:
+            r.delete("mi:usage:sessions")
+            r.sadd("mi:usage:sessions", *active_sessions)
+        else:
+            r.delete("mi:usage:sessions")
+    except Exception:
+        pass
+
+    _last_fired["usage_scan"] = key
+    ts = time.strftime("%H:%M:%S")
+    print(f"{ts} USAGE sessions={global_totals['total_sessions']} "
+          f"messages={global_totals['total_messages']} "
+          f"input={global_totals['input_tokens']} "
+          f"output={global_totals['output_tokens']} "
+          f"cache_read={global_totals['cache_read']} "
+          f"cache_creation={global_totals['cache_creation']}")
+
 
 
 def main():
@@ -182,6 +486,7 @@ def main():
         try:
             scan_and_execute(r)
             scan_keepalive()
+            scan_usage(r)
         except redis.ConnectionError as e:
             print(f"Redis connection lost: {e}, retrying...")
         except Exception as e:
