@@ -7,7 +7,8 @@ function getStatusColor(status) {
     case 'has_bashes': return 'green'
     case 'plan_mode': return 'darkblue'
     case 'active': case 'idle': case 'stale': return 'gray'
-    case 'starting': case 'waiting_approval': return 'blue'
+    case 'starting': return 'white'
+    case 'waiting_approval': return 'blue'
     case 'context_warning': return 'orange'
     case 'context_compacted': return 'red'
     case 'error': case 'blocked': return 'darkred'
@@ -21,7 +22,8 @@ const COLOR_PRIORITY = ['blue', 'darkblue', 'white', 'green', 'lightgreen', 'gra
 
 function getTriangleColors(workerId, triangleData, agentMap) {
   // Collect all agents in this triangle
-  const memberIds = [workerId]
+  const mainId = triangleData.worker || workerId
+  const memberIds = [mainId]
   const roles = ['master', 'observer', 'indexer', 'curator', 'coach', 'tri_architect']
   roles.forEach(r => { if (triangleData[r]) memberIds.push(triangleData[r]) })
 
@@ -123,17 +125,21 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
   const agentMap = {}
   agents.forEach(a => { agentMap[a.id] = a })
 
-  const triangleWorkerIds = new Set(
-    Object.entries(triangles || {})
-      .filter(([, tri]) => {
-        const sats = ['master', 'observer', 'indexer', 'curator', 'coach', 'tri_architect']
-        return sats.some(role => tri[role] && agentMap[tri[role]])
-      })
-      .map(([id]) => id)
-  )
+  const triangleWorkerIds = new Set(Object.keys(triangles || {}))
 
-  const rootAgents = agents
-    .filter(a => !a.id.includes('-'))
+  // Build root agents: non-compound agents + virtual entries for x45 groups with running agents
+  const hiddenIds = new Set(['001', '002'])
+  const x45GroupIds = new Set(Object.keys(triangles || {}))
+  const nonCompound = agents.filter(a => !a.id.includes('-') && !hiddenIds.has(a.id))
+  const seenBareIds = new Set(nonCompound.map(a => a.id))
+  // Add virtual root for x45 groups that have at least one running agent
+  const virtualRoots = []
+  x45GroupIds.forEach(gid => {
+    if (seenBareIds.has(gid)) return
+    const hasRunning = agents.some(a => a.id.startsWith(gid + '-'))
+    if (hasRunning) virtualRoots.push({ id: gid, status: 'stopped' })
+  })
+  const rootAgents = [...nonCompound, ...virtualRoots]
     .sort((a, b) => parseInt(a.id) - parseInt(b.id))
 
   const handleTopClick = (agentId) => {
@@ -141,12 +147,15 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
       const newTri = selectedTriangle === agentId ? null : agentId
       setSelectedTriangle(newTri)
       setSelectedSatellite(null)
+      // Use compound worker ID for terminal
+      const tri = triangles[agentId]
+      onAgentClick(tri?.worker || agentId)
     } else {
-      // Non-triangle agent: clear triangle/satellite selection
+      // Mono agent: clear triangle selection
       setSelectedTriangle(null)
       setSelectedSatellite(null)
+      onAgentClick(agentId)
     }
-    onAgentClick(agentId)
   }
 
   const handleSatelliteClick = (satId) => {
@@ -231,6 +240,7 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
       </div>
     )
     const wid = selectedTriangle
+    const mainId = selectedTri.worker || wid
 
     const boxClick = (path) => ({
       onClick: () => onFileClick(path),
@@ -266,25 +276,25 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
 
           {/* R3: SYSTEM (box top, center) */}
           <div /><div />
-          <div className="tri-box-t" {...boxClick(fp(wid, 'system'))}>SYSTEM</div>
+          <div className="tri-box-t" {...boxClick(fp(mainId, 'system'))}>SYSTEM</div>
           <div /><div />
 
           {/* R4-R5: OUTPUT → [345 span2] → [OUTPUT span2] */}
           <div className="tri-dir">OUTPUT</div>
           <div className="tri-garrow" />
           <div className="tri-box-m" style={{ gridRow: 'span 2' }}>
-            <AgentCell {...mkCell(wid, true, setHoveredMid)} />
+            <AgentCell {...mkCell(mainId, true, setHoveredMid)} />
           </div>
           <div className="tri-garrow" style={{ gridRow: 'span 2' }} />
           <div className="tri-dir" style={{ gridRow: 'span 2' }}>OUTPUT</div>
 
           {/* R5: MEMORY → [345 cont.] */}
-          <FileBox {...mkFile(fp(wid, 'memory'), 'MEMORY', setHoveredMid)} />
+          <FileBox {...mkFile(fp(mainId, 'memory'), 'MEMORY', setHoveredMid)} />
           <div className="tri-garrow" />
 
           {/* R6: ↑ _ METHODOLOGY (box bottom) */}
           <div className="tri-garrow-up" /><div />
-          <div className="tri-box-b" {...boxClick(fp(wid, 'methodology'))}>METHODOLOGY</div>
+          <div className="tri-box-b" {...boxClick(fp(mainId, 'methodology'))}>METHODOLOGY</div>
           <div /><div />
 
           {/* R7: │ _ ↑ _ ↓ */}
@@ -343,6 +353,7 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
 
     const role = satRole(selectedSatellite)
     const wid = selectedTriangle
+    const mainId = selectedTri.worker || wid
     const sid = selectedSatellite
     const roleNames = { master: 'Master', observer: 'Observer', indexer: 'Indexer', curator: 'Curator', coach: 'Coach', tri_architect: 'Architect' }
 
@@ -395,10 +406,10 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
       )
     } else if (role === 'curator') {
       input1El = <InfoBox lines={[`${sfx(selectedTri.observer) || '545'}`, 'output']} />
-      outputEl = <FileBox {...mkFile(fp(wid, 'memory'), `${wid}-memory`, setHoveredBot)} />
+      outputEl = <FileBox {...mkFile(fp(mainId, 'memory'), `${wid}-memory`, setHoveredBot)} />
     } else if (role === 'coach') {
       input1El = <InfoBox lines={[`${sfx(selectedTri.observer) || '545'}`, 'bilans']} />
-      outputEl = <FileBox {...mkFile(fp(wid, 'methodology'), `${wid}-method.`, setHoveredBot)} />
+      outputEl = <FileBox {...mkFile(fp(mainId, 'methodology'), `${wid}-method.`, setHoveredBot)} />
     } else if (role === 'master') {
       input1El = <InfoBox lines={['project', 'config']} />
       outputEl = <InfoBox lines={['dispatch', 'pipeline']} />
@@ -406,7 +417,7 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
       const outputFiles = []
       if (selectedTri.indexer) outputFiles.push({ path: fp(selectedTri.indexer, 'system'), label: `${sfx(selectedTri.indexer)}-sys` })
       if (selectedTri.curator) outputFiles.push({ path: fp(selectedTri.curator, 'system'), label: `${sfx(selectedTri.curator)}-sys` })
-      outputFiles.push({ path: fp(wid, 'system'), label: `${wid}-sys` })
+      outputFiles.push({ path: fp(mainId, 'system'), label: `${wid}-sys` })
       if (selectedTri.observer) outputFiles.push({ path: fp(selectedTri.observer, 'system'), label: `${sfx(selectedTri.observer)}-sys` })
       if (selectedTri.coach) outputFiles.push({ path: fp(selectedTri.coach, 'system'), label: `${sfx(selectedTri.coach)}-sys` })
 

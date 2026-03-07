@@ -142,6 +142,10 @@ function App() {
   const [showLoginModel, setShowLoginModel] = useState(false)
   const [showColors, setShowColors] = useState(false)
   const [showCrontab, setShowCrontab] = useState(false)
+  const [showKeepAlive, setShowKeepAlive] = useState(false)
+  const [keepAliveEntries, setKeepAliveEntries] = useState([])
+  const [keepAliveInfo, setKeepAliveInfo] = useState({})
+  const [selectedKeepAlive, setSelectedKeepAlive] = useState(null)
   const [crontabEntries, setCrontabEntries] = useState([])
   const [crontabForm, setCrontabForm] = useState(false)
   const [crontabEdit, setCrontabEdit] = useState(null)
@@ -302,6 +306,50 @@ function App() {
     setCrontabForm(true)
   }
 
+  // Keep Alive helpers
+  const kaProbe = async (profile) => {
+    try {
+      const res = await fetch(api('api/config/keepalive/probe'), {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ profile })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setKeepAliveInfo(prev => ({ ...prev, [profile]: data.info }))
+      }
+    } catch (err) { console.error('probe:', err) }
+  }
+
+  const fetchKeepAlive = async () => {
+    try {
+      const res = await fetch(api('api/config/keepalive'))
+      const data = await res.json()
+      const entries = data.entries || []
+      setKeepAliveEntries(entries)
+      for (const e of entries) {
+        if (e.running) kaProbe(e.profile)
+      }
+    } catch (err) { console.error('keepalive fetch:', err) }
+  }
+
+  useEffect(() => { if (showKeepAlive) fetchKeepAlive() }, [showKeepAlive])
+
+  const kaStart = async (profile) => {
+    await fetch(api('api/config/keepalive/start'), {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ profile })
+    })
+    fetchKeepAlive()
+  }
+
+  const kaStop = async (profile) => {
+    await fetch(api('api/config/keepalive/stop'), {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ profile })
+    })
+    fetchKeepAlive()
+  }
+
   if (!isAuthenticated) return <LoginForm />
 
   const activeCount = agents.filter(a =>
@@ -316,21 +364,27 @@ function App() {
         <h1>MULTI-AGENT DASHBOARD</h1>
         <button
           className={`config-btn ${showLoginModel ? 'config-btn-active' : ''}`}
-          onClick={() => { setShowLoginModel(!showLoginModel); setShowColors(false); setShowCrontab(false) }}
+          onClick={() => { setShowLoginModel(!showLoginModel); setShowColors(false); setShowCrontab(false); setShowKeepAlive(false) }}
         >
           Login &amp; Model
         </button>
         <button
           className={`config-btn ${showColors ? 'config-btn-active' : ''}`}
-          onClick={() => { setShowColors(!showColors); setShowLoginModel(false); setShowCrontab(false) }}
+          onClick={() => { setShowColors(!showColors); setShowLoginModel(false); setShowCrontab(false); setShowKeepAlive(false) }}
         >
           Couleurs
         </button>
         <button
           className={`config-btn ${showCrontab ? 'config-btn-active' : ''}`}
-          onClick={() => { setShowCrontab(!showCrontab); setShowLoginModel(false); setShowColors(false) }}
+          onClick={() => { setShowCrontab(!showCrontab); setShowLoginModel(false); setShowColors(false); setShowKeepAlive(false) }}
         >
           Crontab
+        </button>
+        <button
+          className={`config-btn ${showKeepAlive ? 'config-btn-active' : ''}`}
+          onClick={() => { setShowKeepAlive(!showKeepAlive); setShowLoginModel(false); setShowColors(false); setShowCrontab(false) }}
+        >
+          Keep Alive
         </button>
         <div className="header-right">
           <span className="poll-group">
@@ -351,7 +405,7 @@ function App() {
               {FETCH_OPTIONS.map(v => <option key={v} value={v}>{v}s</option>)}
             </select>
           </span>
-          <span className="user">{user?.username || 'guest'}</span>
+          <span className="poll-label">{user?.username}</span>
           <button onClick={logout} className="logout-btn">Logout</button>
         </div>
       </header>
@@ -406,7 +460,7 @@ function App() {
           <div className="panel-header">
             <h2>AGENT {selectedAgent ? `(${selectedAgent}) — ${agentNames[selectedAgent.split('-')[0]] || getAgentType(selectedAgent)}` : '---'}</h2>
           </div>
-          <LoginModelPanel hidden={!showLoginModel} mode={mode} panelConfig={panelConfig} onPanelChange={handlePanelChange} />
+          <LoginModelPanel hidden={!showLoginModel} mode={mode} panelConfig={panelConfig} onPanelChange={handlePanelChange} runningAgents={agents} />
           {showColors && (
             <div className="color-legend">
               <h3>Status — Couleurs</h3>
@@ -505,7 +559,58 @@ function App() {
               </div>
             </div>
           )}
-          {!showLoginModel && !showColors && !showCrontab && (selectedFile ? (
+          {showKeepAlive && (
+            <div className="crontab-split">
+              <div className="crontab-top">
+                <div className="crontab-header">
+                  <h3>LOGIN KEEP ALIVE</h3>
+                </div>
+                <table className="crontab-table keepalive-table">
+                  <thead>
+                    <tr><th>Profil</th><th>Login</th><th>Org</th><th>Email</th><th>CWD</th><th>Actions</th></tr>
+                  </thead>
+                  <tbody>
+                    {keepAliveEntries.map((e) => {
+                      const ki = keepAliveInfo[e.profile]
+                      return (
+                      <tr key={e.profile}>
+                        <td>
+                          <button
+                            className={`crontab-status ${e.running ? 'crontab-status-on' : 'crontab-status-off'} ka-profile-btn`}
+                            onClick={() => setSelectedKeepAlive(e.session)}
+                          >{e.profile}</button>
+                        </td>
+                        <td className="keepalive-info">{ki ? (ki.login_method || '?').slice(0, 20) : (e.running ? '...' : '—')}</td>
+                        <td className="keepalive-info">{ki ? (ki.organization || '?').slice(0, 20) : ''}</td>
+                        <td className="keepalive-info">{ki ? (ki.email || '?').slice(0, 20) : ''}</td>
+                        <td className="keepalive-info">{ki ? './' + (ki.cwd || '').split('/').filter(Boolean).pop() + '/' : ''}</td>
+                        <td className="crontab-actions">
+                          {e.running
+                            ? <button className="crontab-suspend" onClick={() => kaStop(e.profile)}>Stop</button>
+                            : <button className="crontab-resume" onClick={() => kaStart(e.profile)}>Start</button>
+                          }
+                        </td>
+                      </tr>
+                      )
+                    })}
+                    {keepAliveEntries.length === 0 && (
+                      <tr><td colSpan={6} style={{textAlign:'center',color:'var(--text-secondary)',fontStyle:'italic'}}>Aucun profil de login</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="crontab-bottom">
+                <div className="crontab-terminal-header">
+                  KEEPALIVE — {selectedKeepAlive || '(cliquez un profil)'}
+                </div>
+                {selectedKeepAlive
+                  ? <Terminal agentId={selectedKeepAlive} focused={activePanel === 'agent'} pollInterval={agentPoll} />
+                  : <div className="no-selection">Selectionnez un login pour voir son terminal</div>
+                }
+              </div>
+            </div>
+          )}
+          {!showLoginModel && !showColors && !showCrontab && !showKeepAlive && (selectedFile ? (
             <FileViewer filePath={selectedFile} />
           ) : selectedAgent ? (
             <Terminal agentId={selectedAgent} focused={activePanel === 'agent'} pollInterval={agentPoll} />

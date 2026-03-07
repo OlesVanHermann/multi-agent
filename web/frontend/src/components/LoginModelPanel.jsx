@@ -11,7 +11,8 @@ function getDefaultPanel(agentId, mode) {
   return isControl ? 'control' : 'agent'
 }
 
-function LoginModelPanel({ mode, panelConfig, onPanelChange, hidden }) {
+function LoginModelPanel({ mode, panelConfig, onPanelChange, hidden, runningAgents }) {
+  const runningIds = new Set((runningAgents || []).map(a => a.id))
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
   const [restartUntil, setRestartUntil] = useState({}) // { agentId: epoch_ms }
@@ -184,14 +185,23 @@ function LoginModelPanel({ mode, panelConfig, onPanelChange, hidden }) {
             <td></td>
           </tr>
           {/* Agent rows */}
-          {agents.map(agent => {
+          {agents.map((agent, idx) => {
             const remaining = getRemaining(agent.id)
             const isCooling = remaining > 0
             const isThis = activeRestart === agent.id
             const blocked = !!activeRestart && !isThis
+            const group = agent.id.split('-')[0]
+            const isCompound = agent.id.includes('-')
+            const prevGroup = idx > 0 ? agents[idx - 1].id.split('-')[0] : group
+            const prevCompound = idx > 0 ? agents[idx - 1].id.includes('-') : isCompound
+            const modeBreak = idx > 0 && isCompound !== prevCompound
+            const groupBreak = idx > 0 && !modeBreak && group !== prevGroup
+            const breakClass = modeBreak ? 'lm-mode-break' : groupBreak ? (isCompound ? 'lm-mode-break' : 'lm-group-break') : ''
             return (
-              <tr key={agent.id}>
-                <td>{agent.id}</td>
+              <tr key={agent.id} className={breakClass}>
+                <td style={{ color: runningIds.has(agent.id) ? 'var(--lightgreen)' : 'var(--text-secondary)' }}>
+                  {runningIds.has(agent.id) ? `(${agent.id})` : agent.id}
+                </td>
                 <td>
                   <select
                     className={`lm-select ${agent.login_source === 'override' ? 'lm-override' : ''}`}

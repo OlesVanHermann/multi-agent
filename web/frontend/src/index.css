@@ -1096,6 +1096,12 @@ body {
   color: var(--text-primary);
 }
 
+.lm-group-break td {
+  border-top: 1px solid var(--border-color);
+}
+.lm-mode-break td {
+  border-top: 3px solid var(--border-color);
+}
 .lm-default-row td {
   border-bottom: 2px solid var(--border-color);
   padding-top: 0.5rem;
@@ -1539,4 +1545,26 @@ body {
 
 .crontab-form-actions button:hover {
   color: var(--text-primary);
+}
+
+.keepalive-info {
+  font-size: 0.65rem;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.keepalive-table {
+  table-layout: auto;
+}
+
+.keepalive-table th,
+.keepalive-table td {
+  padding: 0.3rem 0.35rem;
+}
+
+.ka-profile-btn {
+  cursor: pointer;
+  background: transparent;
 }

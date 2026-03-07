@@ -58,15 +58,17 @@ find_dir() {
 }
 
 # Derive all 6 agent IDs from a base ID
+# Main agent uses compound format: {id}-{id} (e.g. 352-352)
 derive_ids() {
     local id="$1"
     SUFFIX="${id:1}"
+    MAIN="${id}-${id}"
     MASTER="${id}-1${SUFFIX}"
     OBSERVER="${id}-5${SUFFIX}"
     CURATOR="${id}-7${SUFFIX}"
     COACH="${id}-8${SUFFIX}"
     ARCHITECT="${id}-9${SUFFIX}"
-    ALL_AGENTS=("$id" "$MASTER" "$OBSERVER" "$CURATOR" "$COACH" "$ARCHITECT")
+    ALL_AGENTS=("$MAIN" "$MASTER" "$OBSERVER" "$CURATOR" "$COACH" "$ARCHITECT")
 }
 
 # Stop all agents of a triangle (agent.sh auto-expands x45)
@@ -292,8 +294,9 @@ do_create() {
     echo ""
     log_info "Création triangle $ID ($ROLE)"
     echo "  Répertoire : prompts/$DIR_NAME/"
+
     echo ""
-    echo "  $ID          Main ($ROLE)"
+    echo "  $MAIN        Main ($ROLE)"
     echo "  $MASTER   Local Master"
     echo "  $OBSERVER   Observer"
     echo "  $CURATOR   Curator"
@@ -307,50 +310,50 @@ do_create() {
     mk_sym() { ln -sf ../AGENT.md "$DIR/${1}.md"; }
 
     # --- Main (worker) ---
-    mk_sym "$ID"
-    cat > "$DIR/${ID}-system.md" << SEOF
-# $ID — $ROLE
+    mk_sym "$MAIN"
+    cat > "$DIR/${MAIN}-system.md" << SEOF
+# $MAIN — $ROLE
 
 ## Identité et périmètre
-- **ID** : $ID
+- **ID** : $MAIN
 - **Triangle** : $ID
 - **Rôle** : Main ($ROLE)
 - **Fichiers AUTORISÉS en écriture** : \`pipeline/${ID}-output/\`, \`prompts/$DIR_NAME/LOGS.md\` (append)
-- **Communication AUTORISÉE** : \`${MA_PREFIX}:agent:${ID}:inbox\`, \`${MA_PREFIX}:agent:${ID}:outbox\`, \`${MA_PREFIX}:agent:${MASTER}:inbox\`
+- **Communication AUTORISÉE** : \`${MA_PREFIX}:agent:${MAIN}:inbox\`, \`${MA_PREFIX}:agent:${MAIN}:outbox\`, \`${MA_PREFIX}:agent:${MASTER}:inbox\`
 
 ## Contrat
 [À configurer par $ARCHITECT]
 
 ## INPUT
-- \`${ID}-memory.md\` (contexte curé par $CURATOR)
+- \`${MAIN}-memory.md\` (contexte curé par $CURATOR)
 - [output du maillon précédent]
 
 ## OUTPUT
 - Résultat dans \`pipeline/${ID}-output/\`
-- Signal complétion : \`XADD ${MA_PREFIX}:agent:${MASTER}:inbox * prompt "${ID}:done" from_agent "${ID}" timestamp "\$(date +%s)"\`
+- Signal complétion : \`XADD ${MA_PREFIX}:agent:${MASTER}:inbox * prompt "${MAIN}:done" from_agent "${MAIN}" timestamp "\$(date +%s)"\`
 
 ## Critères de succès
 [À définir par $ARCHITECT]
 
 ## Logging (OBLIGATOIRE)
 \`\`\`bash
-echo "| \$(date '+%Y-%m-%d %H:%M:%S') | $ID | {REMARQUES} | {ERRORS} |" >> prompts/$DIR_NAME/LOGS.md
+echo "| \$(date '+%Y-%m-%d %H:%M:%S') | $MAIN | {REMARQUES} | {ERRORS} |" >> prompts/$DIR_NAME/LOGS.md
 \`\`\`
 
 ## Ce que tu NE fais PAS
 - Tu ne t'auto-évalues PAS (c'est $OBSERVER)
 - Tu ne modifies PAS tes fichiers md
 SEOF
-    cat > "$DIR/${ID}-memory.md" << SEOF
-# $ID — Memory
+    cat > "$DIR/${MAIN}-memory.md" << SEOF
+# $MAIN — Memory
 [Curé par $CURATOR]
 ## Tâche en cours
 [Assignée par le pipeline]
 ## Données pertinentes
 [Préparées par $CURATOR]
 SEOF
-    cat > "$DIR/${ID}-methodology.md" << SEOF
-# $ID — Methodology
+    cat > "$DIR/${MAIN}-methodology.md" << SEOF
+# $MAIN — Methodology
 ## Process
 [À définir. Sera amélioré par $COACH.]
 ## Changelog
@@ -387,12 +390,12 @@ et tu décides de continuer ou d'arrêter la boucle.
 |----|------|-------|
 | $ARCHITECT | Triangle Architect | Phase 0 (bootstrap) + boucle longue |
 | $CURATOR | Curator | Début de chaque cycle |
-| $ID | Main ($ROLE) | Après Curator |
+| $MAIN | Main ($ROLE) | Après Curator |
 | $OBSERVER | Observer | Après Main → produit score |
 | $COACH | Coach | Boucle courte (score < 98%) |
 
 ## Critères de succès
-- Chaque cycle exécuté dans l'ordre : $CURATOR → $ID → $OBSERVER → décision
+- Chaque cycle exécuté dans l'ordre : $CURATOR → $MAIN → $OBSERVER → décision
 - Score ≥ 98% maintenu 2 cycles consécutifs → DONE
 - Maximum 6 cycles avant DONE forcé
 
@@ -402,7 +405,7 @@ echo "| \$(date '+%Y-%m-%d %H:%M:%S') | $MASTER | {REMARQUES} | {ERRORS} |" >> p
 \`\`\`
 
 ## Ce que tu NE fais PAS
-- Tu n'exécutes PAS la tâche de $ID
+- Tu n'exécutes PAS la tâche de $MAIN
 - Tu n'évalues PAS la qualité (c'est $OBSERVER)
 - Tu ne réécris PAS les prompts (c'est $COACH/$ARCHITECT)
 SEOF
@@ -441,11 +444,11 @@ SEOF
 - **Communication AUTORISÉE** : \`${MA_PREFIX}:agent:${OBSERVER}:inbox\`, \`${MA_PREFIX}:agent:${OBSERVER}:outbox\`, \`${MA_PREFIX}:agent:${MASTER}:inbox\`
 
 ## Contrat
-Tu évalues la qualité de l'output produit par $ID.
+Tu évalues la qualité de l'output produit par $MAIN.
 
 ## INPUT
-- \`pipeline/${ID}-output/\` (output de $ID)
-- \`prompts/$DIR_NAME/${ID}-system.md\` (critères de succès)
+- \`pipeline/${ID}-output/\` (output de $MAIN)
+- \`prompts/$DIR_NAME/${MAIN}-system.md\` (critères de succès)
 
 ## OUTPUT
 - \`bilans/${ID}-cycle{N}.md\` (score 0-100 + détail par métrique)
@@ -462,14 +465,14 @@ echo "| \$(date '+%Y-%m-%d %H:%M:%S') | $OBSERVER | {REMARQUES} | {ERRORS} |" >>
 SEOF
     cat > "$DIR/${OBSERVER}-memory.md" << SEOF
 # $OBSERVER — Memory
-## Agent cible : $ID
+## Agent cible : $MAIN
 ## Critères d'évaluation
-[Extraits de ${ID}-system.md par $ARCHITECT]
+[Extraits de ${MAIN}-system.md par $ARCHITECT]
 SEOF
     cat > "$DIR/${OBSERVER}-methodology.md" << SEOF
 # $OBSERVER — Methodology
 ## Process d'évaluation
-1. Lire ${ID}-system.md pour les critères de succès
+1. Lire ${MAIN}-system.md pour les critères de succès
 2. Lire l'output dans pipeline/${ID}-output/
 3. Évaluer chaque critère (0-100)
 4. Score global = moyenne pondérée
@@ -491,15 +494,15 @@ SEOF
 - **Communication AUTORISÉE** : \`${MA_PREFIX}:agent:${CURATOR}:inbox\`, \`${MA_PREFIX}:agent:${CURATOR}:outbox\`, \`${MA_PREFIX}:agent:${MASTER}:inbox\`
 
 ## Contrat
-Tu prépares le memory.md de $ID en extrayant les données pertinentes pour sa tâche.
+Tu prépares le memory.md de $MAIN en extrayant les données pertinentes pour sa tâche.
 
 ## INPUT
-- \`prompts/$DIR_NAME/${ID}-system.md\` (besoins de $ID)
-- \`prompts/$DIR_NAME/${ID}-methodology.md\`
+- \`prompts/$DIR_NAME/${MAIN}-system.md\` (besoins de $MAIN)
+- \`prompts/$DIR_NAME/${MAIN}-methodology.md\`
 - Données source (pipeline précédent, index, etc.)
 
 ## OUTPUT
-- \`prompts/$DIR_NAME/${ID}-memory.md\` (budget : 2000 tokens max)
+- \`prompts/$DIR_NAME/${MAIN}-memory.md\` (budget : 2000 tokens max)
 - Signal : \`XADD ${MA_PREFIX}:agent:${MASTER}:inbox * prompt "${CURATOR}:done" from_agent "${CURATOR}" timestamp "\$(date +%s)"\`
 
 ## Logging (OBLIGATOIRE)
@@ -508,13 +511,13 @@ echo "| \$(date '+%Y-%m-%d %H:%M:%S') | $CURATOR | {REMARQUES} | {ERRORS} |" >> 
 \`\`\`
 
 ## Ce que tu NE fais PAS
-- Tu n'exécutes PAS la tâche de $ID
+- Tu n'exécutes PAS la tâche de $MAIN
 - Tu ne modifies PAS system.md ni methodology.md
 SEOF
     cat > "$DIR/${CURATOR}-memory.md" << SEOF
 # $CURATOR — Memory
-## Agent cible : $ID
-## Tâche en cours de $ID
+## Agent cible : $MAIN
+## Tâche en cours de $MAIN
 [À remplir]
 ## Sources de données
 [À remplir]
@@ -522,7 +525,7 @@ SEOF
     cat > "$DIR/${CURATOR}-methodology.md" << SEOF
 # $CURATOR — Methodology
 ## Process de curation
-1. Lire system.md et methodology.md de $ID
+1. Lire system.md et methodology.md de $MAIN
 2. Identifier les données nécessaires
 3. Extraire des sources pertinentes
 4. Filtrer par pertinence
@@ -594,7 +597,7 @@ SEOF
 - **Triangle** : $ID
 - **Rôle** : Triangle Architect
 - **Fichiers AUTORISÉS en écriture** :
-  - \`prompts/$DIR_NAME/${ID}-system.md\`, \`prompts/$DIR_NAME/${ID}-memory.md\`
+  - \`prompts/$DIR_NAME/${MAIN}-system.md\`, \`prompts/$DIR_NAME/${MAIN}-memory.md\`
   - \`prompts/$DIR_NAME/${MASTER}-system.md\`, \`prompts/$DIR_NAME/${MASTER}-memory.md\`
   - \`prompts/$DIR_NAME/${OBSERVER}-system.md\`, \`prompts/$DIR_NAME/${OBSERVER}-memory.md\`
   - \`prompts/$DIR_NAME/${CURATOR}-system.md\`, \`prompts/$DIR_NAME/${CURATOR}-memory.md\`

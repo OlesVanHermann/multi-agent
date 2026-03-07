@@ -51,14 +51,20 @@ find_x45_dir() {
 }
 
 # Get all agent IDs for an x45 triangle (main + satellites)
+# Main agent uses compound format: {id}-{id} (e.g. 352-352)
 get_triangle_ids() {
     local id="$1"
+    # Extract bare ID from compound format (311-311 → 311)
+    [[ "$id" == *-* ]] && id="${id%%-*}"
     local dir
     dir=$(find_x45_dir "$id") || return 1
-    local ids=("$id")
+    local ids=("${id}-${id}")
     for sat_link in "$dir"/${id}-[0-9][0-9][0-9].md; do
         [ -f "$sat_link" ] || continue
-        ids+=("$(basename "$sat_link" .md)")
+        local sat_id=$(basename "$sat_link" .md)
+        # Skip the main agent (already added as {id}-{id})
+        [ "$sat_id" = "${id}-${id}" ] && continue
+        ids+=("$sat_id")
     done
     echo "${ids[@]}"
 }
@@ -170,9 +176,11 @@ start_all() {
         [ -d "$agent_dir" ] || continue
         local dir_name=$(basename "$agent_dir")
         # Extract numeric prefix (341 from 341-analyse-archi-...)
-        local agent_id="${dir_name:0:3}"
+        local base_id="${dir_name:0:3}"
+        # Main agent uses compound format: {id}-{id} (e.g. 352-352)
+        local agent_id="${base_id}-${base_id}"
         { [ -f "$agent_dir/${agent_id}-system.md" ] || [ -f "$agent_dir/system.md" ]; } || continue
-        is_protected "$agent_id" && continue
+        is_protected "$base_id" && continue
         # Skip duplicates (already found in flat format or verbose duplicate)
         if ! [[ " ${agents[*]} " == *" $agent_id "* ]]; then
             # Skip already running
@@ -186,9 +194,11 @@ start_all() {
 
         # x45 satellites: find XXX-{suffix}.md symlinks (e.g. 345-500.md, 345-700.md)
         # Always scan satellites even if worker is already running
-        for sat_link in "$agent_dir"/${agent_id}-[0-9][0-9][0-9].md; do
+        for sat_link in "$agent_dir"/${base_id}-[0-9][0-9][0-9].md; do
             [ -f "$sat_link" ] || continue
             local sat_name=$(basename "$sat_link" .md)  # e.g. 345-500
+            # Skip the main agent compound ID (already added)
+            [ "$sat_name" = "$agent_id" ] && continue
             is_protected "$sat_name" && continue
             [[ " ${agents[*]} " == *" $sat_name "* ]] && continue
             local SAT_SESSION="${MA_PREFIX}-agent-$sat_name"
@@ -315,7 +325,7 @@ do_start() {
         for agent_id in "$target" "$@"; do
             # x45 triangle? expand to all satellites
             local tri_ids
-            tri_ids=$(get_triangle_ids "$agent_id" 2>/dev/null)
+            tri_ids=$(get_triangle_ids "$agent_id" 2>/dev/null) || true
             if [ -n "$tri_ids" ] && [ "$(echo $tri_ids | wc -w)" -gt 1 ]; then
                 log_info "x45 triangle $agent_id: $tri_ids"
                 for tid in $tri_ids; do
@@ -377,7 +387,7 @@ do_stop() {
         for agent_id in "$target" "$@"; do
             # x45 triangle? expand to all satellites
             local tri_ids
-            tri_ids=$(get_triangle_ids "$agent_id" 2>/dev/null)
+            tri_ids=$(get_triangle_ids "$agent_id" 2>/dev/null) || true
             if [ -n "$tri_ids" ] && [ "$(echo $tri_ids | wc -w)" -gt 1 ]; then
                 log_info "x45 triangle $agent_id: $tri_ids"
                 for tid in $tri_ids; do

@@ -307,7 +307,7 @@ async def _refresh_cache_once():
         did = m.group(1)
         if m.group(2):
             agent_names[did] = m.group(2).replace("-", " ")
-        if (d / f"{did}-system.md").exists():
+        if (d / f"{did}-{did}-system.md").exists():
             x45_dirs.append((did, d))
 
     # From flat .md files: 900-architect-chat.md (only if not already named by dir)
@@ -323,7 +323,7 @@ async def _refresh_cache_once():
     triangles = {}
     if mode == "x45":
         for did, d in x45_dirs:
-            tri = {"worker": did}
+            tri = {"worker": f"{did}-{did}"}
             for f in d.glob(f"{did}-*-system.md"):
                 suffix = f.stem.replace(f"{did}-", "", 1).replace("-system", "")
                 if not suffix or not suffix[0].isdigit():
@@ -948,23 +948,40 @@ async def get_logins_models():
 
     # Gather agent IDs from cache + x45 detection
     agent_ids = set()
+    x45_base_ids = set()  # bare IDs that are x45 groups (not standalone agents)
     for a in _cache.get("agents", []):
         agent_ids.add(a["id"])
     # Also scan prompts/ for numbered files/dirs that might not be running
     for f in prompts_dir.iterdir():
-        m = re.match(r'^(\d{3})', f.name)
-        if m:
-            agent_ids.add(m.group(1))
+        # x45: scan sub-directories for compound agent IDs (301-301, 301-101, etc.)
+        if f.is_dir() and re.match(r'^\d{3}-', f.name):
+            base_id = f.name[:3]
+            x45_base_ids.add(base_id)
+            for sf in f.iterdir():
+                sm = re.match(r'^(\d{3}-\d{3})-system\.md$', sf.name)
+                if sm:
+                    agent_ids.add(sm.group(1))
+        else:
+            m = re.match(r'^(\d{3})', f.name)
+            if m:
+                agent_ids.add(m.group(1))
+    # Remove bare IDs that are x45 groups (they use compound format)
+    agent_ids -= x45_base_ids
 
     # Build per-agent config
     agents = []
     for aid in sorted(agent_ids, key=lambda x: tuple(int(p) for p in x.split("-"))):
+        # For compound IDs (301-101), try own file first, then parent (301)
+        parent_id = aid.split("-")[0] if "-" in aid else None
         login_file = prompts_dir / f"{aid}.login"
         model_file = prompts_dir / f"{aid}.model"
 
         if login_file.is_symlink():
             agent_login = Path(os.readlink(login_file)).stem
             login_source = "override"
+        elif parent_id and (prompts_dir / f"{parent_id}.login").is_symlink():
+            agent_login = Path(os.readlink(prompts_dir / f"{parent_id}.login")).stem
+            login_source = "default"
         else:
             agent_login = default_login
             login_source = "default"
@@ -972,6 +989,9 @@ async def get_logins_models():
         if model_file.is_symlink():
             agent_model = Path(os.readlink(model_file)).stem
             model_source = "override"
+        elif parent_id and (prompts_dir / f"{parent_id}.model").is_symlink():
+            agent_model = Path(os.readlink(prompts_dir / f"{parent_id}.model")).stem
+            model_source = "default"
         else:
             agent_model = default_model
             model_source = "default"
@@ -1199,6 +1219,148 @@ async def delete_crontab(data: CrontabDelete):
     dest = removed_dir / f"{ts}_{target.name}"
     target.rename(dest)
     return {"status": "deleted", "moved_to": str(dest)}
+
+
+# === Keep Alive Config ===
+
+KEEPALIVE_DIR = BASE_DIR / "keepalive"
+PROFILES_DIR = BASE_DIR / "login"
+
+
+@app.get("/api/config/keepalive")
+async def get_keepalive():
+    """List all login profiles with their keepalive and tmux status."""
+    KEEPALIVE_DIR.mkdir(parents=True, exist_ok=True)
+
+    # List profiles from login/ directory
+    profiles = []
+    if PROFILES_DIR.exists():
+        for d in sorted(PROFILES_DIR.iterdir()):
+            if d.is_dir() and d.name.startswith("claude"):
+                profiles.append(d.name)
+
+    # Check tmux sessions
+    running_sessions = set()
+    try:
+        result = await _run_subprocess(
+            ["tmux", "list-sessions", "-F", "#{session_name}"], text=True
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().split("\n"):
+                if line.startswith(f"{MA_PREFIX}-agent-002-"):
+                    running_sessions.add(line.replace(f"{MA_PREFIX}-agent-002-", ""))
+    except Exception:
+        pass
+
+    # Build entries
+    entries = []
+    for profile in profiles:
+        active_file = KEEPALIVE_DIR / f"{profile}.active"
+        suspended_file = KEEPALIVE_DIR / f"{profile}.suspended"
+        is_active = active_file.exists()
+        is_suspended = suspended_file.exists()
+        is_running = profile in running_sessions
+
+        entries.append({
+            "profile": profile,
+            "running": is_running,
+            "keepalive": is_active,
+            "suspended": is_suspended,
+            "session": f"002-{profile}",
+        })
+
+    return {"entries": entries}
+
+
+@app.post("/api/config/keepalive/start")
+async def start_keepalive(data: dict):
+    """Start a Claude login session with keepalive."""
+    profile = data.get("profile", "")
+    if not re.match(r'^claude\d[a-b]$', profile):
+        raise HTTPException(status_code=400, detail="invalid profile")
+
+    profile_dir = PROFILES_DIR / profile
+    if not profile_dir.exists():
+        raise HTTPException(status_code=404, detail="profile directory not found")
+
+    session = f"{MA_PREFIX}-agent-002-{profile}"
+
+    # Check if already running
+    result = await _run_subprocess(["tmux", "has-session", "-t", session], text=True)
+    if result.returncode == 0:
+        raise HTTPException(status_code=409, detail="session already running")
+
+    # Create tmux session with Claude
+    cmd = f"cd '{BASE_DIR}' && CLAUDE_CONFIG_DIR='{profile_dir}' claude --dangerously-skip-permissions"
+    await _run_subprocess([
+        "tmux", "new-session", "-d", "-s", session, cmd
+    ], text=True)
+
+    # Create keepalive file
+    KEEPALIVE_DIR.mkdir(parents=True, exist_ok=True)
+    keepalive_file = KEEPALIVE_DIR / f"{profile}.active"
+    if not keepalive_file.exists():
+        keepalive_file.write_text("toujours en vie ?\n")
+
+    return {"status": "started", "session": session}
+
+
+@app.post("/api/config/keepalive/stop")
+async def stop_keepalive(data: dict):
+    """Stop a Claude login session."""
+    profile = data.get("profile", "")
+    if not re.match(r'^claude\d[a-b]$', profile):
+        raise HTTPException(status_code=400, detail="invalid profile")
+
+    session = f"{MA_PREFIX}-agent-002-{profile}"
+    await _run_subprocess(["tmux", "kill-session", "-t", session], text=True)
+
+    # Move keepalive file to suspended
+    active = KEEPALIVE_DIR / f"{profile}.active"
+    suspended = KEEPALIVE_DIR / f"{profile}.suspended"
+    if active.exists():
+        active.rename(suspended)
+
+    return {"status": "stopped"}
+
+
+@app.post("/api/config/keepalive/probe")
+async def probe_keepalive(data: dict):
+    """Send /status to a keepalive session, capture output, parse fields."""
+    profile = data.get("profile", "")
+    if not re.match(r'^claude\d[a-b]$', profile):
+        raise HTTPException(status_code=400, detail="invalid profile")
+
+    session = f"{MA_PREFIX}-agent-002-{profile}"
+    target = f"{session}:0.0"
+
+    # Check session exists
+    result = await _run_subprocess(["tmux", "has-session", "-t", session], text=True)
+    if result.returncode != 0:
+        raise HTTPException(status_code=404, detail="session not running")
+
+    # Send /status + Enter
+    await _run_subprocess(["tmux", "send-keys", "-t", target, "/status", "Enter"], text=True)
+    await asyncio.sleep(1.5)
+
+    # Capture pane
+    result = await _run_subprocess(
+        ["tmux", "capture-pane", "-t", target, "-p", "-J", "-S", "-40"], text=True
+    )
+    output = result.stdout if result.returncode == 0 else ""
+
+    # Send Escape to close /status
+    await _run_subprocess(["tmux", "send-keys", "-t", target, "Escape"], text=True)
+
+    # Parse fields
+    info = {}
+    for line in output.split('\n'):
+        line = line.strip()
+        for field in ["Login method", "Organization", "Email", "Model", "cwd", "Memory"]:
+            if line.startswith(f"{field}:"):
+                info[field.lower().replace(" ", "_")] = line.split(":", 1)[1].strip()
+
+    return {"profile": profile, "info": info}
 
 
 async def _agent_lifecycle(agent_id: str, action: str):
