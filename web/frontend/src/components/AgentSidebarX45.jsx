@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { api } from '../basePath'
 
 function getStatusColor(status) {
@@ -109,7 +109,7 @@ function fp(agentId, type) {
   return `prompts/${parent}/${agentId}-${type}.md`
 }
 
-function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAgentClick, onFileClick, agentNames = {}, chatElement }) {
+function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAgentClick, onFileClick, agentNames = {}, chatElement, username = 'default' }) {
   const [selectedTriangle, setSelectedTriangle] = useState(null)
   const [selectedSatellite, setSelectedSatellite] = useState(null)
   const [hoveredTop, setHoveredTop] = useState(null)
@@ -117,6 +117,142 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
   const [hoveredBot, setHoveredBot] = useState(null)
   const [promptHistory, setPromptHistory] = useState([])
   const [usage, setUsage] = useState(null)
+  const [favoris, setFavoris] = useState({})
+  const [favorisMode, setFavorisMode] = useState(false)
+  const [project, setProject] = useState(() =>
+    localStorage.getItem(`fav_project_${username}`) || ''
+  )
+  const [projectInput, setProjectInput] = useState('')
+  const [projects, setProjects] = useState([])
+  const projectRef = React.useRef(project)
+
+  const refreshProjects = useCallback(() => {
+    return fetch(api(`api/config/favoris/projects?user=${username}`))
+      .then(r => r.ok ? r.json() : { projects: [] })
+      .then(d => { setProjects(d.projects || []); return d.projects || [] })
+      .catch(() => [])
+  }, [username])
+
+  useEffect(() => {
+    refreshProjects().then(list => {
+      let p = localStorage.getItem(`fav_project_${username}`) || ''
+      if ((!p || !list.includes(p)) && list.length > 0) p = list[0]
+      if (p) {
+        setProject(p)
+        projectRef.current = p
+        localStorage.setItem(`fav_project_${username}`, p)
+      }
+    })
+  }, [username, refreshProjects])
+
+  useEffect(() => {
+    if (!project) return
+    projectRef.current = project
+    fetch(api(`api/config/favoris?user=${username}&project=${encodeURIComponent(project)}`))
+      .then(r => r.ok ? r.json() : {})
+      .then(d => setFavoris(d || {}))
+      .catch(() => {})
+  }, [username, project])
+
+  useEffect(() => {
+    if (!favorisMode || !projectInput || !projectRef.current || projectInput === projectRef.current) return
+    const timer = setTimeout(() => {
+      const oldP = projectRef.current
+      const newP = projectInput
+      if (!oldP || oldP === newP) return
+      fetch(api('api/config/favoris/rename'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user: username, old_project: oldP, new_project: newP })
+      })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if (!d) return
+          setProject(d.project)
+          projectRef.current = d.project
+          setFavoris(d.favoris || {})
+          localStorage.setItem(`fav_project_${username}`, d.project)
+          refreshProjects()
+        })
+        .catch(() => {})
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [projectInput, favorisMode, username, refreshProjects])
+
+  const enterFavorisMode = useCallback(() => {
+    if (favorisMode) { setFavorisMode(false); return }
+    if (!project) {
+      const newName = 'new'
+      fetch(api('api/config/favoris'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user: username, project: newName, favoris: {} })
+      })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if (!d) return
+          setProject(d.project)
+          projectRef.current = d.project
+          setProjectInput(d.project)
+          setFavoris({})
+          localStorage.setItem(`fav_project_${username}`, d.project)
+          refreshProjects()
+          setFavorisMode(true)
+        })
+        .catch(() => {})
+    } else {
+      setProjectInput(project)
+      setFavorisMode(true)
+    }
+  }, [favorisMode, project, username, refreshProjects])
+
+  const deleteProject = useCallback(() => {
+    if (!project) return
+    fetch(api('api/config/favoris/delete'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user: username, project })
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(() => {
+        setFavorisMode(false)
+        setFavoris({})
+        setProject('')
+        projectRef.current = ''
+        setProjectInput('')
+        localStorage.removeItem(`fav_project_${username}`)
+        refreshProjects().then(list => {
+          if (list.length > 0) {
+            setProject(list[0])
+            projectRef.current = list[0]
+            localStorage.setItem(`fav_project_${username}`, list[0])
+          }
+        })
+      })
+      .catch(() => {})
+  }, [project, username, refreshProjects])
+
+  const saveFavoris = useCallback((newFav) => {
+    setFavoris(newFav)
+    if (!project) return
+    fetch(api('api/config/favoris'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user: username, project, favoris: newFav })
+    }).catch(() => {})
+  }, [username, project])
+
+  const handleFavChange = (agentId, val) => {
+    const newFav = { ...favoris }
+    if (val === 'no') {
+      delete newFav[agentId]
+    } else {
+      const pos = parseInt(val)
+      Object.keys(newFav).forEach(k => { if (newFav[k] === pos) delete newFav[k] })
+      newFav[agentId] = pos
+    }
+    saveFavoris(newFav)
+  }
 
   useEffect(() => {
     fetch(api('api/usage'))
@@ -503,11 +639,116 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
     )
   }
 
+  const favEntries = Object.entries(favoris)
+    .sort((a, b) => a[1] - b[1])
+    .slice(0, 6)
+
+  const renderFavorisConfig = () => {
+    const activeIds = new Set()
+    agents.forEach(a => {
+      const base = a.id.split('-')[0]
+      if (!hiddenIds.has(base)) activeIds.add(base)
+    })
+    const allAgents = [...activeIds].sort((a, b) => parseInt(a) - parseInt(b))
+    return (
+      <div className="fav-config">
+        {allAgents.map(aid => {
+          const label = getShortLabel(aid, agentNames)
+          const truncated = label.length > 20 ? label.slice(0, 20) + '\u2026' : label
+          const curVal = favoris[aid] || 'no'
+          return (
+            <div key={aid} className="fav-config-row">
+              <span className="fav-config-label" onClick={() => handleTopClick(aid)}>{truncated}</span>
+              <select value={curVal} onChange={e => handleFavChange(aid, e.target.value)} className="fav-config-select">
+                <option value="no">no</option>
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+              </select>
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
   return (
     <div className="x45-sidebar">
-      {/* TOP */}
-      <div className="x45-third">
-        <div className="agent-hover-label">{topLabel || '\u00A0'}</div>
+      {/* Header: favoris project selector */}
+      <div className="fav-header">
+        {favorisMode ? (
+          <>
+            <input
+              className="fav-project-input"
+              value={projectInput}
+              onChange={e => setProjectInput(e.target.value)}
+              onBlur={() => { if (!projectInput.trim()) setProjectInput(projectRef.current || 'new') }}
+              spellCheck={false}
+              autoFocus
+            />
+            <button className="fav-delete-btn" onClick={deleteProject} title="Delete project">x</button>
+          </>
+        ) : (
+          <select
+            className="fav-project-select"
+            value={project || '__new__'}
+            onChange={e => {
+              const p = e.target.value
+              if (p === '__new__') { setProject(''); projectRef.current = ''; return }
+              setProject(p)
+              projectRef.current = p
+              localStorage.setItem(`fav_project_${username}`, p)
+            }}
+          >
+            <option value="__new__">NEW</option>
+            {projects.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        )}
+        <button
+          className={`fav-toggle ${favorisMode ? 'fav-toggle-active' : ''}`}
+          onClick={enterFavorisMode}
+        >favoris</button>
+      </div>
+
+      {favorisMode ? renderFavorisConfig() : (
+        <>
+        {/* TOP */}
+        <div className="x45-third">
+          {/* Favoris bar */}
+          {favEntries.length > 0 && (
+            <>
+              <div className="fav-bar">
+                {favEntries.map(([aid]) => {
+                  let fillColor, borderColor = '', isPulsing = false
+                  if (triangleWorkerIds.has(aid) && triangles[aid]) {
+                    const tc = getTriangleColors(aid, triangles[aid], agentMap)
+                    fillColor = tc.fillColor
+                    borderColor = tc.borderColor
+                    isPulsing = tc.pulsing
+                  } else {
+                    fillColor = getStatusColor(agentMap[aid]?.status)
+                    isPulsing = agentMap[aid]?.status === 'context_compacted'
+                  }
+                  const isSelected = aid === selectedTriangle || aid === selectedAgent || aid === controlAgent
+                  return (
+                    <div key={aid}
+                      className={`agent-cell ${fillColor} ${borderColor} ${isSelected ? 'selected' : ''} ${isPulsing ? 'pulsing' : ''}`}
+                      onMouseDown={e => e.preventDefault()}
+                      onClick={() => handleTopClick(aid)}
+                      onMouseEnter={() => setHoveredTop(aid)}
+                      onMouseLeave={() => setHoveredTop(null)}
+                      title={getShortLabel(aid, agentNames)}
+                    >{aid}</div>
+                  )
+                })}
+              </div>
+              <div className="fav-separator" />
+            </>
+          )}
+          <div className="agent-hover-label">{topLabel || '\u00A0'}</div>
         {(() => {
           const getRow = (id) => {
             const n = parseInt(id)
@@ -555,6 +796,8 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
       <div className="x45-third x45-border-top">
         {selectedSatellite && selectedTri ? renderBottom() : (chatElement || <div className="x45-empty">{'\u00A0'}</div>)}
       </div>
+        </>
+      )}
     </div>
   )
 }

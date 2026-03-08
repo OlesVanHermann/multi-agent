@@ -424,6 +424,7 @@ function App() {
               onFileClick={handleFileClick}
               agentNames={agentNames}
               chatElement={<DevChat />}
+              username={user?.username || 'default'}
             />
           ) : (
             <>

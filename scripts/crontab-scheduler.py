@@ -34,6 +34,9 @@ MA_PREFIX = os.environ.get("MA_PREFIX", "A")
 VALID_PERIODS = {10, 30, 60, 120}
 KEEPALIVE_PERIOD = 1440  # 24 hours
 USAGE_PERIOD = 30  # minutes
+
+# Round-robin index for usage scraping (one profile every 5 min)
+_usage_rr_idx = 0
 CLAUDE_PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
 TICK_INTERVAL = 10  # seconds
 
@@ -44,7 +47,9 @@ _last_fired = {}
 
 def is_aligned(minute, hour, period):
     """Check if current time is aligned with the given period."""
-    if period == 10:
+    if period == 5:
+        return minute % 5 == 0
+    elif period == 10:
         return minute % 10 == 0
     elif period == 30:
         return minute % 30 == 0
@@ -124,7 +129,7 @@ def scan_and_execute(r):
             print(f"ERROR sending to {agent_id}: {e}")
 
 
-KEEPALIVE_USAGE_PERIOD = 30  # minutes — scrape /settings Usage every 30 min
+KEEPALIVE_USAGE_PERIOD = 5  # minutes — scrape one profile every 5 min (round-robin)
 
 
 def _scrape_usage_tab(session_name):
@@ -225,111 +230,76 @@ def _scrape_usage_tab(session_name):
 
 
 def scan_keepalive():
-    """Scan keepalive dir: heartbeat (24h) + usage scraping (30min)."""
+    """Scan keepalive dir: usage scraping every 5min, one profile at a time (round-robin).
+
+    The /status scrape also serves as keepalive — no separate heartbeat needed.
+    With 8 profiles, each is scraped every 40 minutes.
+    """
     now = time.localtime()
     minute = now.tm_min
     hour = now.tm_hour
 
-    do_heartbeat = is_aligned(minute, hour, KEEPALIVE_PERIOD)
-    do_usage = is_aligned(minute, hour, KEEPALIVE_USAGE_PERIOD)
-
-    if not do_heartbeat and not do_usage:
+    if not is_aligned(minute, hour, KEEPALIVE_USAGE_PERIOD):
         return
 
+    global _usage_rr_idx
+    usage_key = fire_key(hour, minute, KEEPALIVE_USAGE_PERIOD)
+    if _last_fired.get("keepalive_usage_rr") == usage_key:
+        return
+
+    # Build sorted list of active profiles with valid tmux sessions
     pattern = os.path.join(KEEPALIVE_DIR, "*.active")
-    for filepath in glob.glob(pattern):
+    all_profiles = []
+    for filepath in sorted(glob.glob(pattern)):
         filename = os.path.basename(filepath)
         profile = filename.replace(".active", "")
         session = f"{MA_PREFIX}-agent-002-{profile}"
+        check = subprocess.run(
+            ["tmux", "has-session", "-t", session],
+            capture_output=True, timeout=5
+        )
+        if check.returncode == 0:
+            all_profiles.append((profile, session))
 
-        # --- Heartbeat (every 24h) ---
-        # Just send Escape (close any open dialog) + Space + Backspace
-        # to keep the session alive without opening /status dialog.
-        if do_heartbeat:
-            hb_key = fire_key(hour, minute, KEEPALIVE_PERIOD)
-            fkey = f"keepalive:{profile}"
-            if _last_fired.get(fkey) != hb_key:
-                try:
-                    subprocess.run(
-                        ["tmux", "send-keys", "-t", session, "Escape"],
-                        capture_output=True, timeout=5
-                    )
-                    time.sleep(0.3)
-                    subprocess.run(
-                        ["tmux", "send-keys", "-t", session, " "],
-                        capture_output=True, timeout=5
-                    )
-                    result = subprocess.run(
-                        ["tmux", "send-keys", "-t", session, "BSpace"],
-                        capture_output=True, text=True, timeout=5
-                    )
-                    if result.returncode == 0:
-                        _last_fired[fkey] = hb_key
-                        ts = time.strftime("%H:%M:%S")
-                        print(f"{ts} KEEPALIVE heartbeat {profile}")
-                    else:
-                        print(f"KEEPALIVE SKIP {profile}: session not found")
-                except Exception as e:
-                    print(f"KEEPALIVE ERROR {profile}: {e}")
+    if all_profiles:
+        # Pick one profile by round-robin
+        idx = _usage_rr_idx % len(all_profiles)
+        profile, session = all_profiles[idx]
+        _usage_rr_idx = idx + 1
 
-    # --- Usage scraping (every 30min) — all profiles in parallel ---
-    if do_usage:
-        usage_key = fire_key(hour, minute, KEEPALIVE_USAGE_PERIOD)
-        profiles_to_scrape = []
-        for filepath in glob.glob(pattern):
-            filename = os.path.basename(filepath)
-            profile = filename.replace(".active", "")
-            session = f"{MA_PREFIX}-agent-002-{profile}"
-            ukey = f"keepalive_usage:{profile}"
-            if _last_fired.get(ukey) != usage_key:
-                # Check tmux session exists
-                check = subprocess.run(
-                    ["tmux", "has-session", "-t", session],
-                    capture_output=True, timeout=5
-                )
-                if check.returncode != 0:
-                    _last_fired[ukey] = usage_key
-                    continue
-                profiles_to_scrape.append((profile, session))
+        ts = time.strftime("%H:%M:%S")
+        print(f"{ts} KEEPALIVE usage scraping {profile} ({idx+1}/{len(all_profiles)})")
 
-        if profiles_to_scrape:
-            def _scrape_one(args):
-                profile, session = args
-                bars, info = _scrape_usage_tab(session)
+        bars, info = _scrape_usage_tab(session)
 
-                # Write static info file
-                if info:
-                    info_path = os.path.join(KEEPALIVE_DIR, f"info_{profile}.json")
-                    try:
-                        with open(info_path, "w") as f:
-                            json.dump(info, f, indent=2)
-                    except Exception:
-                        pass
-                usage_data = {
-                    "profile": profile,
-                    "bars": bars or [],
-                    "last_scan": int(time.time()),
-                }
-                out_path = os.path.join(KEEPALIVE_DIR, f"usage_{profile}.json")
-                try:
-                    with open(out_path, "w") as f:
-                        json.dump(usage_data, f, indent=2)
-                except Exception as e:
-                    ts = time.strftime("%H:%M:%S")
-                    print(f"{ts} KEEPALIVE usage write error {out_path}: {e}")
+        # Write static info file
+        if info:
+            info_path = os.path.join(KEEPALIVE_DIR, f"info_{profile}.json")
+            try:
+                with open(info_path, "w") as f:
+                    json.dump(info, f, indent=2)
+            except Exception:
+                pass
 
-                if bars:
-                    bar_summary = " | ".join(f"{b['percent']}%" for b in bars)
-                    ts = time.strftime("%H:%M:%S")
-                    print(f"{ts} KEEPALIVE usage {profile}: {bar_summary}")
-                else:
-                    ts = time.strftime("%H:%M:%S")
-                    print(f"{ts} KEEPALIVE usage {profile}: no bars (personal account?)")
-                return profile
+        usage_data = {
+            "profile": profile,
+            "bars": bars or [],
+            "last_scan": int(time.time()),
+        }
+        out_path = os.path.join(KEEPALIVE_DIR, f"usage_{profile}.json")
+        try:
+            with open(out_path, "w") as f:
+                json.dump(usage_data, f, indent=2)
+        except Exception as e:
+            print(f"{ts} KEEPALIVE usage write error {out_path}: {e}")
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(profiles_to_scrape)) as pool:
-                for profile in pool.map(_scrape_one, profiles_to_scrape):
-                    _last_fired[f"keepalive_usage:{profile}"] = usage_key
+        if bars:
+            bar_summary = " | ".join(f"{b['percent']}%" for b in bars)
+            print(f"{ts} KEEPALIVE usage {profile}: {bar_summary}")
+        else:
+            print(f"{ts} KEEPALIVE usage {profile}: no bars")
+
+    _last_fired["keepalive_usage_rr"] = usage_key
 
 
 def scan_usage(r):

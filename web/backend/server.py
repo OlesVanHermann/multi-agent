@@ -1219,6 +1219,105 @@ async def update_effort(data: EffortUpdate):
     return {"status": "updated", "agent_id": data.agent_id, "level": data.level}
 
 
+# --- Favoris (persisted JSON per user per project) ---
+
+def _favoris_file(user: str, project: str) -> Path:
+    safe = "".join(c for c in project if c.isalnum() or c in "-_ ")[:30].strip()
+    if not safe:
+        safe = "default"
+    return BASE_DIR / "prompts" / f"favoris-{user}-{safe}.json"
+
+@app.get("/api/config/favoris")
+async def get_favoris(user: str = "default", project: str = "default"):
+    """Get agent favoris config for a user+project."""
+    f = _favoris_file(user, project)
+    if f.exists():
+        try:
+            return json.loads(f.read_text())
+        except Exception:
+            pass
+    return {}
+
+@app.post("/api/config/favoris")
+async def set_favoris(data: dict):
+    """Save agent favoris config. Body: {user, project, favoris: {agent_id: position (1-6)}}."""
+    user = data.get("user", "default")
+    project = data.get("project", "default")
+    favoris = data.get("favoris", {})
+    clean = {}
+    for k, v in favoris.items():
+        if isinstance(v, int) and 1 <= v <= 6:
+            clean[k] = v
+    _favoris_file(user, project).write_text(json.dumps(clean, indent=2) + "\n")
+    return {"status": "ok", "user": user, "project": project, "favoris": clean}
+
+@app.get("/api/config/favoris/projects")
+async def get_favoris_projects(user: str = "default"):
+    """List all projects for a user. Returns {projects: ["mail", "drive"]}."""
+    pattern = str(BASE_DIR / "prompts" / f"favoris-{user}-*.json")
+    prefix = f"favoris-{user}-"
+    projects = []
+    for path in sorted(_glob.glob(pattern)):
+        name = Path(path).stem
+        if name.startswith(prefix):
+            proj = name[len(prefix):]
+            if proj:
+                projects.append(proj)
+    return {"projects": projects}
+
+@app.post("/api/config/favoris/rename")
+async def rename_favoris_project(data: dict):
+    """Rename a favoris project. Body: {user, old_project, new_project}."""
+    user = data.get("user", "default")
+    old_project = data.get("old_project", "")
+    new_project = data.get("new_project", "")
+    if not old_project or not new_project:
+        raise HTTPException(400, "old_project and new_project required")
+    old_f = _favoris_file(user, old_project)
+    new_f = _favoris_file(user, new_project)
+    if old_f == new_f:
+        favoris = {}
+        if old_f.exists():
+            try:
+                favoris = json.loads(old_f.read_text())
+            except Exception:
+                pass
+        return {"status": "ok", "project": new_project, "favoris": favoris}
+    if new_f.exists():
+        try:
+            favoris = json.loads(new_f.read_text())
+        except Exception:
+            favoris = {}
+        return {"status": "switched", "project": new_project, "favoris": favoris}
+    favoris = {}
+    if old_f.exists():
+        old_f.rename(new_f)
+        try:
+            favoris = json.loads(new_f.read_text())
+        except Exception:
+            pass
+    else:
+        new_f.write_text("{}\n")
+    return {"status": "renamed", "project": new_project, "favoris": favoris}
+
+@app.post("/api/config/favoris/delete")
+async def delete_favoris_project(data: dict):
+    """Delete a favoris project file. Body: {user, project}."""
+    user = data.get("user", "default")
+    project = data.get("project", "")
+    if not project:
+        raise HTTPException(400, "project required")
+    f = _favoris_file(user, project)
+    removed_dir = BASE_DIR / "removed"
+    removed_dir.mkdir(exist_ok=True)
+    if f.exists():
+        import shutil
+        import datetime
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        shutil.move(str(f), str(removed_dir / f"{ts}_{f.name}"))
+    return {"status": "deleted", "project": project}
+
+
 @app.get("/api/config/tmux-width")
 async def get_tmux_width():
     """Get tmux width from persisted file, fallback to live sessions."""
