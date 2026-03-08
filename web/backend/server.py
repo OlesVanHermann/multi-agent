@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 import json
+import glob as _glob
 
 import redis.asyncio as redis
 import httpx
@@ -307,7 +308,7 @@ async def _refresh_cache_once():
         did = m.group(1)
         if m.group(2):
             agent_names[did] = m.group(2).replace("-", " ")
-        if (d / f"{did}-{did}-system.md").exists():
+        if (d / f"{did}-{did}-system.md").exists() or (d / f"{did}-system.md").exists():
             x45_dirs.append((did, d))
 
     # From flat .md files: 900-architect-chat.md (only if not already named by dir)
@@ -323,7 +324,8 @@ async def _refresh_cache_once():
     triangles = {}
     if mode == "x45":
         for did, d in x45_dirs:
-            tri = {"worker": f"{did}-{did}"}
+            compound = (d / f"{did}-{did}-system.md").exists()
+            tri = {"worker": f"{did}-{did}" if compound else did}
             for f in d.glob(f"{did}-*-system.md"):
                 suffix = f.stem.replace(f"{did}-", "", 1).replace("-system", "")
                 if not suffix or not suffix[0].isdigit():
@@ -1073,16 +1075,30 @@ async def get_logins_models():
         if f.is_dir() and re.match(r'^\d{3}-', f.name):
             base_id = f.name[:3]
             x45_base_ids.add(base_id)
+            has_compound = False
             for sf in f.iterdir():
                 sm = re.match(r'^(\d{3}-\d{3})-system\.md$', sf.name)
                 if sm:
                     agent_ids.add(sm.group(1))
+                    has_compound = True
+            # Old format: 341-system.md (no compound main)
+            if not has_compound and (f / f"{base_id}-system.md").exists():
+                agent_ids.add(base_id)
+                # Satellites: 341-141-system.md -> add 341-141
+                for sf in f.iterdir():
+                    sm = re.match(r'^(' + base_id + r'-\d{3})-system\.md$', sf.name)
+                    if sm:
+                        agent_ids.add(sm.group(1))
         else:
             m = re.match(r'^(\d{3})', f.name)
             if m:
                 agent_ids.add(m.group(1))
-    # Remove bare IDs that are x45 groups (they use compound format)
-    agent_ids -= x45_base_ids
+    # Remove bare IDs that are x45 groups (only if compound format)
+    # For old format, the bare ID IS the worker
+    for bid in list(x45_base_ids):
+        if any(aid.startswith(f"{bid}-{bid}") for aid in agent_ids):
+            agent_ids.discard(bid)  # compound: remove bare
+        # else: old format, keep bare ID
 
     # Build per-agent config
     agents = []
@@ -1205,16 +1221,22 @@ async def update_effort(data: EffortUpdate):
 
 @app.get("/api/config/tmux-width")
 async def get_tmux_width():
-    """Get current tmux window width from first agent session."""
+    """Get tmux width from persisted file, fallback to live sessions."""
+    width_file = BASE_DIR / "prompts" / "tmux.width"
+    if width_file.exists():
+        try:
+            return {"width": int(width_file.read_text().strip())}
+        except Exception:
+            pass
     try:
         result = await _run_subprocess(
             ["tmux", "list-sessions", "-F", "#{window_width}"],
             text=True, capture_output=True, timeout=5
         )
         widths = [int(w) for w in result.stdout.strip().split('\n') if w.strip().isdigit()]
-        return {"width": widths[0] if widths else 80}
+        return {"width": widths[0] if widths else 220}
     except Exception:
-        return {"width": 80}
+        return {"width": 220}
 
 
 @app.post("/api/config/tmux-width")
@@ -1236,6 +1258,8 @@ async def set_tmux_width(data: dict):
                 text=True, capture_output=True, timeout=5
             )
             resized += 1
+        # Persist for new agent sessions
+        (BASE_DIR / "prompts" / "tmux.width").write_text(str(width) + "\n")
         return {"status": "ok", "width": width, "sessions": resized}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1481,39 +1505,19 @@ async def stop_keepalive(data: dict):
 
 @app.post("/api/config/keepalive/probe")
 async def probe_keepalive(data: dict):
-    """Send /status to a keepalive session, capture output, parse fields."""
+    """Read cached profile info from static JSON file."""
     profile = data.get("profile", "")
     if not re.match(r'^claude\d[a-b]$', profile):
         raise HTTPException(status_code=400, detail="invalid profile")
 
-    session = f"{MA_PREFIX}-agent-002-{profile}"
-    target = f"{session}:0.0"
-
-    # Check session exists
-    result = await _run_subprocess(["tmux", "has-session", "-t", session], text=True)
-    if result.returncode != 0:
-        raise HTTPException(status_code=404, detail="session not running")
-
-    # Send /status + Enter
-    await _run_subprocess(["tmux", "send-keys", "-t", target, "/status", "Enter"], text=True)
-    await asyncio.sleep(1.5)
-
-    # Capture pane
-    result = await _run_subprocess(
-        ["tmux", "capture-pane", "-t", target, "-p", "-J", "-S", "-40"], text=True
-    )
-    output = result.stdout if result.returncode == 0 else ""
-
-    # Send Escape to close /status
-    await _run_subprocess(["tmux", "send-keys", "-t", target, "Escape"], text=True)
-
-    # Parse fields
-    info = {}
-    for line in output.split('\n'):
-        line = line.strip()
-        for field in ["Login method", "Organization", "Email", "Model", "cwd", "Memory"]:
-            if line.startswith(f"{field}:"):
-                info[field.lower().replace(" ", "_")] = line.split(":", 1)[1].strip()
+    info_file = KEEPALIVE_DIR / f"info_{profile}.json"
+    if info_file.exists():
+        try:
+            info = json.loads(info_file.read_text())
+        except Exception:
+            info = {}
+    else:
+        info = {}
 
     return {"profile": profile, "info": info}
 

@@ -468,18 +468,18 @@ function App() {
                 <thead><tr><th>Status</th><th>Couleur</th><th>Description</th></tr></thead>
                 <tbody>
                   <tr><td><span className="agent-cell blue" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Bleu</td><td>waiting_approval — En attente de confirmation</td></tr>
-                  <tr><td><span className="agent-cell darkblue" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Bleu fonce</td><td>plan_mode — Mode plan active</td></tr>
-                  <tr><td><span className="agent-cell white" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Blanc</td><td>starting — Demarrage en cours</td></tr>
-                  <tr><td><span className="agent-cell green" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Vert fonce</td><td>has_bashes — Bashes en cours d'execution</td></tr>
+                  <tr><td><span className="agent-cell darkblue" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Bleu foncé</td><td>plan_mode — Mode plan activé</td></tr>
+                  <tr><td><span className="agent-cell white" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Blanc</td><td>starting — Démarrage en cours</td></tr>
+                  <tr><td><span className="agent-cell green" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Vert foncé</td><td>has_bashes — Bashes en cours d'exécution</td></tr>
                   <tr><td><span className="agent-cell lightgreen" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Vert clair</td><td>busy — Claude en cours (esc to interrupt)</td></tr>
                   <tr><td><span className="agent-cell orange" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Orange</td><td>context_warning — Contexte restant 1-10%</td></tr>
-                  <tr><td><span className="agent-cell red" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Rouge</td><td>context_compacted — Contexte compacte</td></tr>
-                  <tr><td><span className="agent-cell darkred" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Rouge fonce</td><td>error / blocked — Erreur ou bloque</td></tr>
+                  <tr><td><span className="agent-cell red" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Rouge</td><td>context_compacted — Contexte compacté</td></tr>
+                  <tr><td><span className="agent-cell darkred" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Rouge foncé</td><td>error / blocked — Erreur ou bloqué</td></tr>
                   <tr><td><span className="agent-cell gray" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Gris</td><td>idle / stale — Inactif</td></tr>
-                  <tr><td><span className="agent-cell darkgray" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Gris fonce</td><td>stopped — Arrete</td></tr>
+                  <tr><td><span className="agent-cell darkgray" style={{display:'inline-block',width:40,textAlign:'center'}}>●</span></td><td>Gris foncé</td><td>stopped — Arrêté</td></tr>
                 </tbody>
               </table>
-              <h3 style={{marginTop:'1rem'}}>Priorite (haute → basse)</h3>
+              <h3 style={{marginTop:'1rem'}}>Priorité (haute → basse)</h3>
               <ol style={{margin:'0.5rem 0',paddingLeft:'1.5rem',color:'#ccc',fontSize:'0.85rem'}}>
                 <li>context_limit / api_error</li>
                 <li>context_compacted (compacting)</li>
