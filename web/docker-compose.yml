@@ -31,7 +31,7 @@ services:
       - KEYCLOAK_ADMIN=admin
       - KEYCLOAK_ADMIN_PASSWORD=admin
       - KC_HEALTH_ENABLED=true
-    command: start-dev --import-realm
+    command: start-dev --import-realm --proxy=edge --hostname-strict=false
     volumes:
       - ./keycloak/realm-multi-agent.json:/opt/keycloak/data/import/realm-multi-agent.json:ro
       - keycloak_data:/opt/keycloak/data
