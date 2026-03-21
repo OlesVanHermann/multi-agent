@@ -172,7 +172,7 @@ start_all() {
         local dir_name=$(basename "$agent_dir")
         # Extract numeric prefix (341 from 341-analyse-archi-...)
         local agent_id="${dir_name:0:3}"
-        { [ -f "$agent_dir/${agent_id}-system.md" ] || [ -f "$agent_dir/system.md" ] || [ -f "$agent_dir/${dir_name}.md" ]; } || continue
+        { [ -f "$agent_dir/${agent_id}-system.md" ] || [ -f "$agent_dir/system.md" ] || [ -f "$agent_dir/${dir_name}.md" ] || ls "$agent_dir"/${agent_id}-[0-9][0-9][0-9]-system.md &>/dev/null; } || continue
         is_protected "$agent_id" && continue
         # Skip duplicates (already found in flat format or verbose duplicate)
         if ! [[ " ${agents[*]} " == *" $agent_id "* ]]; then
