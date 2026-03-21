@@ -30,7 +30,7 @@ mets à jour le numéro de version, crées un tag Git, et publies la release.
    ```
 2. Si tests FAIL → arrêter :
    ```bash
-   redis-cli RPUSH "ma:inject:100" "600: BLOCKED - tests fail"
+   /scripts/send.sh 100 "600: BLOCKED - tests fail"
    ```
 3. Si tests PASS → préparer la release :
 
@@ -56,7 +56,7 @@ mets à jour le numéro de version, crées un tag Git, et publies la release.
 
 4. Notifier :
    ```bash
-   redis-cli RPUSH "ma:inject:000" "600: Release v{X.Y.Z} ready"
+   /scripts/send.sh 000 "600: Release v{X.Y.Z} ready"
    ```
 
 ## Quand tu reçois "publish"
@@ -67,5 +67,5 @@ mets à jour le numéro de version, crées un tag Git, et publies la release.
    ```
 2. Confirmer :
    ```bash
-   redis-cli RPUSH "ma:inject:000" "600: Published v{X.Y.Z}"
+   /scripts/send.sh 000 "600: Published v{X.Y.Z}"
    ```

@@ -34,7 +34,7 @@ Toi seul peux modifier les fichiers dans `prompts/`.
    - Vérifier que `pool-requests/` a les dossiers nécessaires
    - Lancer l'Explorer pour analyse :
    ```bash
-   redis-cli RPUSH "ma:inject:200" "go"
+   /scripts/send.sh 200 "go"
    ```
 
 ## Quand tu reçois un rapport d'avancement

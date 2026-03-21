@@ -37,7 +37,7 @@ et valides quand tout passe.
    ```
 4. Après traitement → REBOUCLER :
    ```bash
-   redis-cli RPUSH "ma:inject:500" "go"
+   /scripts/send.sh 500 "go"
    ```
 
 ## Traitement d'un PR-TEST-{AGENT}-{ID}
@@ -104,5 +104,5 @@ et valides quand tout passe.
    cd $BASE/pool-requests
    git add pending/PR-FIX-{AGENT}-{ID}.md
    git commit -m "500: FAIL PR-TEST-{AGENT}-{ID}, created PR-FIX"
-   redis-cli RPUSH "ma:inject:{AGENT}" "PR-FIX-{AGENT}-{ID}"
+   /scripts/send.sh {AGENT} "PR-FIX-{AGENT}-{ID}"
    ```

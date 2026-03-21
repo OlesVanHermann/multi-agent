@@ -29,9 +29,9 @@ des PR, et signales quand tout est prêt pour l'intégration.
    ```
 2. Notifier les Developers :
    ```bash
-   redis-cli RPUSH "ma:inject:300" "go"
-   redis-cli RPUSH "ma:inject:301" "go"
-   redis-cli RPUSH "ma:inject:302" "go"
+   /scripts/send.sh 300 "go"
+   /scripts/send.sh 301 "go"
+   /scripts/send.sh 302 "go"
    ```
 
 ## Quand tu reçois "dispatch {spec_file}"
@@ -53,5 +53,5 @@ des PR, et signales quand tout est prêt pour l'intégration.
    ```
 3. Notifier le Developer :
    ```bash
-   redis-cli RPUSH "ma:inject:{AGENT}" "go"
+   /scripts/send.sh {AGENT} "go"
    ```

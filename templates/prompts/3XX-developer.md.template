@@ -49,7 +49,7 @@ echo "Traitement: $NEXT"
 
 ### 4. Après traitement → REBOUCLER via Redis
 ```bash
-redis-cli RPUSH "ma:inject:{AGENT_ID}" "go"
+$BASE/scripts/send.sh {AGENT_ID} "go"
 ```
 
 ---
@@ -122,8 +122,8 @@ git commit -m "{AGENT_ID}: done PR-SPEC-{AGENT_ID}-{ID} [commit:$HASH]"
 
 ### 8. NOTIFIER via Redis
 ```bash
-redis-cli RPUSH "ma:inject:400" "{DOMAIN_NAME} commit: $HASH - {FUNCTION_PREFIX}_xxx"
-redis-cli RPUSH "ma:inject:501" "PR-TEST-{AGENT_ID}-{ID}"
+$BASE/scripts/send.sh 400 "{DOMAIN_NAME} commit: $HASH - {FUNCTION_PREFIX}_xxx"
+$BASE/scripts/send.sh 501 "PR-TEST-{AGENT_ID}-{ID}"
 ```
 
 ---

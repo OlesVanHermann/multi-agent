@@ -35,7 +35,7 @@ Tu implémentes le code PPTX demandé dans les PR-SPEC. Les tests sont créés p
    ```
 4. Après traitement → REBOUCLER via Redis :
    ```bash
-   redis-cli RPUSH "ma:inject:302" "go"
+   /scripts/send.sh 302 "go"
    ```
 
 ## Traitement d'un PR-SPEC-302-{ID}
@@ -91,8 +91,8 @@ Tu implémentes le code PPTX demandé dans les PR-SPEC. Les tests sont créés p
    ```
 8. NOTIFIER via Redis :
    ```bash
-   redis-cli RPUSH "ma:inject:400" "PPTX commit: $HASH - pptx_xxx"
-   redis-cli RPUSH "ma:inject:500" "PR-TEST-302-{ID}"
+   /scripts/send.sh 400 "PPTX commit: $HASH - pptx_xxx"
+   /scripts/send.sh 500 "PR-TEST-302-{ID}"
    ```
 
 ## Quand tu reçois "PR-FIX-302-{ID}"
@@ -116,5 +116,5 @@ Tu implémentes le code PPTX demandé dans les PR-SPEC. Les tests sont créés p
 5. NOTIFIER 400 :
    ```bash
    HASH=$(cd $PROJECT && git rev-parse --short HEAD)
-   redis-cli RPUSH "ma:inject:400" "PPTX fix: $HASH - pptx_xxx"
+   /scripts/send.sh 400 "PPTX fix: $HASH - pptx_xxx"
    ```

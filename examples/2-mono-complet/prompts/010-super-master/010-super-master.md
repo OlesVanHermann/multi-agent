@@ -25,12 +25,12 @@ les rapports d'avancement, et signales les blocages à 000.
    ```
 2. Dispatcher aux Masters :
    ```bash
-   redis-cli RPUSH "ma:inject:100" "go"
+   /scripts/send.sh 100 "go"
    ```
 
 ## Quand tu reçois un rapport de Master
 1. Consolider : agréger les métriques (PR terminés, en cours, bloqués)
 2. Remonter à 000 :
    ```bash
-   redis-cli RPUSH "ma:inject:000" "Rapport 010: {résumé}"
+   /scripts/send.sh 000 "Rapport 010: {résumé}"
    ```

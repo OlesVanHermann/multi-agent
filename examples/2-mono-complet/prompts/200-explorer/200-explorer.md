@@ -77,5 +77,5 @@ crées les PR-SPEC dans `pool-requests/pending/`, et notifies le Master (100) po
 
 4. Notifier le Master :
    ```bash
-   redis-cli RPUSH "ma:inject:100" "dispatch batch: {N} PR-SPECs"
+   /scripts/send.sh 100 "dispatch batch: {N} PR-SPECs"
    ```

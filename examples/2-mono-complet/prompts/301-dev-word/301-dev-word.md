@@ -35,7 +35,7 @@ Tu implémentes le code Word demandé dans les PR-SPEC. Les tests sont créés p
    ```
 4. Après traitement → REBOUCLER via Redis :
    ```bash
-   redis-cli RPUSH "ma:inject:301" "go"
+   /scripts/send.sh 301 "go"
    ```
 
 ## Traitement d'un PR-SPEC-301-{ID}
@@ -91,8 +91,8 @@ Tu implémentes le code Word demandé dans les PR-SPEC. Les tests sont créés p
    ```
 8. NOTIFIER via Redis :
    ```bash
-   redis-cli RPUSH "ma:inject:400" "Word commit: $HASH - word_xxx"
-   redis-cli RPUSH "ma:inject:500" "PR-TEST-301-{ID}"
+   /scripts/send.sh 400 "Word commit: $HASH - word_xxx"
+   /scripts/send.sh 500 "PR-TEST-301-{ID}"
    ```
 
 ## Quand tu reçois "PR-FIX-301-{ID}"
@@ -116,5 +116,5 @@ Tu implémentes le code Word demandé dans les PR-SPEC. Les tests sont créés p
 5. NOTIFIER 400 :
    ```bash
    HASH=$(cd $PROJECT && git rev-parse --short HEAD)
-   redis-cli RPUSH "ma:inject:400" "Word fix: $HASH - word_xxx"
+   /scripts/send.sh 400 "Word fix: $HASH - word_xxx"
    ```

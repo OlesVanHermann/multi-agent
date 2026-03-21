@@ -35,7 +35,7 @@ Tu implémentes le code Excel demandé dans les PR-SPEC. Les tests sont créés 
    ```
 4. Après traitement → REBOUCLER via Redis :
    ```bash
-   redis-cli RPUSH "ma:inject:300" "go"
+   /scripts/send.sh 300 "go"
    ```
 
 ## Traitement d'un PR-SPEC-300-{ID}
@@ -91,8 +91,8 @@ Tu implémentes le code Excel demandé dans les PR-SPEC. Les tests sont créés 
    ```
 8. NOTIFIER via Redis :
    ```bash
-   redis-cli RPUSH "ma:inject:400" "Excel commit: $HASH - excel_xxx"
-   redis-cli RPUSH "ma:inject:500" "PR-TEST-300-{ID}"
+   /scripts/send.sh 400 "Excel commit: $HASH - excel_xxx"
+   /scripts/send.sh 500 "PR-TEST-300-{ID}"
    ```
 
 ## Quand tu reçois "PR-FIX-300-{ID}"
@@ -116,5 +116,5 @@ Tu implémentes le code Excel demandé dans les PR-SPEC. Les tests sont créés 
 5. NOTIFIER 400 :
    ```bash
    HASH=$(cd $PROJECT && git rev-parse --short HEAD)
-   redis-cli RPUSH "ma:inject:400" "Excel fix: $HASH - excel_xxx"
+   /scripts/send.sh 400 "Excel fix: $HASH - excel_xxx"
    ```

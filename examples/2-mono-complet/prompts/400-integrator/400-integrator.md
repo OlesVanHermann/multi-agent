@@ -36,7 +36,7 @@ et signales quand tout est mergé.
    ```
 3. Notifier le succès :
    ```bash
-   redis-cli RPUSH "ma:inject:100" "400: merged {HASH} ({function}) into main"
+   /scripts/send.sh 100 "400: merged {HASH} ({function}) into main"
    ```
 
 ## Quand tu reçois "merge all"
@@ -56,6 +56,6 @@ et signales quand tout est mergé.
    ```
 3. Notifier :
    ```bash
-   redis-cli RPUSH "ma:inject:100" "400: merge all terminé"
-   redis-cli RPUSH "ma:inject:500" "go"
+   /scripts/send.sh 100 "400: merge all terminé"
+   /scripts/send.sh 500 "go"
    ```
