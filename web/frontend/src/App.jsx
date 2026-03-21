@@ -5,8 +5,25 @@ import Terminal from './components/Terminal'
 import FileViewer from './components/FileViewer'
 import LoginModelPanel from './components/LoginModelPanel'
 import StatusBar from './components/StatusBar'
-import { useAuth } from './AuthProvider'
+import DevChat from './components/DevChat'
+
+import { useAuth, LoginForm } from './AuthProvider'
 import { api, wsUrl } from './basePath'
+
+// Intercept all fetch() calls to inject JWT Bearer token automatically.
+// This secures every API call without modifying individual components.
+const _originalFetch = window.fetch
+window.fetch = function(url, options = {}) {
+  const token = localStorage.getItem('access_token')
+  if (token && typeof url === 'string' && (url.startsWith('/api/') || url.includes('/api/'))) {
+    const headers = new Headers(options.headers || {})
+    if (!headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${token}`)
+    }
+    options = { ...options, headers }
+  }
+  return _originalFetch.call(this, url, options)
+}
 
 // Polling timing options
 const AGENT_POLL_OPTIONS  = [0.3, 0.5, 1, 2, 3]      // ws/agent refresh (seconds)
@@ -27,10 +44,13 @@ function usePollSetting(key, defaultVal) {
 }
 
 function App() {
-  const { user, logout, isOperator } = useAuth()
+  const { user, logout, isOperator, isAuthenticated } = useAuth()
+
+  if (!isAuthenticated) return <LoginForm />
   const [agents, setAgents] = useState([])
   const [mode, setMode] = useState('pipeline')
   const [triangles, setTriangles] = useState({})
+  const [agentNames, setAgentNames] = useState({})
   const [selectedAgent, setSelectedAgent] = useState(null)
   const [controlPlane, setControlPlane] = useState('000') // Super-Master by default
   const [activePanel, setActivePanel] = useState('control') // 'control' or 'agent'
@@ -54,6 +74,7 @@ function App() {
           setLastUpdate(new Date())
           if (data.mode) setMode(data.mode)
           if (data.triangles) setTriangles(data.triangles)
+          if (data.agent_names) setAgentNames(data.agent_names)
         }
       } catch (err) {
         console.error('Failed to fetch agents:', err)
@@ -84,13 +105,14 @@ function App() {
 
   // WebSocket for real-time status (pauses when tab is hidden)
   useEffect(() => {
-    const statusWsUrl = wsUrl(`ws/status?poll=${statusPoll}`)
     let intentionalClose = false
 
     const connect = () => {
       if (document.hidden) return
       intentionalClose = false
-      wsRef.current = new WebSocket(statusWsUrl)
+      // Re-read token on every reconnect (token may have been refreshed after network loss)
+      const freshStatusUrl = wsUrl(`ws/status?poll=${statusPoll}`)
+      wsRef.current = new WebSocket(freshStatusUrl)
 
       wsRef.current.onmessage = (event) => {
         const data = JSON.parse(event.data)
@@ -100,12 +122,13 @@ function App() {
             setLastUpdate(new Date())
             if (data.mode) setMode(data.mode)
             if (data.triangles) setTriangles(data.triangles)
+            if (data.agent_names) setAgentNames(data.agent_names)
           }
         }
       }
 
       wsRef.current.onclose = () => {
-        if (!intentionalClose) setTimeout(connect, 5000)
+        if (!intentionalClose) setTimeout(connect, 3000)
       }
 
       wsRef.current.onerror = (err) => {
@@ -115,20 +138,27 @@ function App() {
 
     const handleVisibility = () => {
       if (document.hidden) {
-        // Tab hidden: close WS to save CPU
         intentionalClose = true
         if (wsRef.current) { wsRef.current.close(); wsRef.current = null }
       } else {
-        // Tab visible: reconnect
         if (!wsRef.current) connect()
       }
     }
 
+    // Reconnect immediately when network comes back
+    const handleOnline = () => {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        connect()
+      }
+    }
+
     document.addEventListener('visibilitychange', handleVisibility)
+    window.addEventListener('online', handleOnline)
     connect()
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibility)
+      window.removeEventListener('online', handleOnline)
       intentionalClose = true
       if (wsRef.current) wsRef.current.close()
     }
@@ -206,6 +236,7 @@ function App() {
             <AgentSidebarX45
               agents={agents}
               triangles={triangles}
+              agentNames={agentNames}
               selectedAgent={selectedAgent}
               controlAgent={controlPlane}
               onAgentClick={handleAgentClick}
@@ -227,7 +258,7 @@ function App() {
           onMouseEnter={() => setActivePanel('control')}
         >
           <div className="panel-header">
-            <h2>CONTROL ({controlPlane}) — {AGENT_LABELS[controlPlane] || getAgentType(controlPlane)}</h2>
+            <h2>CONTROL ({controlPlane}) — {agentNames[controlPlane] || AGENT_LABELS[controlPlane] || getAgentType(controlPlane)}</h2>
           </div>
           <Terminal agentId={controlPlane} focused={activePanel === 'control'} pollInterval={agentPoll} />
         </section>
@@ -238,7 +269,7 @@ function App() {
           onMouseEnter={() => setActivePanel('agent')}
         >
           <div className="panel-header">
-            <h2>AGENT {selectedAgent ? `(${selectedAgent}) — ${AGENT_LABELS[selectedAgent] || getAgentType(selectedAgent)}` : '---'}</h2>
+            <h2>AGENT {selectedAgent ? `(${selectedAgent}) — ${agentNames[selectedAgent] || AGENT_LABELS[selectedAgent] || getAgentType(selectedAgent)}` : '---'}</h2>
           </div>
           {showLoginModel ? (
             <LoginModelPanel />
