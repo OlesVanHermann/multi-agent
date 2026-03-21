@@ -1,4 +1,4 @@
-# pipeline-simple : 3 agents monogent
+# mono-simple : 3 agents mono
 
 Le format monogent le plus simple : un fichier `{ID}.md` par agent.
 
@@ -12,7 +12,7 @@ Montrer le format de base d'un prompt monogent :
 ## Structure
 
 ```
-1-pipeline-simple/
+1-mono-simple/
 ├── README.md
 └── prompts/
     ├── 000.md    ← configure, supervise
@@ -45,7 +45,7 @@ Chaque agent est autonome : il reçoit des messages via Redis, exécute son work
 
 ```bash
 # 1. Copier les prompts dans votre projet
-cp -r examples/1-pipeline-simple/prompts/ prompts/
+cp -r examples/1-mono-simple/prompts/ prompts/
 
 # 2. Lancer l'infra
 ./scripts/infra.sh start
@@ -66,4 +66,4 @@ cp -r examples/1-pipeline-simple/prompts/ prompts/
 | Feedback | Non | Oui (Observer + Coach) |
 | Amélioration | Manuelle | Automatique |
 
-Pour voir un pipeline complet avec toute la hiérarchie, voir `../2-pipeline-complet/`.
+Pour voir un pipeline complet avec toute la hiérarchie, voir `../2-mono-complet/`.

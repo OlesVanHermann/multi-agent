@@ -99,9 +99,9 @@ cp -r examples/3-x45-simple/project/ project/
 | 2 | 85% | Coach 841 ajoute des règles depuis le bilan |
 | 3 | 95% | Curator 741 enrichit le memory avec plus de contexte |
 
-## Différences avec pipeline-simple
+## Différences avec mono-simple
 
-| Aspect | pipeline-simple | x45-simple |
+| Aspect | mono-simple | x45-simple |
 |--------|----------------|------------|
 | Format infra | monogent ({ID}.md) | monogent ({ID}.md) |
 | Format workers | monogent | triangle (3 fichiers + satellites) |

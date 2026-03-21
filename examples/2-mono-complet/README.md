@@ -1,4 +1,4 @@
-# pipeline-complet : 10 agents monogent, toute la hiérarchie
+# mono-complet : 10 agents mono, toute la hiérarchie
 
 Un pipeline standard complet avec les 7 niveaux de la hiérarchie.
 
@@ -27,7 +27,7 @@ Montrer le pipeline monogent à pleine échelle :
 ## Structure
 
 ```
-2-pipeline-complet/
+2-mono-complet/
 ├── README.md
 └── prompts/
     ├── 000.md
@@ -46,7 +46,7 @@ Montrer le pipeline monogent à pleine échelle :
 
 ```bash
 # 1. Copier les prompts dans votre projet
-cp -r examples/2-pipeline-complet/prompts/ prompts/
+cp -r examples/2-mono-complet/prompts/ prompts/
 
 # 2. Adapter les variables $PROJECT et $BASE dans les prompts
 
@@ -60,9 +60,9 @@ cp -r examples/2-pipeline-complet/prompts/ prompts/
 ./scripts/send.sh 200 "go"
 ```
 
-## Différences avec pipeline-simple
+## Différences avec mono-simple
 
-| Aspect | pipeline-simple | pipeline-complet |
+| Aspect | mono-simple | mono-complet |
 |--------|----------------|------------------|
 | Agents | 3 | 10 |
 | Hiérarchie | Minimale (000→100→300) | Complète (7 niveaux) |
