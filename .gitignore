@@ -79,3 +79,6 @@ login/*
 
 web/backend/.pytest_cache/
 web/backend/venv/
+
+# Safe-delete archive
+removed/
