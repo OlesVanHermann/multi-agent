@@ -73,7 +73,7 @@
 cd ~/multi-agent
 
 # 1. Générer les checksums MD5 (vérification d'intégrité du sync)
-git ls-files core docs examples infrastructure scripts upgrade.sh upgrades web \
+git ls-files docs examples scripts web \
   | xargs md5 > file.md5
 # IMPORTANT: utiliser git ls-files (respecte .gitignore)
 # PAS find (inclut node_modules/, dist/, __pycache__/)
@@ -180,8 +180,8 @@ git push hub main --tags
 rsync -av --exclude='__pycache__/' --exclude='node_modules/' \
   --exclude='dist/' --exclude='.pytest_cache/' --exclude='venv/' \
   --exclude='*.pyc' --exclude='dump.rdb' \
-  core/ /home/ubuntu/multi-agent-inception/core/
-# (répéter pour scripts/ web/ docs/ etc.)
+  scripts/ /home/ubuntu/multi-agent-inception/scripts/
+# (répéter pour web/ docs/ etc.)
 # Ou copier les fichiers modifiés individuellement :
 cp scripts/fichier.sh /home/ubuntu/multi-agent-inception/scripts/
 
@@ -376,7 +376,7 @@ Le frontend gère automatiquement :
 | `patch/hub-release.sh` | hub | `/home/ubuntu/multi-agent/` | Tests + tag + push GitHub |
 | `hooks/post-receive` | hub | `/home/ubuntu/multi-agent.git/` | Log + auto-fetch à la réception |
 | `setup/install_keycloak.sh` | hub/Mac | `~/multi-agent/` | Installe Docker + Keycloak (Mac/Ubuntu) |
-| `framework/keycloak_passwd_modify.sh` | hub/Mac | `~/multi-agent/` | Change mot de passe Keycloak via API |
+| `setup/keycloak_user_create.sh` | hub/Mac | `~/multi-agent/` | Créer un utilisateur Keycloak via API |
 
 ---
 
@@ -386,7 +386,7 @@ Le frontend gère automatiquement :
 1. Mac1 : développeur corrige un bug dans web/backend/server.py
 
 2. Mac1 : cd ~/multi-agent
-         git ls-files core docs examples infrastructure scripts upgrade.sh upgrades web \
+         git ls-files docs examples scripts web \
            | xargs md5 > file.md5
          ./scripts/sync-to-git.sh "fix-websocket-timeout"
    → crée patch/project/fix-websocket-timeout

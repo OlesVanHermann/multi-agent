@@ -91,6 +91,7 @@ rsync -av --exclude='__pycache__/' --exclude='node_modules/' \
 cd /home/ubuntu/multi-agent-inception
 cp setup/secrets.cfg scripts/.env
 # Éditer .env — changer les ports si besoin
+nano scripts/.env
 
 # Démarrer avec un prefix différent pour isoler
 MA_PREFIX=mi ./scripts/infra.sh start

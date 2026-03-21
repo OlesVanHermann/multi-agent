@@ -77,8 +77,8 @@ fi
 
 # === SYNC FRAMEWORK DIRS ===
 # Sync each framework directory individually (no --delete to preserve git-only files)
-FRAMEWORK_DIRS=(scripts web docs tests patch setup examples)
-FRAMEWORK_FILES=(requirements.txt CLAUDE.md README.md HOW_TO_SETUP.md UPGRADE.md)
+FRAMEWORK_DIRS=(scripts web docs tests patch setup examples framework)
+FRAMEWORK_FILES=(requirements.txt CLAUDE.md README.md HOW_TO_SETUP.md HOW_TO_UPGRADE.md)
 
 # Global excludes (junk that should never be synced)
 EXCLUDES=(

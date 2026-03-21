@@ -42,10 +42,9 @@ Agent bridges :9100-10010 (127.0.0.1 only, HEALTH_TOKEN)
 ### Password management
 
 ```bash
-./setup/keycloak_user_list.sh                              # List users
-./setup/keycloak_passwd_modify.sh <username> <new-password> # Change password
+./setup/keycloak_user_list.sh                               # List users
 ./setup/keycloak_user_create.sh <username> <password> <email>  # Create user
-./setup/keycloak_user_delete.sh <username>                  # Delete user
+./setup/keycloak_user_delete.sh <username>                   # Delete user
 ```
 
 Scripts read credentials from `scripts/.env` automatically.

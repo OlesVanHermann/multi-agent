@@ -99,5 +99,8 @@ web/backend/venv/
 # Safe-delete archive
 removed/
 
+# Runtime secrets (created from setup/secrets.cfg)
+scripts/.env
+
 # Claude Code session history
 history.txt

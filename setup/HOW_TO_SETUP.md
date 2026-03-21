@@ -122,7 +122,7 @@ Lance la commande, authentifie-toi, puis tape `/exit` pour chaque profil.
 
 ```bash
 cd ~/multi-agent
-source setup/create_login.sh claude1a claude1b
+source setup/login_create.sh claude1a claude1b
 ```
 
 Le script crée :

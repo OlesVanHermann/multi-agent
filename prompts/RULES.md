@@ -30,7 +30,7 @@ Pas de multi-tâche. Pas de fichiers multiples dispersés. Un agent = un livrabl
 **Après CHAQUE tâche, envoyer un rapport COMPLET au Master:**
 
 ```bash
-redis-cli RPUSH "ma:inject:100" "FROM:{MON_ID}|DONE {ENTREPRISE} - {RÉSUMÉ COMPLET}"
+redis-cli XADD "ma:agent:100:inbox" '*' prompt "FROM:{MON_ID}|DONE {ENTREPRISE} - {RÉSUMÉ COMPLET}" from_agent "{MON_ID}" timestamp "$(date +%s)"
 ```
 
 Le rapport DOIT contenir:
