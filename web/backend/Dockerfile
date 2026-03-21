@@ -6,8 +6,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY server.py .
-COPY multi_agent/ ./multi_agent/
 
-EXPOSE 8090
+EXPOSE 8050
 
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8090"]
+CMD ["uvicorn", "multi_agent.backend:app", "--host", "0.0.0.0", "--port", "8050"]

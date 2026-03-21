@@ -1,6 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { api, wsUrl } from '../basePath'
 
+function UsageBars({ usage }) {
+  if (!usage) return null
+  return (
+    <span className="usage-bars">
+      <span className="usage-bar-name">{usage.login}</span>
+      {usage.bars?.length ? usage.bars.map((b, i) => (
+        <span key={i} className="usage-bar-item" title={`${b.label}: ${b.percent}% used${b.resets ? ' — Resets ' + b.resets : ''}`}>
+          <span className="usage-bar-track">
+            <span className="usage-bar-fill" style={{width: `${Math.min(b.percent, 100)}%`}} />
+          </span>
+          <span className="usage-bar-pct">{b.percent}%</span>
+        </span>
+      )) : <span className="usage-bar-pct" title="Usage data unavailable (personal account)">N/A</span>}
+    </span>
+  )
+}
+
 function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   const [output, setOutput] = useState('')
   const [input, setInput] = useState('')
@@ -8,16 +25,32 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   const [connected, setConnected] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [paused, setPaused] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
+  const [historyLines, setHistoryLines] = useState(null)
+  const [showNotes, setShowNotes] = useState(false)
+  const [notesContent, setNotesContent] = useState('')
+  const [planUsage, setPlanUsage] = useState(null)
   const outputRef = useRef(null)
   const wsRef = useRef(null)
   const inputRef = useRef(null)
+  const fileRef = useRef(null)
   const lastSentInput = useRef('')
   const syncTimeoutRef = useRef(null)
+
+  // Fetch plan usage for this agent's login
+  useEffect(() => {
+    if (!agentId) return
+    fetch(api(`api/usage/${agentId}`))
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.login) setPlanUsage(d) })
+      .catch(() => {})
+  }, [agentId])
 
   // Scroll/pause refs
   const userScrolledRef = useRef(false)
   const scrollPauseRef = useRef(null)
   const pendingOutputRef = useRef(null) // latest output while paused
+  const selectingRef = useRef(false) // true while user is selecting text
 
   // Sync coordination refs (avoid stale closures in WebSocket handler)
   const lastLocalEditRef = useRef(0)
@@ -71,11 +104,15 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   }, [focused])
 
   // Auto-scroll when output changes (only fires when not paused)
+  // Double rAF ensures layout is computed before scrolling (avoids oscillation)
   useEffect(() => {
+    if (userScrolledRef.current) return
     requestAnimationFrame(() => {
-      if (outputRef.current && !userScrolledRef.current) {
-        outputRef.current.scrollTop = outputRef.current.scrollHeight
-      }
+      requestAnimationFrame(() => {
+        if (outputRef.current && !userScrolledRef.current) {
+          outputRef.current.scrollTop = outputRef.current.scrollHeight
+        }
+      })
     })
   }, [output])
 
@@ -107,6 +144,14 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
             inputValueRef.current = data.current_input
             lastSentInput.current = data.current_input
           }
+          // Force scroll to bottom after initial load
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              if (outputRef.current) {
+                outputRef.current.scrollTop = outputRef.current.scrollHeight
+              }
+            })
+          })
         }
       } catch (err) {
         console.error('Failed to fetch output:', err)
@@ -117,13 +162,14 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
     fetchOutput()
 
     // Connect WebSocket (pauses when tab is hidden)
-    const agentWsUrl = wsUrl(`ws/agent/${agentId}?poll=${pollInterval}`)
     let intentionalClose = false
 
     const connect = () => {
       if (document.hidden) return  // Don't connect if tab is hidden
       intentionalClose = false
-      const ws = new WebSocket(agentWsUrl)
+      // Re-read token on every reconnect (token may have been refreshed)
+      const freshWsUrl = wsUrl(`ws/agent/${agentId}?poll=${pollInterval}`)
+      const ws = new WebSocket(freshWsUrl)
       wsRef.current = ws
 
       ws.onopen = () => setConnected(true)
@@ -132,7 +178,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
         const data = JSON.parse(event.data)
 
         if (data.type === 'output') {
-          if (userScrolledRef.current) {
+          if (userScrolledRef.current || selectingRef.current) {
             pendingOutputRef.current = data.output || ''
           } else {
             setOutput(data.output || '')
@@ -177,11 +223,20 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       }
     }
 
+    // Reconnect immediately when network comes back
+    const handleOnline = () => {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        connect()
+      }
+    }
+
     document.addEventListener('visibilitychange', handleVisibility)
+    window.addEventListener('online', handleOnline)
     connect()
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibility)
+      window.removeEventListener('online', handleOnline)
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current)
       intentionalClose = true
       if (wsRef.current) {
@@ -190,6 +245,8 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       }
       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
       if (scrollPauseRef.current) clearTimeout(scrollPauseRef.current)
+      if (selectResumeRef.current) clearTimeout(selectResumeRef.current)
+      selectingRef.current = false
     }
   }, [agentId, pollInterval])
 
@@ -307,12 +364,120 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
     }
   }
 
+  // Pause updates while selecting text in terminal output
+  const selectResumeRef = useRef(null)
+  const handleOutputMouseDown = () => {
+    selectingRef.current = true
+    setPaused(true)
+    if (selectResumeRef.current) clearTimeout(selectResumeRef.current)
+  }
+  const handleOutputMouseUp = () => {
+    // Delay resume so user can copy selected text
+    if (selectResumeRef.current) clearTimeout(selectResumeRef.current)
+    selectResumeRef.current = setTimeout(() => {
+      selectingRef.current = false
+      if (!userScrolledRef.current) resumeSync()
+    }, 3000)
+  }
+
+  // Clean wrapped URLs on copy: Claude Code hard-wraps at terminal width
+  // producing "...type=c  \n  ode&..." — rejoin those fragments
+  const handleOutputCopy = (e) => {
+    const sel = window.getSelection()?.toString()
+    if (!sel || !/https?:\/\//.test(sel)) return
+    // Remove newline + surrounding spaces within URL text
+    const cleaned = sel.replace(/\s*\n\s*/g, '')
+    if (cleaned !== sel) {
+      e.preventDefault()
+      navigator.clipboard.writeText(cleaned)
+    }
+  }
+
   // Click anywhere in terminal → focus input (unless selecting text)
   const handleTerminalClick = (e) => {
     // Don't steal focus from buttons or if user is selecting text
     if (e.target.closest('button') || e.target.closest('textarea')) return
     if (window.getSelection()?.toString()) return
     inputRef.current?.focus()
+  }
+
+  const [uploading, setUploading] = useState(false)
+
+  const handleUpload = async (e) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+    setUploading(true)
+    try {
+      let paths = ''
+      for (const file of files) {
+        const form = new FormData()
+        form.append('file', file)
+        const res = await fetch(api('api/upload'), { method: 'POST', body: form })
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}))
+          alert(`Upload failed: ${err.detail || res.statusText}`)
+          continue
+        }
+        const data = await res.json()
+        paths += data.path + ' '
+      }
+      if (paths) {
+        setInput(prev => prev + paths)
+        inputValueRef.current += paths
+        lastLocalEditRef.current = Date.now()
+        setSyncing(true)
+        if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
+        syncTimeoutRef.current = setTimeout(() => doSyncToTmux(inputValueRef.current), 150)
+      }
+    } catch (err) {
+      alert(`Upload error: ${err.message}`)
+    } finally {
+      setUploading(false)
+      e.target.value = ''
+    }
+  }
+
+  const toggleHistory = async () => {
+    if (showHistory) {
+      setShowHistory(false)
+      return
+    }
+    setShowNotes(false)
+    try {
+      const res = await fetch(api(`api/agent/${agentId}/history`))
+      const data = await res.json()
+      setHistoryLines(data.lines || [])
+      setShowHistory(true)
+      setTimeout(() => { if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight }, 50)
+    } catch {
+      setHistoryLines(['(erreur lecture historique)'])
+      setShowHistory(true)
+    }
+  }
+
+  const toggleNotes = async () => {
+    if (showNotes) {
+      // Save on close
+      try {
+        await fetch(api(`api/agent/${agentId}/notes`), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: notesContent }),
+        })
+      } catch {}
+      setShowNotes(false)
+      return
+    }
+    setShowHistory(false)
+    try {
+      const res = await fetch(api(`api/agent/${agentId}/notes`))
+      const data = await res.json()
+      setNotesContent(data.content || '')
+      setShowNotes(true)
+    } catch {
+      setNotesContent('')
+      setShowNotes(true)
+    }
   }
 
   return (
@@ -322,10 +487,25 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
         Agent {agentId} {connected ? '(live)' : '(disconnected)'}
         {syncing && <span className="sync-indicator"> ⟳</span>}
         {paused && <span className="pause-indicator"> ⏸</span>}
+        <UsageBars usage={planUsage} />
+        <button onClick={toggleHistory} className={`config-btn${showHistory ? ' config-btn-active' : ''}`}
+          title="Voir historique des prompts">{showHistory ? 'terminal' : 'historique'}</button>
+        <button onClick={toggleNotes} className={`config-btn${showNotes ? ' config-btn-active' : ''}`}
+          title="Notes de l'agent">notes</button>
+        <input type="file" ref={fileRef} hidden multiple onChange={handleUpload} />
+        <button onClick={() => fileRef.current?.click()} className="config-btn" title="Upload file to /tmp" disabled={uploading}>
+          {uploading ? '...' : 'upload'}</button>
       </div>
-      <pre className="terminal-output" ref={outputRef} onScroll={handleScroll}>
-        {output}
-      </pre>
+      {showNotes ? (
+        <textarea className="terminal-notes" value={notesContent}
+          onChange={(e) => setNotesContent(e.target.value)}
+          placeholder="Notes pour cet agent..." />
+      ) : (
+        <pre className="terminal-output" ref={outputRef} onScroll={handleScroll}
+          onMouseDown={handleOutputMouseDown} onMouseUp={handleOutputMouseUp} onCopy={handleOutputCopy}>
+          {showHistory ? (historyLines && historyLines.length > 0 ? historyLines.join('\n') : '(aucun historique)') : output}
+        </pre>
+      )}
       <div className="terminal-input">
         <span className="prompt">❯</span>
         <textarea
@@ -342,15 +522,16 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
           placeholder={`Co-edit with tmux...`}
           disabled={sending}
         />
-        <button onClick={handleSubmit} disabled={sending} title="Send (Enter)">
-          ⏎
-        </button>
-        <button onClick={() => sendKeys('Escape')} className="key-btn" title="Escape">
-          Esc
-        </button>
-        <button onClick={() => sendKeys('C-c')} className="key-btn danger" title="Ctrl+C">
-          ^C
-        </button>
+        <span className="key-group">
+          <button onClick={handleSubmit} disabled={sending} title="Send (Enter)">⏎</button>
+          <button onClick={() => sendKeys('Escape')} className="key-btn" title="Escape">Esc</button>
+          <button onClick={() => sendKeys('C-c')} className="key-btn danger" title="Ctrl+C">^C</button>
+        </span>
+        <span className="key-group">
+          <button onClick={() => sendKeys('Left')} className="key-btn" title="Left arrow">←</button>
+          <button onClick={() => sendKeys('Down')} className="key-btn" title="Down arrow">↓</button>
+          <button onClick={() => sendKeys('Right')} className="key-btn" title="Right arrow">→</button>
+        </span>
       </div>
     </div>
   )

@@ -4,7 +4,10 @@ const BASE = ''
 export const api = (path) => `/${path}`
 export const wsUrl = (path) => {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${protocol}//${window.location.host}${BASE}/${path}`
+  const token = localStorage.getItem('access_token')
+  const sep = path.includes('?') ? '&' : '?'
+  const tokenParam = token ? `${sep}token=${encodeURIComponent(token)}` : ''
+  return `${protocol}//${window.location.host}${BASE}/${path}${tokenParam}`
 }
 
 export default BASE

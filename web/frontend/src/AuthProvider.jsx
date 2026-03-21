@@ -248,7 +248,7 @@ export function LoginForm() {
               id="username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="dev1"
+              placeholder="octave"
               required
               autoFocus
             />
@@ -273,9 +273,6 @@ export function LoginForm() {
           </button>
         </form>
 
-        <div className="login-hint">
-          Default: admin / changeme
-        </div>
       </div>
     </div>
   )
