@@ -21,8 +21,8 @@ claude --version     # Claude Code CLI
 Installer les manquants :
 
 ```bash
-# Claude Code (si absent)
-npm i -g @anthropic-ai/claude-code
+# Claude Code (si absent) — installeur officiel
+curl -fsSL https://claude.ai/install.sh | bash
 
 # Docker sur Linux (si absent)
 sudo apt-get install -y docker.io && sudo systemctl start docker && sudo usermod -aG docker $USER
@@ -87,7 +87,35 @@ Les agents commitent avec `Co-Authored-By: Claude Sonnet 4.6` mais l'auteur rest
 
 ---
 
-## Étape 5 — Créer les profils Claude Code
+## Étape 5 — Installer les alias Claude Code (.bashrc_claude)
+
+```bash
+cd ~/multi-agent
+./setup/install_bashrc_claude.sh
+source ~/.bashrc_claude
+```
+
+Ce script crée `~/.bashrc_claude` avec les alias multi-profils :
+
+```bash
+alias claude1a='CLAUDE_CONFIG_DIR=~/multi-agent/login/claude1a claude --dangerously-skip-permissions'
+alias claude1b='CLAUDE_CONFIG_DIR=~/multi-agent/login/claude1b claude --dangerously-skip-permissions'
+# ... claude2a claude2b claude3a claude3b claude4a claude4b
+```
+
+Et ajoute automatiquement dans `~/.bashrc` :
+```bash
+[ -f ~/.bashrc_claude ] && source ~/.bashrc_claude
+```
+
+Vérifier :
+```bash
+type claude1a   # → alias claude1a='...'
+```
+
+---
+
+## Étape 6 — Créer les profils Claude Code
 
 **[HUMAIN]** Cette étape ouvre Claude Code en mode interactif pour chaque profil.
 Lance la commande, authentifie-toi, puis tape `/exit` pour chaque profil.
@@ -100,35 +128,40 @@ source setup/create_login.sh claude1a claude1b
 Le script crée :
 - `login/claude1a/` et `login/claude1b/` (répertoires CLAUDE_CONFIG_DIR)
 - `prompts/claude1a.login` et `prompts/claude1b.login`
-- Des alias `claude1a` / `claude1b` dans `~/.bashrc_claude`
 
 Avec un seul profil, les deux agents 1a et 1b partagent la même authentification.
 Avec deux profils distincts (recommandé), chaque paire d'agents a son propre compte.
 
 ---
 
-## Étape 6 — Configurer login et modèle par défaut
+## Étape 7 — Configurer login et modèle par défaut
 
 ```bash
 cd ~/multi-agent/prompts
 
 # Profil par défaut (remplacer claude1a par ton profil principal)
 ln -sf claude1a.login default.login
+```
 
-# Modèle par défaut
-echo "claude-sonnet-4-6" > default.model
+Le dépôt inclut déjà `default.model -> opus-4-6.model` (Claude Opus 4.6 par défaut).
+Pour utiliser un autre modèle, mettre à jour le symlink :
+
+```bash
+# Modèles disponibles : opus-4-6, sonnet-4-6, sonnet-4-5, haiku-4-5
+ln -sf sonnet-4-6.model default.model   # → claude-sonnet-4-6
+# ou garder opus-4-6 (défaut)
 ```
 
 Vérifier :
 
 ```bash
 ls -la prompts/default.login prompts/default.model
-cat prompts/default.model    # → claude-sonnet-4-6
+cat prompts/default.model    # → claude-opus-4-6  (ou le modèle choisi)
 ```
 
 ---
 
-## Étape 7 — Créer project-config.md
+## Étape 8 — Créer project-config.md
 
 ```bash
 cp templates/project-config.md.template project-config.md
@@ -150,7 +183,7 @@ nano ~/multi-agent/project-config.md
 
 ---
 
-## Étape 8 — Démarrer l'infrastructure
+## Étape 9 — Démarrer l'infrastructure
 
 ```bash
 cd ~/multi-agent
@@ -167,7 +200,7 @@ Durée : ~30 secondes (Keycloak met du temps à démarrer).
 
 ---
 
-## Étape 9 — Démarrer les agents
+## Étape 10 — Démarrer les agents
 
 ```bash
 cd ~/multi-agent
@@ -176,7 +209,7 @@ cd ~/multi-agent
 
 ---
 
-## Étape 10 — Vérifier
+## Étape 11 — Vérifier
 
 ```bash
 # Sessions tmux actives
