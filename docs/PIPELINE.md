@@ -180,7 +180,6 @@ git push hub main --tags
 rsync -av --exclude='__pycache__/' --exclude='node_modules/' \
   --exclude='dist/' --exclude='.pytest_cache/' --exclude='venv/' \
   --exclude='*.pyc' --exclude='dump.rdb' \
-  core/ /home/ubuntu/multi-agent-inception/core/
 # (répéter pour scripts/ web/ docs/ etc.)
 # Ou copier les fichiers modifiés individuellement :
 cp scripts/fichier.sh /home/ubuntu/multi-agent-inception/scripts/

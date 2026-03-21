@@ -106,7 +106,7 @@ Fichier vide créé à l'initialisation (`touch`). C'est un **placeholder** — 
 
 1. `agent.sh` crée une session tmux `{MA_PREFIX}-agent-{ID}` (ex : `A-agent-150`)
 2. Fenêtre `0` : `claude --dangerously-skip-permissions` (avec le bon `CLAUDE_CONFIG_DIR` si `.login` est défini)
-3. Fenêtre `bridge` : `python3 core/agent-bridge/agent.py {ID}`
+3. Fenêtre `bridge` : `python3 scripts/agent-bridge/agent.py {ID}`
 
 Le bridge **injecte automatiquement** le prompt au démarrage :
 ```

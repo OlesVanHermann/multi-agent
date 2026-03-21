@@ -138,9 +138,9 @@ multi-agent/
 │   ├── docker-compose.yml       # Docker production
 │   └── start.sh                 # Quick start script
 │
-├── core/
-│   ├── agent-bridge/            # Bridge PTY + Redis Streams
-│   └── bridge/                  # SSH tunnel Mac↔VM
+
+
+
 │
 ├── docs/                        # Documentation
 │   └── BRIDGE.md                # Doc technique du bridge
@@ -492,8 +492,8 @@ python3 scripts/monitor.py
 **Mise à jour d'un fichier spécifique sans git pull :**
 ```bash
 # Télécharger directement depuis GitHub
-curl -o core/agent-bridge/agent.py \
-  https://raw.githubusercontent.com/USER/multi-agent/main/core/agent-bridge/agent.py
+curl -o scripts/agent-bridge/agent.py \
+  https://raw.githubusercontent.com/USER/multi-agent/main/scripts/agent-bridge/agent.py
 
 # Redémarrer
 ./scripts/infra.sh stop
