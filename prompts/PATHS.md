@@ -41,7 +41,7 @@ Remplacer les chemins hardcodés par les variables :
 
 ```bash
 # AVANT (hardcodé)
-cat /Users/claude/projet-new/pool-requests/pending/PR-DOC-*.md
+cat /home/user/projet/pool-requests/pending/PR-DOC-*.md
 
 # APRÈS (variable)
 cat $POOL/pending/PR-DOC-*.md
@@ -238,21 +238,21 @@ send_to_agent() {
 }
 
 # Exemples
-send_to_agent 100 "301 done scaleway.com"
-send_to_agent 302 "go scaleway.com" 100
+send_to_agent 100 "301 done example.com"
+send_to_agent 302 "go example.com" 100
 ```
 
 ### Ou directement
 
 ```bash
-redis-cli XADD "ma:agent:100:inbox" '*' prompt "301 done scaleway.com" from_agent "301" timestamp "$(date +%s)"
+redis-cli XADD "ma:agent:100:inbox" '*' prompt "301 done example.com" from_agent "301" timestamp "$(date +%s)"
 ```
 
 ### Script officiel
 
 ```bash
-/Users/claude/multi-agent/scripts/send.sh FROM TO "message"
-/Users/claude/multi-agent/scripts/send.sh 301 100 "301 done scaleway.com"
+$BASE/scripts/send.sh FROM TO "message"
+$BASE/scripts/send.sh 301 100 "301 done example.com"
 ```
 
 ### ANCIEN format (OBSOLETE - ne plus utiliser)

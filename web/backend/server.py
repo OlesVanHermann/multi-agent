@@ -501,8 +501,8 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://freemium.di2amp.com",
-        "https://drive.di2amp.com",
+        "https://your-domain.example.com",
+        "https://other-subdomain.example.com",
         "http://localhost:5173",
         "http://localhost:8050",
     ],

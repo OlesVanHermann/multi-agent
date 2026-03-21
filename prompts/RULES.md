@@ -42,9 +42,9 @@ Le rapport DOIT contenir:
 
 **Exemple de rapport CORRECT:**
 ```
-FROM:300|DONE scaleway.com - SUCCESS
+FROM:300|DONE example.com - SUCCESS
 Crawl terminé: 479 pages HTML
-Fichiers: studies/scaleway.com/300/html/*.html (479 fichiers, 125MB)
+Fichiers: studies/example.com/300/html/*.html (479 fichiers, 125MB)
 Durée: 2h15m
 Erreurs: 3 timeouts (retry OK)
 Prochaine étape: Agent 306 peut extraire
@@ -85,7 +85,7 @@ Et documente dans un fichier `_manifest.json`:
 ```json
 {
   "agent": 300,
-  "entreprise": "scaleway.com",
+  "entreprise": "example.com",
   "status": "complete",
   "files": ["html/abc123.html", "..."],
   "stats": {"pages": 479, "size_mb": 125},

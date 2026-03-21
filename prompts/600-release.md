@@ -114,7 +114,7 @@ Release (600) - PUBLISHED
 
 Version: vX.Y.Z
 Tag: vX.Y.Z
-GitHub: https://github.com/OlesVanHermann/YOUR_PROJECT
+GitHub: https://github.com/YOUR-ORG/YOUR_PROJECT
 Nouvelles fonctions: X
 
 → Master (100) notifié
