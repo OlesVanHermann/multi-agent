@@ -9,6 +9,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$SCRIPT_DIR/.."
+source "$SCRIPT_DIR/redis.sh"
 # Auto-detect MA_PREFIX from project-config.md if not set
 if [ -z "${MA_PREFIX:-}" ] && [ -f "$BASE_DIR/project-config.md" ]; then
     MA_PREFIX=$(grep '^MA_PREFIX=' "$BASE_DIR/project-config.md" 2>/dev/null | cut -d= -f2 | tr -d ' ' || true)
@@ -61,7 +62,7 @@ fi
 TIMESTAMP=$(date +%s)
 
 # Envoyer via Redis Streams (nouveau format)
-redis-cli XADD "${MA_PREFIX}:agent:${TO_AGENT}:inbox" '*' \
+$REDIS_CLI XADD "${MA_PREFIX}:agent:${TO_AGENT}:inbox" '*' \
     prompt "$MESSAGE" \
     from_agent "$FROM_AGENT" \
     timestamp "$TIMESTAMP" > /dev/null

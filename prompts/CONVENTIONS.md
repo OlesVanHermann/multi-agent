@@ -303,4 +303,4 @@ redis-cli XADD "ma:agent:XXX:inbox" '*' prompt "relis ton prompt" from_agent "10
 
 ---
 
-*Convention v2.4 - Mars 2026*
+*Convention v2.5 - Mars 2026*

@@ -10,6 +10,7 @@ ulimit -n 10240 2>/dev/null || true
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+[ -f "$SCRIPT_DIR/secrets.cfg" ] && source "$SCRIPT_DIR/secrets.cfg"
 BRIDGE_SCRIPT="$BASE_DIR/scripts/agent-bridge/agent.py"
 LOG_DIR="$BASE_DIR/logs/000"
 WEB_DIR="$BASE_DIR/web"
@@ -30,6 +31,16 @@ log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_ok() { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+# ── Redis CLI helper (native or docker exec fallback) ──
+
+redis_cli() {
+    if command -v redis-cli &>/dev/null; then
+        redis-cli "$@"
+    else
+        docker exec ma-redis redis-cli "$@"
+    fi
+}
 
 # ── Docker helper ──
 
@@ -73,7 +84,7 @@ do_start() {
 
     # Redis
     log_info "Starting Redis..."
-    if redis-cli ping &>/dev/null 2>&1; then
+    if redis_cli ping &>/dev/null 2>&1; then
         log_ok "Redis already running"
     else
         $DOCKER run -d --name ma-redis -p 127.0.0.1:6379:6379 \
@@ -81,11 +92,11 @@ do_start() {
             redis:7-alpine redis-server --appendonly yes 2>/dev/null \
             || $DOCKER start ma-redis 2>/dev/null || true
         sleep 2
-        if redis-cli ping &>/dev/null 2>&1; then
+        if redis_cli ping &>/dev/null 2>&1; then
             log_ok "Redis started (Docker)"
             # Flush only on fresh start (not when already running)
             log_info "Flushing Redis database..."
-            redis-cli FLUSHALL &>/dev/null && log_ok "Redis database cleared"
+            redis_cli FLUSHALL &>/dev/null && log_ok "Redis database cleared"
         else
             log_error "Failed to start Redis"
             exit 1
@@ -211,7 +222,7 @@ do_start() {
     echo -e "${GREEN}   INFRASTRUCTURE READY${NC}"
     echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
     echo ""
-    echo "  Redis:     $(redis-cli ping 2>/dev/null || echo 'NOT RUNNING')"
+    echo "  Redis:     $(redis_cli ping 2>/dev/null || echo 'NOT RUNNING')"
     echo "  CDP Bridge: $(curl -s http://127.0.0.1:9222/health >/dev/null 2>&1 && echo 'OK (port 9222)' || echo 'NOT RUNNING')"
     echo "  Dashboard: http://localhost:8050"
     echo "  Agent 000: tmux attach -t $SESSION_NAME"
@@ -256,9 +267,9 @@ do_stop() {
     fi
 
     # Redis - Flush all data before stopping
-    if redis-cli ping &>/dev/null 2>&1; then
+    if redis_cli ping &>/dev/null 2>&1; then
         log_info "Flushing Redis database..."
-        redis-cli FLUSHALL &>/dev/null && log_ok "Redis database cleared"
+        redis_cli FLUSHALL &>/dev/null && log_ok "Redis database cleared"
     fi
 
     log_info "Stopping Redis..."

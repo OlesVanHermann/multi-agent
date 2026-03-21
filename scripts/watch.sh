@@ -4,6 +4,7 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$SCRIPT_DIR/.."
+source "$SCRIPT_DIR/redis.sh"
 # Auto-detect MA_PREFIX from project-config.md if not set
 if [ -z "${MA_PREFIX:-}" ] && [ -f "$BASE_DIR/project-config.md" ]; then
     MA_PREFIX=$(grep '^MA_PREFIX=' "$BASE_DIR/project-config.md" 2>/dev/null | cut -d= -f2 | tr -d ' ' || true)
@@ -19,14 +20,14 @@ echo "Press Ctrl+C to quit"
 echo "---"
 
 # Commencer après le dernier message existant
-LAST_ID=$(redis-cli XINFO STREAM "$STREAM" 2>/dev/null | grep -A1 "last-generated-id" | tail -1 || echo "0-0")
+LAST_ID=$($REDIS_CLI XINFO STREAM "$STREAM" 2>/dev/null | grep -A1 "last-generated-id" | tail -1 || echo "0-0")
 if [ -z "$LAST_ID" ] || [ "$LAST_ID" = "0-0" ]; then
     LAST_ID='$'
 fi
 
 while true; do
     # Lire UN message à la fois, bloquer 5 secondes max
-    RESULT=$(redis-cli XREAD BLOCK 5000 COUNT 1 STREAMS "$STREAM" "$LAST_ID" 2>/dev/null)
+    RESULT=$($REDIS_CLI XREAD BLOCK 5000 COUNT 1 STREAMS "$STREAM" "$LAST_ID" 2>/dev/null)
 
     if [ -n "$RESULT" ]; then
         # Extraire l'ID du message (format: 1234567890123-0)

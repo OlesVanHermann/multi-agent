@@ -10,6 +10,7 @@ ulimit -n 10240 2>/dev/null || true
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/redis.sh"
 BRIDGE_SCRIPT="$BASE_DIR/scripts/agent-bridge/agent.py"
 LOG_DIR="$BASE_DIR/logs"
 PROMPTS_DIR="$BASE_DIR/prompts"
@@ -171,7 +172,7 @@ start_all() {
         local dir_name=$(basename "$agent_dir")
         # Extract numeric prefix (341 from 341-analyse-archi-...)
         local agent_id="${dir_name:0:3}"
-        { [ -f "$agent_dir/${agent_id}-system.md" ] || [ -f "$agent_dir/system.md" ]; } || continue
+        { [ -f "$agent_dir/${agent_id}-system.md" ] || [ -f "$agent_dir/system.md" ] || [ -f "$agent_dir/${dir_name}.md" ]; } || continue
         is_protected "$agent_id" && continue
         # Skip duplicates (already found in flat format or verbose duplicate)
         if ! [[ " ${agents[*]} " == *" $agent_id "* ]]; then
@@ -280,7 +281,7 @@ ensure_infra() {
     local ok=true
 
     # Redis
-    if ! redis-cli ping &>/dev/null 2>&1; then
+    if ! $REDIS_CLI ping &>/dev/null 2>&1; then
         log_error "Redis not running. Start infra first: ./scripts/infra.sh start"
         ok=false
     fi
@@ -361,8 +362,8 @@ stop_all() {
     done
 
     # Update Redis status
-    for key in $(redis-cli KEYS "${MA_PREFIX}:agent:*" 2>/dev/null | grep -E "^${MA_PREFIX}:agent:[0-9]+(-[0-9]+)?$"); do
-        redis-cli HSET "$key" status "stopped" > /dev/null 2>&1
+    for key in $($REDIS_CLI KEYS "${MA_PREFIX}:agent:*" 2>/dev/null | grep -E "^${MA_PREFIX}:agent:[0-9]+(-[0-9]+)?$"); do
+        $REDIS_CLI HSET "$key" status "stopped" > /dev/null 2>&1
     done
 }
 

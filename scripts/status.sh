@@ -6,6 +6,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$SCRIPT_DIR/.."
 LOG_DIR="$BASE_DIR/logs"
+source "$SCRIPT_DIR/redis.sh"
 
 # Auto-detect MA_PREFIX from project-config.md if not set
 if [ -z "${MA_PREFIX:-}" ] && [ -f "$BASE_DIR/project-config.md" ]; then
@@ -41,8 +42,8 @@ do_quick() {
     echo -e "${BLUE}═══════════════════════════════════════${NC}"
 
     header "Redis"
-    if redis-cli ping &>/dev/null 2>&1; then
-        KEYS=$(redis-cli DBSIZE 2>/dev/null | grep -o '[0-9]*')
+    if $REDIS_CLI ping &>/dev/null 2>&1; then
+        KEYS=$($REDIS_CLI DBSIZE 2>/dev/null | grep -o '[0-9]*')
         ok "Redis" "PONG ($KEYS keys)"
     else
         fail "Redis" "not running"
@@ -138,16 +139,16 @@ do_full() {
 
     # ── 1. Redis ──
     header "1. Redis"
-    if redis-cli ping &>/dev/null 2>&1; then
-        KEYS=$(redis-cli DBSIZE 2>/dev/null | grep -o '[0-9]*')
+    if $REDIS_CLI ping &>/dev/null 2>&1; then
+        KEYS=$($REDIS_CLI DBSIZE 2>/dev/null | grep -o '[0-9]*')
         ok "ping" "PONG ($KEYS keys)"
 
         # Check MA_PREFIX keys
-        MA_KEYS=$(redis-cli KEYS "${MA_PREFIX}:*" 2>/dev/null | wc -l | tr -d ' ')
+        MA_KEYS=$($REDIS_CLI KEYS "${MA_PREFIX}:*" 2>/dev/null | wc -l | tr -d ' ')
         ok "keys" "$MA_KEYS keys with prefix ${MA_PREFIX}:"
 
         # Check agent status hashes
-        AGENT_HASHES=$(redis-cli KEYS "${MA_PREFIX}:agent:*" 2>/dev/null | grep -cE "^${MA_PREFIX}:agent:[0-9]+$" 2>/dev/null || true)
+        AGENT_HASHES=$($REDIS_CLI KEYS "${MA_PREFIX}:agent:*" 2>/dev/null | grep -cE "^${MA_PREFIX}:agent:[0-9]+$" 2>/dev/null || true)
         info "hashes" "${AGENT_HASHES:-0} agent status hashes"
     else
         fail "ping" "NOT RUNNING"
