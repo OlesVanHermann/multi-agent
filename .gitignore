@@ -76,6 +76,22 @@ pool-requests/tests/*
 # Claude profiles (API credentials)
 login/*
 !login/.gitkeep
+!login/claude1a/
+!login/claude1a/**
+!login/claude1b/
+!login/claude1b/**
+!login/claude2a/
+!login/claude2a/**
+!login/claude2b/
+!login/claude2b/**
+!login/claude3a/
+!login/claude3a/**
+!login/claude3b/
+!login/claude3b/**
+!login/claude4a/
+!login/claude4a/**
+!login/claude4b/
+!login/claude4b/**
 
 web/backend/.pytest_cache/
 web/backend/venv/
