@@ -38,11 +38,11 @@ class TestSequentialWorkflow:
         # Mock xread to return responses
         responses = iter([
             # Response from agent 200 (Explorer)
-            [("ma:agent:200:outbox", [("1-0", {"response": "Found 3 .py files"})])],
+            [("A:agent:200:outbox", [("1-0", {"response": "Found 3 .py files"})])],
             # Response from agent 300 (Developer)
-            [("ma:agent:300:outbox", [("2-0", {"response": "Created index.py"})])],
+            [("A:agent:300:outbox", [("2-0", {"response": "Created index.py"})])],
             # Response from agent 500 (Tester)
-            [("ma:agent:500:outbox", [("3-0", {"response": "All tests pass"})])],
+            [("A:agent:500:outbox", [("3-0", {"response": "All tests pass"})])],
         ])
         mock_redis.xread.side_effect = lambda *a, **kw: next(responses)
 
@@ -83,7 +83,7 @@ class TestParallelWorkflow:
         assert mock_redis.xadd.call_count == 3
         for i, worker in enumerate(workers):
             call_args = mock_redis.xadd.call_args_list[i]
-            assert call_args[0][0] == f"ma:agent:{worker}:inbox"
+            assert call_args[0][0] == f"A:agent:{worker}:inbox"
             assert call_args[0][1]['prompt'] == "Do task"
             assert call_args[0][1]['from_agent'] == 100
 
@@ -94,12 +94,12 @@ class TestParallelWorkflow:
             call_count += 1
             if call_count == 1:
                 return [
-                    ("ma:agent:300:outbox", [("1-0", {"response": "done A"})]),
-                    ("ma:agent:301:outbox", [("2-0", {"response": "done B"})]),
+                    ("A:agent:300:outbox", [("1-0", {"response": "done A"})]),
+                    ("A:agent:301:outbox", [("2-0", {"response": "done B"})]),
                 ]
             elif call_count == 2:
                 return [
-                    ("ma:agent:302:outbox", [("3-0", {"response": "done C"})]),
+                    ("A:agent:302:outbox", [("3-0", {"response": "done C"})]),
                 ]
             return None
 
@@ -122,7 +122,7 @@ class TestParallelWorkflow:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return [("ma:agent:300:outbox", [("1-0", {"response": "done A"})])]
+                return [("A:agent:300:outbox", [("1-0", {"response": "done A"})])]
             return None  # Other agents never respond
 
         mock_redis.xread.side_effect = mock_xread
@@ -145,13 +145,13 @@ class TestPipelineWorkflow:
 
         step_responses = [
             # Explorer (200) response
-            [("ma:agent:200:outbox", [("1-0", {"response": "Spec: add email validation"})])],
+            [("A:agent:200:outbox", [("1-0", {"response": "Spec: add email validation"})])],
             # Master (100) response
-            [("ma:agent:100:outbox", [("2-0", {"response": "Dispatched to 300,301,302"})])],
+            [("A:agent:100:outbox", [("2-0", {"response": "Dispatched to 300,301,302"})])],
             # Merge (400) response
-            [("ma:agent:400:outbox", [("3-0", {"response": "Merged 3 branches"})])],
+            [("A:agent:400:outbox", [("3-0", {"response": "Merged 3 branches"})])],
             # Test (500) response
-            [("ma:agent:500:outbox", [("4-0", {"response": "12/12 tests pass"})])],
+            [("A:agent:500:outbox", [("4-0", {"response": "12/12 tests pass"})])],
         ]
         mock_redis.xread.side_effect = lambda *a, **kw: step_responses.pop(0) if step_responses else None
 
@@ -174,9 +174,9 @@ class TestPipelineWorkflow:
 
         step_responses = [
             # Explorer OK
-            [("ma:agent:200:outbox", [("1-0", {"response": "Spec ready"})])],
+            [("A:agent:200:outbox", [("1-0", {"response": "Spec ready"})])],
             # Master OK
-            [("ma:agent:100:outbox", [("2-0", {"response": "Dispatched"})])],
+            [("A:agent:100:outbox", [("2-0", {"response": "Dispatched"})])],
         ]
         mock_redis.xread.side_effect = lambda *a, **kw: step_responses.pop(0) if step_responses else None
 
@@ -198,7 +198,7 @@ class TestMessageFormat:
         from orchestrator import send_and_wait
 
         mock_redis.xread.return_value = [
-            ("ma:agent:200:outbox", [("1-0", {"response": "ok"})])
+            ("A:agent:200:outbox", [("1-0", {"response": "ok"})])
         ]
 
         send_and_wait(200, "test", from_agent=100)
@@ -213,11 +213,11 @@ class TestMessageFormat:
         assert msg_data['from_agent'] == 100
 
     def test_inbox_key_format(self, mock_redis):
-        """Les clés inbox suivent le format ma:agent:{ID}:inbox (CT-001)"""
+        """Les clés inbox suivent le format A:agent:{ID}:inbox (CT-001)"""
         from orchestrator import send_and_wait, MA_PREFIX
 
         mock_redis.xread.return_value = [
-            ("ma:agent:300:outbox", [("1-0", {"response": "ok"})])
+            ("A:agent:300:outbox", [("1-0", {"response": "ok"})])
         ]
 
         send_and_wait(300, "hello", from_agent=100)

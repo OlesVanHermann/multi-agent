@@ -226,8 +226,7 @@ Le Master gere le cycle COMPLET sans demander confirmation.
 
 ## Completion
 ```bash
-$BASE/scripts/send.sh {ID}-1{XX} \
-  prompt "{ID}-{ID}:done" from_agent "{ID}-{ID}" timestamp "$(date +%s)"
+$BASE/scripts/send.sh {ID}-1{XX} "{ID}-{ID}:done"
 ```
 
 ## Stack technique
@@ -273,8 +272,7 @@ MAXIMUM 6 tool calls total :
 
 ## Completion
 ```bash
-$BASE/scripts/send.sh {ID}-1{XX} \
-  prompt "{ID}-5{XX}:done:score:{SCORE}" from_agent "{ID}-5{XX}" timestamp "$(date +%s)"
+$BASE/scripts/send.sh {ID}-1{XX} "{ID}-5{XX}:done:score:{SCORE}"
 ```
 ```
 
@@ -305,8 +303,7 @@ $BASE/scripts/send.sh {ID}-1{XX} \
 
 ## Completion
 ```bash
-$BASE/scripts/send.sh {ID}-1{XX} \
-  prompt "{ID}-7{XX}:done" from_agent "{ID}-7{XX}" timestamp "$(date +%s)"
+$BASE/scripts/send.sh {ID}-1{XX} "{ID}-7{XX}:done"
 ```
 ```
 
@@ -336,8 +333,7 @@ $BASE/scripts/send.sh {ID}-1{XX} \
 
 ## Completion
 ```bash
-$BASE/scripts/send.sh {ID}-1{XX} \
-  prompt "{ID}-8{XX}:done" from_agent "{ID}-8{XX}" timestamp "$(date +%s)"
+$BASE/scripts/send.sh {ID}-1{XX} "{ID}-8{XX}:done"
 ```
 ```
 
@@ -359,8 +355,7 @@ $BASE/scripts/send.sh {ID}-1{XX} \
 
 ## Completion
 ```bash
-$BASE/scripts/send.sh {ID}-1{XX} \
-  prompt "{ID}-9{XX}:done" from_agent "{ID}-9{XX}" timestamp "$(date +%s)"
+$BASE/scripts/send.sh {ID}-1{XX} "{ID}-9{XX}:done"
 ```
 ```
 
@@ -427,9 +422,7 @@ echo "DONE:" && find {repertoire_projet}/plan-DONE -name "*.md" | wc -l
 ## PHASE 6 — NOTIFICATION
 
 ```bash
-$BASE/scripts/send.sh 100 \
-  prompt "FROM:160|DONE x45 {ID}-{nom} cree — 6 satellites, {TODO} tasks TODO, pret a demarrer" \
-  from_agent "160" timestamp "$(date +%s)"
+$BASE/scripts/send.sh 100 "FROM:160|DONE x45 {ID}-{nom} cree — 6 satellites, {TODO} tasks TODO, pret a demarrer"
 ```
 
 ---

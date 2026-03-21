@@ -50,7 +50,7 @@ git config --global user.email "you@example.com"
 ```bash
 # Créer les profils (authentification interactive requise)
 cd ~/multi-agent
-source setup/create_login.sh claude1a claude1b claude2a claude2b
+source setup/login_create.sh claude1a claude1b claude2a claude2b
 
 # Les profils sont créés dans login/
 # Les alias sont ajoutés dans ~/.bashrc_claude

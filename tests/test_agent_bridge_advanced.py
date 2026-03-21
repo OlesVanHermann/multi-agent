@@ -38,9 +38,9 @@ def _make_agent(agent_id="999"):
     agent.log_dir.mkdir(parents=True, exist_ok=True)
     agent.logfile = MagicMock()
     agent.redis = MagicMock()
-    agent.inbox = f"ma:agent:{agent_id}:inbox"
-    agent.outbox = f"ma:agent:{agent_id}:outbox"
-    agent.legacy_inbox = f"ma:inject:{agent_id}"
+    agent.inbox = f"A:agent:{agent_id}:inbox"
+    agent.outbox = f"A:agent:{agent_id}:outbox"
+    agent.legacy_inbox = f"A:inject:{agent_id}"
     agent.running = True
     return agent
 
@@ -117,7 +117,7 @@ class TestResponseChunkingInQueue:
         })
 
         # Send to from_agent
-        agent.redis.xadd(f"ma:agent:100:inbox", {
+        agent.redis.xadd(f"A:agent:100:inbox", {
             'response': response,
             'from_agent': agent.agent_id,
             'type': 'response',
@@ -142,7 +142,7 @@ class TestResponseChunkingInQueue:
         assert len(chunks) == 3  # 35000 / 15000 = 2.33 → 3 chunks
 
         for i, chunk in enumerate(chunks):
-            agent.redis.xadd(f"ma:agent:100:inbox", {
+            agent.redis.xadd(f"A:agent:100:inbox", {
                 'response': chunk,
                 'from_agent': agent.agent_id,
                 'type': 'response',
@@ -171,7 +171,7 @@ class TestSendToAgent:
         agent.redis.xadd.assert_called_once()
         key = agent.redis.xadd.call_args[0][0]
         data = agent.redis.xadd.call_args[0][1]
-        assert key == "ma:agent:300:inbox"
+        assert key == "A:agent:300:inbox"
         assert data['prompt'] == "hello"
         assert data['from_agent'] == "999"
 
@@ -179,30 +179,30 @@ class TestSendToAgent:
         """Broadcast exclut l'agent émetteur (EF-001)"""
         agent = _make_agent("300")
         # Mock keys to return agent 300 (self) and 301
-        agent.redis.keys.return_value = ["ma:agent:300", "ma:agent:301"]
+        agent.redis.keys.return_value = ["A:agent:300", "A:agent:301"]
 
         agent.send_to_agent("all", "broadcast msg")
 
         # Should only send to 301, not 300 (self)
         xadd_calls = [c for c in agent.redis.xadd.call_args_list]
         keys_sent = [c[0][0] for c in xadd_calls]
-        assert "ma:agent:300:inbox" not in keys_sent
-        assert "ma:agent:301:inbox" in keys_sent
+        assert "A:agent:300:inbox" not in keys_sent
+        assert "A:agent:301:inbox" in keys_sent
 
     def test_broadcast_filters_non_digit_keys(self):
         """Broadcast ignore les clés non-numériques (EF-001)"""
         agent = _make_agent("100")
         agent.redis.keys.return_value = [
-            "ma:agent:200",
-            "ma:agent:abc",         # non-digit → skip
-            "ma:agent:300:inbox",   # 4 parts → skip (len != 3)
+            "A:agent:200",
+            "A:agent:abc",         # non-digit → skip
+            "A:agent:300:inbox",   # 4 parts → skip (len != 3)
         ]
 
         agent.send_to_agent("all", "test")
 
         xadd_calls = agent.redis.xadd.call_args_list
         assert len(xadd_calls) == 1
-        assert xadd_calls[0][0][0] == "ma:agent:200:inbox"
+        assert xadd_calls[0][0][0] == "A:agent:200:inbox"
 
 
 # === _listen_redis message types ===
@@ -217,7 +217,7 @@ class TestListenRedisMessageTypes:
 
         # Simulate one iteration of _listen_redis
         agent.redis.xread.return_value = [
-            ("ma:agent:999:inbox", [
+            ("A:agent:999:inbox", [
                 ("1-0", {"type": "reload_prompt", "from_agent": "000"})
             ])
         ]

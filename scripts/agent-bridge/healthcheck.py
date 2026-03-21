@@ -26,8 +26,8 @@ from urllib.error import URLError
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
-MA_PREFIX = os.environ.get("MA_PREFIX", "ma")
-MONITORING_PREFIX = os.environ.get("MONITORING_PREFIX", "mi")
+MA_PREFIX = os.environ.get("MA_PREFIX", "A")
+MONITORING_PREFIX = os.environ.get("MONITORING_PREFIX", MA_PREFIX)
 HEALTH_PORT_BASE = int(os.environ.get("AGENT_HEALTH_PORT_BASE", 9100))
 
 # EF-002: Watchdog configuration

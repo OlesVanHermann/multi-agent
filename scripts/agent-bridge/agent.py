@@ -52,8 +52,8 @@ REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
 MA_PREFIX = os.environ.get("MA_PREFIX", "A")
 
-# Préfixe dédié monitoring (CT-002: mi: pour streams monitoring)
-MONITORING_PREFIX = os.environ.get("MONITORING_PREFIX", "mi")
+# Préfixe dédié monitoring (CT-002: configurable, defaults to MA_PREFIX)
+MONITORING_PREFIX = os.environ.get("MONITORING_PREFIX", MA_PREFIX)
 
 MAX_HISTORY = 50
 RESPONSE_TIMEOUT = int(os.environ.get("RESPONSE_TIMEOUT", 300))

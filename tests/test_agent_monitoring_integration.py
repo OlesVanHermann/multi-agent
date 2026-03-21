@@ -5,7 +5,7 @@ EF-003 : Heartbeat enrichi (10s, 7 champs, CA-004)
 R-INTEGRATE : MetricsCollector appelé depuis agent.py
 
 CT-001 : http.server stdlib pour health
-CT-002 : Préfixe mi: pour streams monitoring
+CT-002 : Préfixe configurable pour streams monitoring
 CT-004 : pytest + unittest.mock
 CT-009 : XTRIM MAXLEN ~1000
 CT-010 : Mock Redis, pas de pollution prod
@@ -21,17 +21,18 @@ import importlib.util
 from unittest.mock import MagicMock
 from io import BytesIO
 
-# Load 345-output/agent.py explicitly via importlib (NOT scripts/agent-bridge/agent.py)
+# Load scripts/agent-bridge/agent.py explicitly via importlib
 _HERE = os.path.dirname(os.path.realpath(__file__))
-_OUTPUT = os.path.abspath(os.path.join(_HERE, '..'))
-_AGENT_PATH = os.path.join(_OUTPUT, 'agent.py')
+_REPO_ROOT = os.path.abspath(os.path.join(_HERE, '..'))
+_AGENT_BRIDGE_DIR = os.path.join(_REPO_ROOT, 'scripts', 'agent-bridge')
+_AGENT_PATH = os.path.join(_AGENT_BRIDGE_DIR, 'agent.py')
 
-if _OUTPUT not in sys.path:
-    sys.path.insert(0, _OUTPUT)
+if _AGENT_BRIDGE_DIR not in sys.path:
+    sys.path.insert(0, _AGENT_BRIDGE_DIR)
 
 
 def _load_modified_agent():
-    """Charge agent.py modifié depuis 345-output/ (R-SYMLINKPROOF)."""
+    """Charge agent.py depuis scripts/agent-bridge/ (R-SYMLINKPROOF)."""
     spec = importlib.util.spec_from_file_location("agent_modified", _AGENT_PATH)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -62,13 +63,15 @@ class TestHealthEndpoint:
         mock_agent._redis_ping.return_value = True
         mock_agent._tmux_session_exists.return_value = True
 
-        handler_class = type('TestHandler', (_mod._HealthHandler,), {'agent_ref': mock_agent})
+        handler_class = type('TestHandler', (_mod._HealthHandler,), {
+            'agent_ref': mock_agent, 'health_token': 'test-token'
+        })
         handler = handler_class.__new__(handler_class)
         handler.rfile = BytesIO(b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n")
         handler.wfile = BytesIO()
-        handler.requestline = "GET /health HTTP/1.1"
+        handler.requestline = "GET /health?token=test-token HTTP/1.1"
         handler.command = "GET"
-        handler.path = "/health"
+        handler.path = "/health?token=test-token"
         handler.request_version = "HTTP/1.1"
         handler.headers = {}
         handler.close_connection = True
@@ -111,9 +114,11 @@ class TestHealthEndpoint:
         mock_agent._redis_ping.return_value = False
         mock_agent._tmux_session_exists.return_value = True
 
-        handler_class = type('TestHandler', (_mod._HealthHandler,), {'agent_ref': mock_agent})
+        handler_class = type('TestHandler', (_mod._HealthHandler,), {
+            'agent_ref': mock_agent, 'health_token': 'test-token'
+        })
         handler = handler_class.__new__(handler_class)
-        handler.path = "/health"
+        handler.path = "/health?token=test-token"
         handler.wfile = BytesIO()
         handler.send_response = MagicMock()
         handler.send_header = MagicMock()
@@ -132,9 +137,9 @@ class TestHeartbeatEnriched:
         """CA-004 : intervalle = 10s."""
         assert _mod.HEARTBEAT_INTERVAL == 10
 
-    def test_monitoring_prefix_is_mi(self):
-        """CT-002 : MONITORING_PREFIX = mi pour streams monitoring."""
-        assert _mod.MONITORING_PREFIX == os.environ.get("MONITORING_PREFIX", "mi")
+    def test_monitoring_prefix_configurable(self):
+        """CT-002 : MONITORING_PREFIX defaults to MA_PREFIX."""
+        assert _mod.MONITORING_PREFIX == os.environ.get("MONITORING_PREFIX", _mod.MA_PREFIX)
 
     def test_heartbeat_stream_maxlen(self):
         """CT-009 : STREAM_MAXLEN = 1000."""
@@ -279,19 +284,19 @@ class TestAgentPsutil:
 
 
 class TestRedisKeyPrefix:
-    """CT-002 — Préfixe mi: pour monitoring, ma: pour bridge."""
+    """CT-002 — MA_PREFIX configurable pour bridge et monitoring."""
 
     def test_bridge_uses_ma_prefix(self):
         """CT-002 : MA_PREFIX pour inbox/outbox bridge."""
-        assert _mod.MA_PREFIX == os.environ.get("MA_PREFIX", "ma")
+        assert _mod.MA_PREFIX == os.environ.get("MA_PREFIX", "A")
 
-    def test_monitoring_uses_mi_prefix(self):
-        """CT-002 : MONITORING_PREFIX = mi pour streams monitoring."""
-        assert _mod.MONITORING_PREFIX == os.environ.get("MONITORING_PREFIX", "mi")
+    def test_monitoring_uses_configured_prefix(self):
+        """CT-002 : MONITORING_PREFIX = MA_PREFIX par défaut."""
+        assert _mod.MONITORING_PREFIX == os.environ.get("MONITORING_PREFIX", _mod.MA_PREFIX)
 
-    def test_prefixes_are_different(self):
-        """CT-002 : bridge (ma:) et monitoring (mi:) = préfixes distincts."""
-        assert "ma" != "mi"
+    def test_prefix_is_string(self):
+        """CT-002 : MA_PREFIX est une chaîne non vide."""
+        assert isinstance(_mod.MA_PREFIX, str) and len(_mod.MA_PREFIX) > 0
 
 
 class TestHealthServerSetup:

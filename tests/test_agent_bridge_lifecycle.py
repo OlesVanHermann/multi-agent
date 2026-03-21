@@ -38,7 +38,7 @@ class TestResponseChunking:
         # Inline the chunking logic from _process_queue
         MAX_CHUNK = 15000
         if len(response) <= MAX_CHUNK:
-            agent.redis.xadd(f"ma:agent:{from_agent}:inbox", {
+            agent.redis.xadd(f"A:agent:{from_agent}:inbox", {
                 'response': response,
                 'from_agent': agent.agent_id,
                 'type': 'response',
@@ -66,7 +66,7 @@ class TestResponseChunking:
         if len(response) > MAX_CHUNK:
             chunks = [response[i:i+MAX_CHUNK] for i in range(0, len(response), MAX_CHUNK)]
             for i, chunk in enumerate(chunks):
-                agent.redis.xadd(f"ma:agent:{from_agent}:inbox", {
+                agent.redis.xadd(f"A:agent:{from_agent}:inbox", {
                     'response': chunk,
                     'from_agent': agent.agent_id,
                     'type': 'response',

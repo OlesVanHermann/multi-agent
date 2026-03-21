@@ -4,7 +4,7 @@ CT-004 : pytest + unittest.mock
 CT-010 : Mock Redis, pas de pollution prod
 
 Vérifie : COLORS, agent_color(), c(), truncate(), format_message()
-EF-003 : Vérification format 7 champs heartbeat stream (mi:agent:{id}:heartbeat)
+EF-003 : Vérification format 7 champs heartbeat stream ({MA_PREFIX}:agent:{id}:heartbeat)
 """
 import pytest
 import sys
@@ -207,8 +207,8 @@ class TestHeartbeatStreamFormat:
         assert len(heartbeat) == 7
 
     def test_heartbeat_stream_key_format(self):
-        """CT-002 : Stream heartbeat utilise préfixe mi:."""
-        prefix = "mi"
+        """CT-002 : Stream heartbeat utilise le MA_PREFIX configuré."""
+        prefix = "A"
         agent_id = "300"
         expected = f"{prefix}:agent:{agent_id}:heartbeat"
-        assert expected == "mi:agent:300:heartbeat"
+        assert expected == "A:agent:300:heartbeat"

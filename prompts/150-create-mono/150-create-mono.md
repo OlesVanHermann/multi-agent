@@ -39,7 +39,7 @@ Calculer le répertoire cible : `$BASE/prompts/{ID}-{nom}/`
 ## PHASE 2 — CRÉATION DE LA STRUCTURE
 
 ```bash
-BASE="/home/ubuntu/multi-agent"
+BASE="${BASE:-$HOME/multi-agent}"
 ID="{ID}"
 NOM="{nom}"
 DIR="$BASE/prompts/${ID}-${NOM}"
@@ -92,9 +92,7 @@ Créer `$DIR/{ID}-{nom}.md` avec le contenu suivant comme base, **adapté à la 
 
 ## Complétion
 ```bash
-$BASE/scripts/send.sh 100 \
-  prompt "FROM:{ID}|DONE {description}" \
-  from_agent "{ID}" timestamp "$(date +%s)"
+$BASE/scripts/send.sh 100 "FROM:{ID}|DONE {description}"
 ```
 ```
 
@@ -122,9 +120,7 @@ wc -l "$DIR/${ID}-${NOM}.md"
 ## PHASE 5 — NOTIFICATION
 
 ```bash
-$BASE/scripts/send.sh 100 \
-  prompt "FROM:150|DONE mono ${ID}-${NOM} créé dans prompts/ — prêt à démarrer" \
-  from_agent "150" timestamp "$(date +%s)"
+$BASE/scripts/send.sh 100 "FROM:150|DONE mono ${ID}-${NOM} créé dans prompts/ — prêt à démarrer"
 ```
 
 ---

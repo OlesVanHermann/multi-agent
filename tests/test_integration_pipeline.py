@@ -111,32 +111,32 @@ class TestRedisKeyConsistency:
     """Tests de cohérence des clés Redis entre les composants"""
 
     def test_agent_inbox_format(self):
-        """Le format inbox est ma:agent:{id}:inbox (CA-007)"""
-        ma_prefix = "ma"
+        """Le format inbox est {MA_PREFIX}:agent:{id}:inbox (CA-007)"""
+        ma_prefix = "A"
         agent_id = "300"
         inbox = f"{ma_prefix}:agent:{agent_id}:inbox"
-        assert inbox == "ma:agent:300:inbox"
+        assert inbox == "A:agent:300:inbox"
 
     def test_agent_outbox_format(self):
-        """Le format outbox est ma:agent:{id}:outbox (CA-007)"""
-        ma_prefix = "ma"
+        """Le format outbox est {MA_PREFIX}:agent:{id}:outbox (CA-007)"""
+        ma_prefix = "A"
         agent_id = "300"
         outbox = f"{ma_prefix}:agent:{agent_id}:outbox"
-        assert outbox == "ma:agent:300:outbox"
+        assert outbox == "A:agent:300:outbox"
 
     def test_legacy_inbox_format(self):
-        """Le format legacy est ma:inject:{id} (CA-007)"""
-        ma_prefix = "ma"
+        """Le format legacy est {MA_PREFIX}:inject:{id} (CA-007)"""
+        ma_prefix = "A"
         agent_id = "300"
         legacy = f"{ma_prefix}:inject:{agent_id}"
-        assert legacy == "ma:inject:300"
+        assert legacy == "A:inject:300"
 
     def test_status_hash_format(self):
-        """Le format status est ma:agent:{id} (CA-007)"""
-        ma_prefix = "ma"
+        """Le format status est {MA_PREFIX}:agent:{id} (CA-007)"""
+        ma_prefix = "A"
         agent_id = "300"
         status = f"{ma_prefix}:agent:{agent_id}"
-        assert status == "ma:agent:300"
+        assert status == "A:agent:300"
 
     @patch('orchestrator.r')
     def test_orchestrator_uses_same_prefix(self, mock_redis):
@@ -157,10 +157,10 @@ class TestConfigConstants:
         assert REDIS_PORT == O_PORT
 
     def test_ma_prefix_default(self):
-        """MA_PREFIX vaut 'ma' par défaut (CA-007)"""
+        """MA_PREFIX vaut 'A' par défaut (CA-007)"""
         from agent import MA_PREFIX
-        # Default should be 'ma' unless overridden by env
-        assert MA_PREFIX == os.environ.get("MA_PREFIX", "ma")
+        # Default should be 'A' unless overridden by env
+        assert MA_PREFIX == os.environ.get("MA_PREFIX", "A")
 
     def test_max_history_reasonable(self):
         """MAX_HISTORY est entre 10 et 1000 (CA-007)"""

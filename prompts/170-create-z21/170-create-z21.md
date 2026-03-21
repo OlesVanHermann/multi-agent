@@ -267,9 +267,7 @@ echo "Satellites:" && ls prompts/{ID}-{nom}/*-system.md | wc -l
 ## PHASE 5 — NOTIFICATION
 
 ```bash
-$BASE/scripts/send.sh 100 \
-  prompt "FROM:170|DONE z21 {ID}-{nom} cree — {N} contextes, 6 satellites, pret a demarrer" \
-  from_agent "170" timestamp "$(date +%s)"
+$BASE/scripts/send.sh 100 "FROM:170|DONE z21 {ID}-{nom} cree — {N} contextes, 6 satellites, pret a demarrer"
 ```
 
 ---
@@ -474,9 +472,7 @@ Tu travailles UNIQUEMENT dans le scope defini par le sous-contexte charge.
 2. Mettre a jour memory.md du sous-contexte si pertinent
 3. **OBLIGATOIRE** — Signaler completion au Master :
 ```bash
-$BASE/scripts/send.sh {ID}-1{XX} \
-  prompt '{"from":"{ID}-{ID}","type":"done","payload":"TASK DONE context=<CTX> | <resume>"}' \
-  from_agent "{ID}-{ID}" timestamp "$(date +%s)"
+$BASE/scripts/send.sh {ID}-1{XX} "TASK DONE context=<CTX> | <resume>"
 ```
 Le Master ne sait pas que tu as fini tant que tu n'envoies pas ce message.
 
@@ -694,26 +690,17 @@ cd {repertoire_projet} && python3 -m pytest tests/test_{service}_*.py tests/{ser
 
 ### 1. Master {ID}-1{XX} (rapport pipeline — declenche Reviewer)
 ```bash
-$BASE/scripts/send.sh {ID}-1{XX} \
-  prompt "{ID}-5{XX} DONE <CONTEXT> | <PASS|FAIL> <n>/<total> | <resume 1 ligne>. Tests: <chemin_fichier_test>" \
-  from_agent "{ID}-5{XX}" \
-  timestamp "$(date +%s)"
+$BASE/scripts/send.sh {ID}-1{XX} "{ID}-5{XX} DONE <CONTEXT> | <PASS|FAIL> <n>/<total> | <resume 1 ligne>. Tests: <chemin_fichier_test>"
 ```
 
 ### 2. Dev {ID}-{ID} (feedback technique pour re-fix si FAIL)
 ```bash
-$BASE/scripts/send.sh {ID}-{ID} \
-  prompt '{"from":"{ID}-5{XX}","type":"status","payload":"<PASS|FAIL>. <Details: tests en echec + cause si FAIL>. Observations: <patterns, edge cases>. Tests: <chemin>"}' \
-  from_agent "{ID}-5{XX}" \
-  timestamp "$(date +%s)"
+$BASE/scripts/send.sh {ID}-{ID} "<PASS|FAIL>. <Details: tests en echec + cause si FAIL>. Observations: <patterns, edge cases>. Tests: <chemin>"
 ```
 
 ### 3. Master 100 (vision globale)
 ```bash
-$BASE/scripts/send.sh 100 \
-  prompt 'FROM:{ID}-5{XX}|DONE {service}-tests - SUCCESS/FAILED. N/N tests. Resume 1 ligne.' \
-  from_agent "{ID}-5{XX}" \
-  timestamp "$(date +%s)"
+$BASE/scripts/send.sh 100 "FROM:{ID}-5{XX}|DONE {service}-tests - SUCCESS/FAILED. N/N tests. Resume 1 ligne."
 ```
 
 **JAMAIS terminer sans envoyer ces 3 messages.**
@@ -887,42 +874,22 @@ Voir section "Completion obligatoire". COPIER-COLLER les templates. JAMAIS taper
 
 ### 1. Master {ID}-1{XX} — TOUJOURS
 ```bash
-$BASE/scripts/send.sh {ID}-1{XX} \
-  from_agent "{ID}-7{XX}" \
-  type "done" \
-  context "<CONTEXT>" \
-  payload "TASK DONE context=<CONTEXT> | SCORE <n>/100 | blocants: N, non-blocants: M | <resume 1 ligne>" \
-  timestamp "$(date +%s)"
+$BASE/scripts/send.sh {ID}-1{XX} "TASK DONE context=<CONTEXT> | SCORE <n>/100 | blocants: N, non-blocants: M | <resume 1 ligne>"
 ```
 
 ### 2. Dev {ID}-{ID} — TOUJOURS (feedback, meme si PASS)
 ```bash
-$BASE/scripts/send.sh {ID}-{ID} \
-  from_agent "{ID}-7{XX}" \
-  type "review" \
-  context "<CONTEXT>" \
-  payload "REVIEW <PASS|FAIL> context=<CONTEXT> | SCORE <n>/100 | <si blocants CODE: fichier:ligne> | <si blocants TEST: fichier attendu> | <non-blocants: liste>" \
-  timestamp "$(date +%s)"
+$BASE/scripts/send.sh {ID}-{ID} "REVIEW <PASS|FAIL> context=<CONTEXT> | SCORE <n>/100 | <si blocants CODE: fichier:ligne> | <si blocants TEST: fichier attendu> | <non-blocants: liste>"
 ```
 
 ### 3. Coach {ID}-8{XX} — TOUJOURS (apprentissage continu)
 ```bash
-$BASE/scripts/send.sh {ID}-8{XX} \
-  from_agent "{ID}-7{XX}" \
-  type "patterns" \
-  context "<CONTEXT>" \
-  payload "REVIEW PATTERNS context=<CONTEXT> | NEW_TRAPS: <liste ou 'none'> | CONFIRMED_TRAPS: <pieges connus retrouves> | BUG_TYPES: <types> | METHODOLOGY_GAPS: <regles non suivies ou 'none'>" \
-  timestamp "$(date +%s)"
+$BASE/scripts/send.sh {ID}-8{XX} "REVIEW PATTERNS context=<CONTEXT> | NEW_TRAPS: <liste ou 'none'> | CONFIRMED_TRAPS: <pieges connus retrouves> | BUG_TYPES: <types> | METHODOLOGY_GAPS: <regles non suivies ou 'none'>"
 ```
 
 ### En cas d'erreur ou blocage
 ```bash
-$BASE/scripts/send.sh {ID}-1{XX} \
-  from_agent "{ID}-7{XX}" \
-  type "error" \
-  context "<CONTEXT>" \
-  payload "BLOCKED context=<CONTEXT> | <description du blocage>" \
-  timestamp "$(date +%s)"
+$BASE/scripts/send.sh {ID}-1{XX} "BLOCKED context=<CONTEXT> | <description du blocage>"
 ```
 ```
 
@@ -1035,9 +1002,7 @@ Apres chaque cycle, mettre a jour la memory globale :
 ### 7. Notifier le Master — OBLIGATOIRE
 
 ```bash
-$BASE/scripts/send.sh {ID}-1{XX} \
-  prompt "{ID}-8{XX} DONE <CONTEXT> | memory.md mis a jour, methodology.md <modifie|inchange>. SCORE <N>/100. <APPROUVE|REJETE>. [ALERT: ...si contradiction] [SUGGEST: ...si pattern cross-contextes]" \
-  from_agent "{ID}-8{XX}" timestamp "$(date +%s)"
+$BASE/scripts/send.sh {ID}-1{XX} "{ID}-8{XX} DONE <CONTEXT> | memory.md mis a jour, methodology.md <modifie|inchange>. SCORE <N>/100. <APPROUVE|REJETE>. [ALERT: ...si contradiction] [SUGGEST: ...si pattern cross-contextes]"
 ```
 
 **JAMAIS terminer sans envoyer ce message.**
@@ -1277,17 +1242,7 @@ Quand le Reviewer detecte des blocants independants CODE + TEST, le Master peut 
 ## Communication — FIN DE TACHE OBLIGATOIRE
 
 ```bash
-$BASE/scripts/send.sh {ID}-1{XX} \
-  from_agent "{ID}-9{XX}" \
-  type "done" \
-  context "<CONTEXT_ou_global>" \
-  payload "{ID}-9{XX} DONE | <action: creation|update|audit> <CONTEXT> | <resume 1 ligne>" \
-  timestamp "$(date +%s)"
-```
-
-Ou via script :
-```bash
-./scripts/send.sh {ID}-1{XX} "{ID}-9{XX} task done: <description courte>"
+$BASE/scripts/send.sh {ID}-1{XX} "{ID}-9{XX} DONE | <action: creation|update|audit> <CONTEXT> | <resume 1 ligne>"
 ```
 
 **JAMAIS terminer une tache sans envoyer ce signal.**

@@ -198,7 +198,7 @@ Avant de merger un patch, vérifier :
 Fichiers de mémoire à consulter et maintenir :
 
 ```
-~/.claude-profiles/shadow1/projects/-home-ubuntu-multi-agent/memory/
+~/.claude/projects/-home-ubuntu-multi-agent/memory/   (path varies per profile)
 ├── MEMORY.md       # Résumé principal (chargé au démarrage, max 200 lignes)
 ├── file-map.md     # Inventaire de tous les fichiers avec description
 └── agents.md       # Comportement détaillé de chaque agent

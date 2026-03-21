@@ -19,8 +19,8 @@ from unittest.mock import MagicMock, patch, call
 # R-SYMLINKPROOF P13 FIX C4: Load healthcheck.py via importlib.util
 # to avoid conftest sys.path pollution (scripts/agent-bridge eclipses 345-output)
 _HERE = os.path.dirname(os.path.realpath(__file__))
-_OUTPUT = os.path.abspath(os.path.join(_HERE, '..'))
-_HEALTHCHECK_PATH = os.path.join(_OUTPUT, 'healthcheck.py')
+_REPO_ROOT = os.path.abspath(os.path.join(_HERE, '..'))
+_HEALTHCHECK_PATH = os.path.join(_REPO_ROOT, 'scripts', 'agent-bridge', 'healthcheck.py')
 
 _spec = importlib.util.spec_from_file_location("healthcheck", _HEALTHCHECK_PATH)
 healthcheck = importlib.util.module_from_spec(_spec)
@@ -132,13 +132,13 @@ class TestWatchdogDiscovery:
     """EF-002 — Découverte des agents."""
 
     def test_discover_via_redis_heartbeat(self):
-        """EF-002 : Découverte via mi:agent:*:heartbeat (source de vérité)."""
+        """EF-002 : Découverte via {MA_PREFIX}:agent:*:heartbeat (source de vérité)."""
         redis_mock = MagicMock()
         redis_mock.keys.return_value = [
-            "mi:agent:300:heartbeat",
-            "mi:agent:345:heartbeat"
+            "A:agent:300:heartbeat",
+            "A:agent:345:heartbeat"
         ]
-        wd = AgentWatchdog(redis_mock, prefix="mi")
+        wd = AgentWatchdog(redis_mock, prefix="A")
 
         agents = wd.discover_agents()
 
@@ -151,8 +151,8 @@ class TestWatchdogDiscovery:
         redis_mock.keys.side_effect = Exception("Redis down")
         mock_run.return_value = MagicMock(
             returncode=0,
-            stdout="ma-agent-300\nma-agent-345\nother-session\n")
-        wd = AgentWatchdog(redis_mock, prefix="mi")
+            stdout="A-agent-300\nA-agent-345\nother-session\n")
+        wd = AgentWatchdog(redis_mock, prefix="A")
 
         agents = wd.discover_agents()
 

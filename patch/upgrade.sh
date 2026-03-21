@@ -52,7 +52,7 @@ RSYNC_CMD=$(find_cmd "rsync" rsync)
 # FRAMEWORK = mis à jour | PROJET = préservé
 # ============================================================
 FRAMEWORK_DIRS=(core scripts web docs patch tests infrastructure templates examples)
-FRAMEWORK_FILES=(requirements.txt CLAUDE.md UPGRADE.md README.md LICENSE .gitignore)
+FRAMEWORK_FILES=(requirements.txt CLAUDE.md HOW_TO_UPGRADE.md README.md LICENSE .gitignore)
 
 echo ""
 echo "╔════════════════════════════════════════════╗"

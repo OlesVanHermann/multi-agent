@@ -4,10 +4,28 @@ monitor.py - Real-time monitor for all agent communications
 Usage: python3 monitor.py [--compact]
 """
 
+import os
+import re
 import sys
 import time
 import redis
 from datetime import datetime
+
+def _load_ma_prefix():
+    """Read MA_PREFIX from env or project-config.md"""
+    if os.environ.get('MA_PREFIX'):
+        return os.environ['MA_PREFIX']
+    config = os.path.join(os.path.dirname(__file__), '..', 'project-config.md')
+    try:
+        for line in open(config):
+            m = re.match(r'^MA_PREFIX=(\S+)', line)
+            if m:
+                return m.group(1)
+    except FileNotFoundError:
+        pass
+    return 'A'
+
+MA_PREFIX = _load_ma_prefix()
 
 # Colors
 COLORS = {
@@ -55,7 +73,7 @@ def truncate(text, max_len=60):
 
 def format_message(stream, msg_id, data, compact=False):
     """Format a message for display"""
-    # Parse stream: ma:agent:300:inbox or ma:agent:300:outbox
+    # Parse stream: {MA_PREFIX}:agent:300:inbox or {MA_PREFIX}:agent:300:outbox
     parts = stream.split(':')
     if len(parts) < 4:
         return None
@@ -116,8 +134,8 @@ def main():
     try:
         while True:
             # Get all agent streams
-            inbox_streams = r.keys('ma:agent:*:inbox')
-            outbox_streams = r.keys('ma:agent:*:outbox')
+            inbox_streams = r.keys(f'{MA_PREFIX}:agent:*:inbox')
+            outbox_streams = r.keys(f'{MA_PREFIX}:agent:*:outbox')
             all_streams = inbox_streams + outbox_streams
 
             if not all_streams:

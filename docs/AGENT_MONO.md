@@ -219,7 +219,7 @@ Options facultatives :
 ### Manuellement
 
 ```bash
-BASE="/home/ubuntu/multi-agent"
+BASE="${BASE:-$HOME/multi-agent}"
 ID="400"
 NOM="merge"
 DIR="$BASE/prompts/${ID}-${NOM}"

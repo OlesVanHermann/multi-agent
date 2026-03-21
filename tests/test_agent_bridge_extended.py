@@ -17,9 +17,10 @@ from collections import deque
 from pathlib import Path
 from io import StringIO
 
-# Add agent-bridge to path
-_BASE = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
-sys.path.insert(0, os.path.join(_BASE, 'core', 'agent-bridge'))
+# Add agent-bridge to path (conftest.py also adds this via marker search)
+_HERE = os.path.dirname(os.path.realpath(__file__))
+_REPO_ROOT = os.path.abspath(os.path.join(_HERE, '..'))
+sys.path.insert(0, os.path.join(_REPO_ROOT, 'scripts', 'agent-bridge'))
 
 # P11 FIX C4: Save real redis.ConnectionError BEFORE any test_monitor.py mock
 # can poison sys.modules['redis']. This prevents TypeError when used as side_effect.
@@ -51,7 +52,7 @@ class TestNominalStartup:
         assert REDIS_HOST == "localhost" or isinstance(REDIS_HOST, str)
         assert isinstance(REDIS_PORT, int)
         assert REDIS_PORT > 0
-        assert MA_PREFIX == "ma" or isinstance(MA_PREFIX, str)
+        assert MA_PREFIX == "A" or isinstance(MA_PREFIX, str)
         assert MAX_HISTORY == 50
         assert 30 <= RESPONSE_TIMEOUT <= 900  # configurable via env
         assert POLL_INTERVAL == 1.0
@@ -121,9 +122,9 @@ class TestNominalStartup:
             agent = TmuxAgent("302")
             agent.running = False
 
-        assert agent.inbox == "ma:agent:302:inbox"
-        assert agent.outbox == "ma:agent:302:outbox"
-        assert agent.legacy_inbox == "ma:inject:302"
+        assert agent.inbox == "A:agent:302:inbox"
+        assert agent.outbox == "A:agent:302:outbox"
+        assert agent.legacy_inbox == "A:inject:302"
 
     @patch('agent.subprocess.run')
     @patch('agent.redis.Redis')
@@ -214,7 +215,7 @@ class TestRedisConnectionLoss:
 
         agent = object.__new__(TmuxAgent)
         agent.agent_id = "402"
-        agent.inbox = "ma:agent:402:inbox"
+        agent.inbox = "A:agent:402:inbox"
         agent.running = True
         agent.prompt_queue = Queue()
         agent.logfile = MagicMock()
@@ -249,7 +250,7 @@ class TestRedisConnectionLoss:
 
         agent = object.__new__(TmuxAgent)
         agent.agent_id = "403"
-        agent.legacy_inbox = "ma:inject:403"
+        agent.legacy_inbox = "A:inject:403"
         agent.running = True
         agent._log = MagicMock()
 
@@ -434,7 +435,7 @@ class TestCommandErrors:
 
         agent.redis.xadd.assert_called_once()
         call_args = agent.redis.xadd.call_args
-        assert call_args[0][0] == "ma:agent:400:inbox"
+        assert call_args[0][0] == "A:agent:400:inbox"
         assert call_args[0][1]['prompt'] == "hello from 300"
         assert call_args[0][1]['from_agent'] == "300"
 
@@ -445,7 +446,7 @@ class TestCommandErrors:
         agent = object.__new__(TmuxAgent)
         agent.agent_id = "100"
         agent.redis = MagicMock()
-        agent.redis.keys.return_value = ["ma:agent:300", "ma:agent:301", "ma:agent:100"]
+        agent.redis.keys.return_value = ["A:agent:300", "A:agent:301", "A:agent:100"]
         agent._log = MagicMock()
 
         agent.send_to_agent("all", "broadcast message")

@@ -3,9 +3,9 @@
 # Usage: ./patch/hub-cherry-pick.sh <branch> [commit_hash...]
 #
 # Examples:
-#   ./patch/hub-cherry-pick.sh hub/patch/onlyoffice/fix-timeout        # pick all
-#   ./patch/hub-cherry-pick.sh hub/patch/onlyoffice/fix-timeout abc123  # pick one
-#   ./patch/hub-cherry-pick.sh hub/patch/onlyoffice/fix-timeout abc def # pick multiple
+#   ./patch/hub-cherry-pick.sh hub/patch/my-project/fix-timeout        # pick all
+#   ./patch/hub-cherry-pick.sh hub/patch/my-project/fix-timeout abc123  # pick one
+#   ./patch/hub-cherry-pick.sh hub/patch/my-project/fix-timeout abc def # pick multiple
 
 set -euo pipefail
 
@@ -27,8 +27,8 @@ if [ $# -lt 1 ]; then
     echo "  commit_hash  Optional: specific commit(s) to pick. If omitted, picks all."
     echo ""
     echo -e "${BOLD}Examples:${NC}"
-    echo "  $0 hub/patch/onlyoffice/fix-timeout         # all commits"
-    echo "  $0 hub/patch/onlyoffice/fix-timeout abc123   # one commit"
+    echo "  $0 hub/patch/my-project/fix-timeout         # all commits"
+    echo "  $0 hub/patch/my-project/fix-timeout abc123   # one commit"
     exit 1
 fi
 

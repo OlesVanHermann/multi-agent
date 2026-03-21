@@ -12,8 +12,8 @@ Periods and their alignment:
   120 -> even hours (00:00, 02:00, 04:00, ...)
 
 Launch in tmux:
-  tmux new-session -d -s A-agent-001-crontab \
-    "python3 /home/ubuntu/multi-agent/scripts/crontab-scheduler.py"
+  tmux new-session -d -s ${MA_PREFIX}-agent-001-crontab \
+    "python3 $BASE/scripts/crontab-scheduler.py"
 """
 
 import os

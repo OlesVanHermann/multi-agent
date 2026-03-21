@@ -22,8 +22,7 @@ def _find_project_root(start, markers=('CLAUDE.md', '.git')):
     raise FileNotFoundError(f"Marqueur {markers} introuvable en remontant depuis {start}")
 
 _BASE = _find_project_root(os.path.dirname(os.path.realpath(__file__)))
-sys.path.insert(0, os.path.join(_BASE, 'core', 'agent-bridge'))
-sys.path.insert(0, os.path.join(os.path.realpath(os.path.dirname(__file__)), '..', 'refactoring'))
+sys.path.insert(0, os.path.join(_BASE, 'scripts', 'agent-bridge'))
 
 
 @pytest.fixture
