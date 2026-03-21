@@ -17,7 +17,7 @@ import importlib.util
 from unittest.mock import MagicMock, patch, call
 
 # R-SYMLINKPROOF P13 FIX C4: Load healthcheck.py via importlib.util
-# to avoid conftest sys.path pollution (core/agent-bridge eclipses 345-output)
+# to avoid conftest sys.path pollution (scripts/agent-bridge eclipses 345-output)
 _HERE = os.path.dirname(os.path.realpath(__file__))
 _OUTPUT = os.path.abspath(os.path.join(_HERE, '..'))
 _HEALTHCHECK_PATH = os.path.join(_OUTPUT, 'healthcheck.py')

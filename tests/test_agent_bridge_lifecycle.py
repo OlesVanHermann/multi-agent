@@ -351,7 +351,7 @@ class TestLegacyMessageParsing:
 
     def test_parse_from_prefix_with_pipe(self):
         """Parse 'FROM:100|message' correctement (EF-001)"""
-        message = "FROM:100|go scaleway.com"
+        message = "FROM:100|go example.com"
         from_agent = 'legacy'
         prompt = message
         if message.startswith('FROM:'):
@@ -360,7 +360,7 @@ class TestLegacyMessageParsing:
                 from_agent = parts[0][5:]
                 prompt = parts[1]
         assert from_agent == '100'
-        assert prompt == 'go scaleway.com'
+        assert prompt == 'go example.com'
 
     def test_parse_from_prefix_multiple_pipes(self):
         """Parse correctement quand le message contient aussi des pipes (EF-001)"""

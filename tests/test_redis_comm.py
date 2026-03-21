@@ -77,13 +77,13 @@ class TestRedisLists:
         list_key = "ma:test:inject:300"
 
         # Push message
-        redis_client.rpush(list_key, "FROM:100|go scaleway.com")
+        redis_client.rpush(list_key, "FROM:100|go example.com")
 
         # Pop with timeout
         result = redis_client.blpop(list_key, timeout=1)
         assert result is not None
         key, message = result
-        assert message == "FROM:100|go scaleway.com"
+        assert message == "FROM:100|go example.com"
 
     def test_multiple_messages_order(self, redis_client):
         """Test that messages are received in order (FIFO)"""

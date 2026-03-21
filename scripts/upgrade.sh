@@ -8,7 +8,7 @@
 
 set -e
 
-REPO_URL="https://github.com/OlesVanHermann/multi-agent.git"
+REPO_URL="https://github.com/YOUR-ORG/multi-agent.git"
 DRY_RUN=false
 BRANCH="main"
 
@@ -51,7 +51,7 @@ RSYNC_CMD=$(find_cmd "rsync" rsync)
 # ============================================================
 # FRAMEWORK = mis à jour | PROJET = préservé
 # ============================================================
-FRAMEWORK_DIRS=(core scripts web docs upgrades tests infrastructure templates examples)
+FRAMEWORK_DIRS=(core scripts web docs patch tests infrastructure templates examples)
 FRAMEWORK_FILES=(requirements.txt CLAUDE.md UPGRADE.md README.md LICENSE .gitignore)
 
 echo ""

@@ -1,11 +1,11 @@
 #!/bin/bash
 # hub-cherry-pick.sh — Cherry-pick commits from a patch branch
-# Usage: ./scripts/hub-cherry-pick.sh <branch> [commit_hash...]
+# Usage: ./patch/hub-cherry-pick.sh <branch> [commit_hash...]
 #
 # Examples:
-#   ./scripts/hub-cherry-pick.sh hub/patch/onlyoffice/fix-timeout        # pick all
-#   ./scripts/hub-cherry-pick.sh hub/patch/onlyoffice/fix-timeout abc123  # pick one
-#   ./scripts/hub-cherry-pick.sh hub/patch/onlyoffice/fix-timeout abc def # pick multiple
+#   ./patch/hub-cherry-pick.sh hub/patch/onlyoffice/fix-timeout        # pick all
+#   ./patch/hub-cherry-pick.sh hub/patch/onlyoffice/fix-timeout abc123  # pick one
+#   ./patch/hub-cherry-pick.sh hub/patch/onlyoffice/fix-timeout abc def # pick multiple
 
 set -euo pipefail
 
@@ -95,7 +95,7 @@ echo -e "${BOLD}Result: ${GREEN}$SUCCESS picked${NC}, ${RED}$FAILED failed${NC}"
 if [ $FAILED -eq 0 ] && [ $SUCCESS -gt 0 ]; then
     echo ""
     echo -e "${GREEN}All commits applied successfully.${NC}"
-    echo -e "Next: ${CYAN}python -m pytest tests/ -v${NC} then ${CYAN}./scripts/hub-release.sh${NC}"
+    echo -e "Next: ${CYAN}python -m pytest tests/ -v${NC} then ${CYAN}./patch/hub-release.sh${NC}"
 
     # Extract project name for cleanup suggestion
     PROJECT_BRANCH=$(echo "$BRANCH" | sed 's|hub/||')

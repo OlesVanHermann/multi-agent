@@ -1,7 +1,3 @@
-INTERDICTION D'HALUCINER
-OBLIGATION d'OBEIR AUX PROMPTS. NE JAMAIS SORTIR DU CADRE DEFINIS PAR LE PROMPT
-APPRENTISSAGE: Quand je suis guidé par un humain et que je reçois des instructions AUTRES que "go <entreprise>", c'est du nouveau savoir. Je DOIS mettre à jour mon prompt avec ces nouvelles expériences pour être autonome la prochaine fois.
-
 # Conventions de Numérotation des Agents
 
 ## Vue d'ensemble
@@ -262,37 +258,20 @@ prompts/
 
 ## Mapping Agents → Profiles Claude
 
-Les agents sont exécutés via différents abonnements Claude (profiles).
+Chaque agent utilise le profil défini par son fichier `.login` (symlink dans `prompts/`).
 
-**Profiles disponibles :**
-- `octave1`, `octave2` - forts/faibles
-- `miro1`, `miro2` - forts/faibles
-- `stef1`, `stef2` - forts/faibles
-- `shadow1`, `shadow2` - forts/faibles
-
-**Configuration actuelle** (définie dans `$BASE/scripts/start-agents.sh`) :
-
-| Agent | Profile | Type | Description |
-|-------|---------|------|-------------|
-| 000 | shadow1 | fort | Super-Master |
-| 100 | shadow1 | fort | Master - Coordination |
-| 200 | stef1 | fort | Explorer - SPEC creation |
-| 201 | octave2 | faible | Doc Generator - PR-DOC |
-| 300 | octave2 | faible | Dev Excel |
-| 301 | miro2 | faible | Dev Word |
-| 302 | miro2 | faible | Dev PPTX |
-| 303 | octave2 | faible | Dev PDF |
-| 400 | stef1 | fort | Merge - Git fusion |
-| 500 | miro1 | fort | Test - Validation |
-| 501 | shadow1 | fort | Test Creator - Scripts |
-| 502 | stef1 | fort | Test Mapper |
-| 600 | octave2 | faible | Release - Publication |
+```
+prompts/
+  default.login      ← profil par défaut pour tous les agents
+  claude1a.login     ← profil spécifique (optionnel)
+  000.login          ← override pour l'agent 000 uniquement (optionnel)
+```
 
 **Règles d'attribution :**
-- **Profiles forts (X1)** : Agents de coordination, décision, création complexe
-- **Profiles faibles (X2)** : Agents d'exécution répétitive, templates
+- **Profil fort** (Sonnet/Opus) : Agents de coordination, décision, création complexe
+- **Profil faible** (Haiku) : Agents d'exécution répétitive, templates
 
-**Fichier source :** `$BASE/scripts/start-agents.sh`
+Voir `setup/create_login.sh` pour créer les profils et `prompts/default.model` pour le modèle par défaut.
 
 ---
 
@@ -320,4 +299,4 @@ redis-cli XADD "ma:agent:XXX:inbox" '*' prompt "relis ton prompt" from_agent "10
 
 ---
 
-*Convention v2.1 - Janvier 2026*
+*Convention v2.4 - Mars 2026*

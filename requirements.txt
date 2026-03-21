@@ -17,15 +17,6 @@ python-jose[cryptography]>=3.3.0
 # For bridge SSH tunnel (optional)
 paramiko>=3.0.0
 
-# Browser automation (framework scripts)
-playwright>=1.40.0
-
-# DNS toolkit (framework PTR/DNS scripts)
-dnspython>=2.4.0
-
-# PowerPoint generation
-python-pptx>=0.6.21
-
 # WebSocket client (legacy - no longer needed for crawlers, kept for potential use)
 # websocket-client>=1.6.0
 

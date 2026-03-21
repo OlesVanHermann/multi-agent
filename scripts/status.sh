@@ -260,10 +260,10 @@ do_full() {
 
         # Try login via Keycloak
         TOKEN_RESP=$(curl -s --max-time 5 \
-            -d "grant_type=password&client_id=multi-agent-web&username=octave&password=changeme" \
+            -d "grant_type=password&client_id=multi-agent-web&username=dev1&password=changeme" \
             "$DASH_URL/auth/realms/multi-agent/protocol/openid-connect/token" 2>/dev/null)
         if echo "$TOKEN_RESP" | grep -q "access_token"; then
-            ok "login KC" "octave/changeme → token OK"
+            ok "login KC" "dev1/changeme → token OK"
         else
             ERR=$(echo "$TOKEN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error_description','?'))" 2>/dev/null)
             warn "login KC" "failed: $ERR"

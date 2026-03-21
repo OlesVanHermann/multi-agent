@@ -43,18 +43,18 @@ Interface web pour gérer et monitorer les 1000 agents multi-agent sans avoir 10
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│  MULTI-AGENT DASHBOARD                                         [octave] [Logout]            │
+│  MULTI-AGENT DASHBOARD                                         [dev1] [Logout]              │
 ├───────────────────────┬─────────────────────────────────┬───────────────────────────────────┤
 │   AGENTS (1000)       │   CONTROL PLANE (100/900)       │   AGENT SÉLECTIONNÉ              │
 │                       │                                 │   [▼ Agent 300 - Developer]      │
 │  ┌──┬──┬──┬──┬──┬──┐  │  ┌─────────────────────────┐    │  ┌─────────────────────────────┐ │
 │  │00│01│02│03│04│05│  │  │ $ agent-100             │    │  │ $ agent-300                 │ │
 │  ├──┼──┼──┼──┼──┼──┤  │  │                         │    │  │                             │ │
-│  │  │  │  │  │  │  │  │  │ HEARTBEAT 300 | WORKING │    │  │ Analyzing scaleway.com...   │ │
+│  │  │  │  │  │  │  │  │  │ HEARTBEAT 300 | WORKING │    │  │ Analyzing example.com...    │ │
 │  │🟢│🟢│🟢│🟢│🟢│🟢│  │  │ HEARTBEAT 301 | IDLE    │    │  │ Found 479 pages             │ │
 │  ├──┼──┼──┼──┼──┼──┤  │  │ HEARTBEAT 302 | WORKING │    │  │ Downloading: 234/479        │ │
 │  │  │  │  │  │  │  │  │  │                         │    │  │ ████████████░░░░░░ 49%     │ │
-│  │🟢│🟠│🟢│🟢│🟢│🟢│  │  │ FROM:300|DONE scaleway  │    │  │                             │ │
+│  │🟢│🟠│🟢│🟢│🟢│🟢│  │  │ FROM:300|DONE example   │    │  │                             │ │
 │  └──┴──┴──┴──┴──┴──┘  │  │ SUCCESS - 479 pages     │    │  │                             │ │
 │                       │  │                         │    │  │                             │ │
 │  0XX Super-Masters 🟢 │  │ Dispatching to 306...   │    │  │                             │ │
@@ -166,7 +166,7 @@ WS /ws/terminal/{agent_id}    → Terminal interactif (proxy ttyd)
   "clients": ["multi-agent-web"],
   "roles": ["admin", "operator", "viewer"],
   "users": [
-    { "username": "octave", "roles": ["admin"] }
+    { "username": "dev1", "roles": ["admin"] }
   ]
 }
 ```
@@ -223,7 +223,7 @@ docker-compose up -d
 
 # 3. Accéder
 # → http://localhost
-# → Login: octave / changeme (changer au premier login)
+# → Login: admin / changeme (changer au premier login)
 ```
 
 ---

@@ -1,6 +1,6 @@
 #!/bin/bash
 # hub-release.sh — Release workflow: test → bump → tag → push
-# Usage: ./scripts/hub-release.sh [major|minor|patch]
+# Usage: ./patch/hub-release.sh [major|minor|patch]
 #        Default: patch
 
 set -euo pipefail
@@ -119,5 +119,5 @@ echo -e "${BOLD}Update projects:${NC}"
 echo -e "  ${CYAN}ssh user@machine 'cd /path/multi-agent && ./upgrade.sh'${NC}"
 echo ""
 echo -e "Or manual:"
-echo -e "  ${CYAN}git remote add hub ubuntu@mx9.di2amp.com:/home/ubuntu/multi-agent.git${NC}"
+echo -e "  ${CYAN}git remote add hub ubuntu@hub.example.com:/home/ubuntu/multi-agent.git${NC}"
 echo -e "  ${CYAN}git fetch hub && git merge hub/main${NC}"

@@ -26,12 +26,12 @@
   },
   "users": [
     {
-      "username": "octave",
+      "username": "dev1",
       "enabled": true,
       "emailVerified": true,
-      "email": "octave@multi-agent.local",
-      "firstName": "Octave",
-      "lastName": "Admin",
+      "email": "dev1@multi-agent.local",
+      "firstName": "Dev",
+      "lastName": "One",
       "credentials": [
         {
           "type": "password",
@@ -42,16 +42,16 @@
       "realmRoles": ["admin"]
     },
     {
-      "username": "operator",
+      "username": "dev2",
       "enabled": true,
       "emailVerified": true,
-      "email": "operator@multi-agent.local",
-      "firstName": "Operator",
-      "lastName": "User",
+      "email": "dev2@multi-agent.local",
+      "firstName": "Dev",
+      "lastName": "Two",
       "credentials": [
         {
           "type": "password",
-          "value": "operator123",
+          "value": "changeme",
           "temporary": true
         }
       ],

@@ -21,7 +21,7 @@ import importlib.util
 from unittest.mock import MagicMock
 from io import BytesIO
 
-# Load 345-output/agent.py explicitly via importlib (NOT core/agent-bridge/agent.py)
+# Load 345-output/agent.py explicitly via importlib (NOT scripts/agent-bridge/agent.py)
 _HERE = os.path.dirname(os.path.realpath(__file__))
 _OUTPUT = os.path.abspath(os.path.join(_HERE, '..'))
 _AGENT_PATH = os.path.join(_OUTPUT, 'agent.py')

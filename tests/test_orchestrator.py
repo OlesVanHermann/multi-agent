@@ -1,5 +1,5 @@
 """
-Tests unitaires pour orchestrator.py (core/agent-bridge/orchestrator.py)
+Tests unitaires pour orchestrator.py (scripts/agent-bridge/orchestrator.py)
 EF-002 — Couverture : 3 modes (séquentiel, parallèle, pipeline) × 2 cas (nominal, erreur)
 
 Réf spec 342 : CA-003 (≥100 LOC, 3 modes × 2 cas)

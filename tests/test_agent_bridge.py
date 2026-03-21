@@ -1,5 +1,5 @@
 """
-Tests for agent bridge (core/agent-bridge/agent.py)
+Tests for agent bridge (scripts/agent-bridge/agent.py)
 """
 import pytest
 import subprocess
@@ -90,7 +90,7 @@ class TestMessageParsing:
                 prompt = parts[1]
 
         assert from_agent == '100', "Should extract agent ID"
-        assert prompt == 'go scaleway.com', "Should extract prompt"
+        assert prompt == 'go example.com', "Should extract prompt"
 
     def test_simple_message_parsing(self, sample_messages):
         """Test parsing simple message without prefix"""

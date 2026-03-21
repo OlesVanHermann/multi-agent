@@ -6,8 +6,8 @@
 #        ./sync-to-git.sh "fix-timeout" --dry-run
 #
 # Setup (once per Mac):
-#   git clone https://github.com/OlesVanHermann/multi-agent.git ~/multi-agent-git
-#   cd ~/multi-agent-git && git remote add hub ubuntu@mx9.di2amp.com:/home/ubuntu/multi-agent.git
+#   git clone https://github.com/YOUR-ORG/multi-agent.git ~/multi-agent-git
+#   cd ~/multi-agent-git && git remote add hub ubuntu@hub.example.com:/home/ubuntu/multi-agent.git
 #
 # Config: set these env vars or edit defaults below
 
@@ -64,21 +64,21 @@ echo -e "  Branch:  ${CYAN}$BRANCH${NC}"
 echo ""
 
 # === VALIDATE ===
-if [ ! -d "$MA_SRC/core" ]; then
-    echo -e "${RED}Error: $MA_SRC doesn't look like a multi-agent directory (no core/)${NC}"
+if [ ! -d "$MA_SRC/scripts" ]; then
+    echo -e "${RED}Error: $MA_SRC doesn't look like a multi-agent directory (no scripts/)${NC}"
     exit 1
 fi
 
 if [ ! -d "$MA_GIT/.git" ]; then
     echo -e "${RED}Error: $MA_GIT is not a git repository${NC}"
-    echo "Run: git clone https://github.com/OlesVanHermann/multi-agent.git $MA_GIT"
+    echo "Run: git clone https://github.com/YOUR-ORG/multi-agent.git $MA_GIT"
     exit 1
 fi
 
 # === SYNC FRAMEWORK DIRS ===
 # Sync each framework directory individually (no --delete to preserve git-only files)
-FRAMEWORK_DIRS=(core scripts web docs tests upgrades infrastructure templates examples)
-FRAMEWORK_FILES=(requirements.txt CLAUDE.md README.md file.md5)
+FRAMEWORK_DIRS=(scripts web docs tests patch setup examples)
+FRAMEWORK_FILES=(requirements.txt CLAUDE.md README.md HOW_TO_SETUP.md UPGRADE.md)
 
 # Global excludes (junk that should never be synced)
 EXCLUDES=(
@@ -178,8 +178,8 @@ echo -e "  Branch: ${GREEN}$BRANCH${NC}"
 echo -e "  Commits:"
 git log --oneline main.."$BRANCH" | sed 's/^/    /'
 echo ""
-echo -e "On mx9, inception will process this patch automatically."
-echo -e "Or manually: ${CYAN}./scripts/hub-cherry-pick.sh $BRANCH${NC}"
+echo -e "On the hub, inception will process this patch automatically."
+echo -e "Or manually: ${CYAN}./patch/hub-cherry-pick.sh $BRANCH${NC}"
 
 # Return to main
 git checkout main --quiet

@@ -248,7 +248,7 @@ export function LoginForm() {
               id="username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="octave"
+              placeholder="dev1"
               required
               autoFocus
             />

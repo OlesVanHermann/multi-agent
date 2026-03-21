@@ -1,6 +1,6 @@
 #!/bin/bash
 # install_keycloak.sh - Install Docker + Keycloak on Mac or Ubuntu
-# Usage: ./framework/install_keycloak.sh
+# Usage: ./setup/install_keycloak.sh
 #
 # Detects OS, installs Docker if missing, starts Keycloak container
 # with realm auto-import from web/keycloak/realm-multi-agent.json

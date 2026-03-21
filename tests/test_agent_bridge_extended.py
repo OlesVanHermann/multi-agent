@@ -1,5 +1,5 @@
 """
-Tests unitaires étendus pour agent.py (core/agent-bridge/agent.py)
+Tests unitaires étendus pour agent.py (scripts/agent-bridge/agent.py)
 EF-001 — Couverture : démarrage nominal, perte connexion Redis, erreur de commande
 
 Réf spec 342 : CA-002 (≥200 LOC, 3+ scénarios)

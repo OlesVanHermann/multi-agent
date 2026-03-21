@@ -6,9 +6,7 @@ Ce guide explique comment mettre à jour votre déploiement multi-agent vers une
 
 ## Guides par version
 
-| De | Vers | Guide |
-|----|------|-------|
-| v2.0 | v2.1 | [upgrades/2.0-to-2.1.md](upgrades/2.0-to-2.1.md) |
+Le script de mise à jour est dans `patch/upgrade.sh`. Il préserve automatiquement les fichiers projet et met à jour uniquement le framework.
 
 ---
 
@@ -19,16 +17,18 @@ Ce guide explique comment mettre à jour votre déploiement multi-agent vers une
 Ces fichiers viennent du repo officiel et ne doivent **pas** être modifiés localement :
 
 ```
-core/                     # Code Python du framework
-├── agent-bridge/
-└── agent-runner/
+scripts/agent-bridge/     # Bridge Python du framework
 
 scripts/                  # Scripts d'orchestration
-├── bridge/
-└── *.sh
+├── *.sh
+└── *.py
+
+patch/                    # Scripts de patch/upgrade
+├── upgrade.sh
+├── hub-release.sh
+└── ...
 
 docs/                     # Documentation framework
-upgrades/                 # Guides de migration
 requirements.txt          # Dépendances Python
 UPGRADE.md               # Ce fichier
 ```
@@ -75,30 +75,15 @@ echo "Backup: $BACKUP_DIR"
 tmux kill-server 2>/dev/null || true
 ```
 
-### Étape 4: Télécharger et lancer le script de mise à jour
+### Étape 4: Lancer le script de mise à jour
 
 ```bash
-# Télécharger le script depuis GitHub
-curl -O https://raw.githubusercontent.com/OlesVanHermann/multi-agent/main/upgrade.sh
-chmod +x upgrade.sh
-
 # Simuler d'abord (aucune modification)
-./upgrade.sh --dry-run
+./patch/upgrade.sh --dry-run
 
 # Appliquer la mise à jour
-./upgrade.sh
+./patch/upgrade.sh
 ```
-
-Ou avec wget :
-```bash
-wget https://raw.githubusercontent.com/OlesVanHermann/multi-agent/main/upgrade.sh
-chmod +x upgrade.sh
-./upgrade.sh
-```
-
-### Étape 5: Lire le guide de migration spécifique
-
-Consultez le fichier correspondant dans `upgrades/` pour les actions spécifiques à votre version.
 
 ### Étape 6: Installer les dépendances
 
@@ -109,7 +94,7 @@ pip install -r requirements.txt
 ### Étape 7: Vérifier et redémarrer
 
 ```bash
-python3 core/agent-bridge/healthcheck.py
+python3 scripts/agent-bridge/healthcheck.py
 ./scripts/agent.sh start all
 ```
 
@@ -122,7 +107,7 @@ python3 core/agent-bridge/healthcheck.py
 # upgrade.sh
 
 set -e
-REPO_URL="https://github.com/OlesVanHermann/multi-agent.git"
+REPO_URL="https://github.com/YOUR-ORG/multi-agent.git"
 BRANCH="${1:-main}"
 
 echo "=== Multi-Agent Upgrade ==="
@@ -142,10 +127,9 @@ echo "Backup: $BACKUP_DIR"
 TEMP_DIR=$(mktemp -d)
 git clone --depth 1 --branch $BRANCH $REPO_URL $TEMP_DIR
 
-rsync -av --delete $TEMP_DIR/core/ ./core/
 rsync -av --delete $TEMP_DIR/scripts/ ./scripts/
+rsync -av --delete $TEMP_DIR/patch/ ./patch/
 rsync -av --delete $TEMP_DIR/docs/ ./docs/
-rsync -av --delete $TEMP_DIR/upgrades/ ./upgrades/
 cp $TEMP_DIR/requirements.txt ./
 cp $TEMP_DIR/CLAUDE.md ./
 cp $TEMP_DIR/UPGRADE.md ./
@@ -158,7 +142,7 @@ pip install -r requirements.txt
 
 echo ""
 echo "=== Mise à jour terminée ==="
-echo "Consultez upgrades/ pour les actions spécifiques à votre version"
+echo "Consultez patch/ pour les scripts de gestion des patches"
 ```
 
 ---
@@ -167,9 +151,12 @@ echo "Consultez upgrades/ pour les actions spécifiques à votre version"
 
 | Version | Date | Changements majeurs |
 |---------|------|---------------------|
-| v2.1 | 2026-01 | Bridge Redis Streams, CLI tools, healthcheck |
+| v2.4 | 2026-02 | Format mono/x45/z21, Chrome Bridge extension, agent 150, patch/ dir |
+| v2.3 | 2026-02 | Dashboard web React+FastAPI, Keycloak auth, proxy.sh |
+| v2.2 | 2026-01 | x45 auto-amélioration, satellites, crontab-scheduler |
+| v2.1 | 2026-01 | Bridge Redis Streams, healthcheck, tmux batching |
 | v2.0 | 2026-01 | Version initiale |
 
 ---
 
-*Issues: https://github.com/OlesVanHermann/multi-agent/issues*
+*Issues: https://github.com/YOUR-ORG/multi-agent/issues*

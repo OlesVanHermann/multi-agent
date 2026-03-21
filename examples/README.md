@@ -1,6 +1,6 @@
 # Exemples
 
-4 exemples gradués, du plus simple au plus complexe.
+5 exemples gradués, couvrant les 3 types d'agents : MONO, X45, Z21.
 
 ---
 
@@ -8,54 +8,55 @@
 
 | # | Exemple | Mode | Agents | But |
 |---|---------|------|--------|-----|
-| 1 | [1-pipeline-simple](1-pipeline-simple/) | pipeline | 3 | Format de base : 1 fichier flat par agent |
-| 2 | [2-pipeline-complet](2-pipeline-complet/) | pipeline | 10 | Hiérarchie complète : Architect → Release |
-| 3 | [3-x45-simple](3-x45-simple/) | x45 | 7 | 1 triangle (3XX+7XX+8XX) avec feedback |
-| 4 | [4-x45-complet](4-x45-complet/) | x45 | 15 | 3 triangles, 3 cycles, 60% → 95% |
+| 1 | [1-mono-simple](1-mono-simple/) | MONO | 3 | Format de base : Architect + Master + Dev |
+| 2 | [2-mono-complet](2-mono-complet/) | MONO | 10 | Hiérarchie complète : Architect → Release |
+| 3 | [3-x45-simple](3-x45-simple/) | X45 | 7 | 1 triangle (3XX+7XX+8XX) avec feedback |
+| 4 | [4-x45-complet](4-x45-complet/) | X45 | 15 | 3 triangles, 3 cycles, 60% → 95% |
+| 5 | [5-z21-simple](5-z21-simple/) | Z21 | 6 | 6 agents spécialisés sur 3 sous-contextes |
 
 ---
 
-## Pipeline standard (mode flat)
+## MONO (un fichier par agent)
 
-Un fichier `.md` par agent. Pas de feedback automatique.
+Un fichier `.md` par agent dans son répertoire. Pas de feedback automatique.
 
-### 1. [1-pipeline-simple](1-pipeline-simple/) — 3 agents
+### 1. [1-mono-simple](1-mono-simple/) — 3 agents
 
-Le minimum : Architect + Master + Developer avec le workflow Pool Requests.
+Le minimum : Architect + Master + Developer.
 
 ```
 prompts/
-  000-architect.md    ← configure, supervise
-  100-master.md       ← dispatch
-  300-dev.md          ← implémente
+  000-architect/000-architect.md
+  100-master/100-master.md
+  300-dev/300-dev.md
 ```
 
-### 2. [2-pipeline-complet](2-pipeline-complet/) — 10 agents
+### 2. [2-mono-complet](2-mono-complet/) — 10 agents
 
-Toute la hiérarchie du pipeline standard :
+Toute la hiérarchie :
 
 ```
-000 Architect → 200 Explorer → 100 Master
-                                  │
-                            ┌─────┼─────┐
-                           300   301   302  (en parallèle)
-                            └─────┼─────┘
-                                  │
-                           400 Integrator → 500 Tester → 600 Releaser
+000 Architect → 010 Super-Master → 200 Explorer → 100 Master
+                                                       │
+                                               ┌───────┼───────┐
+                                              300     301     302
+                                               └───────┼───────┘
+                                                       │
+                                              400 Integrator → 500 Tester → 600 Releaser
 ```
 
 ---
 
-## x45 (mode triangle)
+## X45 (triangle system/memory/methodology)
 
-3 fichiers par agent (`system.md` + `memory.md` + `methodology.md`). Feedback automatique via Observer + Coach.
+3 fichiers par agent. Feedback automatique via Coach + Curator.
 
 ### 3. [3-x45-simple](3-x45-simple/) — 7 agents, 1 triangle
 
-Le pattern central de x45 :
+Pattern central de X45 :
 
 ```
-741 Curator  → 341/memory.md       (prépare le contexte)
+741 Curator  → 341/memory.md        (prépare le contexte)
 841 Coach    → 341/methodology.md   (améliore la méthode)
 500 Observer → bilans/              (évalue les outputs)
 ```
@@ -70,22 +71,50 @@ Progression de 60% à 95% sur 3 cycles.
 
 ---
 
-## Deux modes de pipeline
+## Z21 (6 agents + sous-contextes)
 
-Le système supporte deux modes, détectés automatiquement :
+6 agents spécialisés (Master, Dev, Tester, Reviewer, Coach, Architect) partageant N sous-contextes. Chaque sous-contexte a son `archi.md` + `memory.md` + `methodology.md`.
 
-| | Pipeline standard | x45 |
-|--|-------------------|-----|
-| Format | `prompts/XXX-nom.md` | `prompts/XXX/{system,memory,methodology}.md` |
-| Feedback | Non | Oui (boucle courte + longue) |
-| Amélioration | Manuelle | Automatique (Coach + Curator) |
-| Cas d'usage | Tâches simples, parallélisables | Tâches complexes, itératives |
+### 5. [5-z21-simple](5-z21-simple/) — 6 agents, 3 sous-contextes
+
+Service API : backend users, backend items, frontend React.
+
+```
+prompts/370-api/
+├── 370-170  Master (routeur vers b-users, b-items, f-app)
+├── 370-370  Developer
+├── 370-570  Tester
+├── 370-770  Reviewer
+├── 370-870  Coach
+├── 370-970  Architect
+├── b-users/ (archi + memory + methodology)
+├── b-items/ (archi + memory + methodology)
+└── f-app/   (archi + memory + methodology)
+```
+
+---
+
+## Comparaison des 3 modes
+
+| | MONO | X45 | Z21 |
+|--|------|-----|-----|
+| Format | `prompts/XXX-nom/XXX-nom.md` | `prompts/XXX/{system,memory,methodology}.md` | 6 agents + sous-contextes |
+| Feedback | Non | Oui (boucle courte + longue) | Oui (par sous-contexte) |
+| Scaling | 1 agent = 1 rôle | 1 triangle = 1 worker | 6 agents = N zones |
+| Cas d'usage | Tâches simples | Tâches itératives | Services multi-zones |
 
 ## Parcours recommandé
 
-1. **Découvrir le format** → `1-pipeline-simple`
-2. **Comprendre la hiérarchie** → `2-pipeline-complet`
-3. **Découvrir x45 et le feedback** → `3-x45-simple`
-4. **Voir un projet réel** → `4-x45-complet`
+1. **Découvrir le format** → `1-mono-simple`
+2. **Comprendre la hiérarchie** → `2-mono-complet`
+3. **Découvrir X45 et le feedback** → `3-x45-simple`
+4. **Voir un projet réel X45** → `4-x45-complet`
+5. **Découvrir Z21** → `5-z21-simple`
 
-Pour en savoir plus sur x45 : [`docs/X45-METHODOLOGY.md`](../docs/X45-METHODOLOGY.md)
+## Documentation
+
+| Doc | Contenu |
+|-----|---------|
+| [`docs/AGENT_MONO.md`](../docs/AGENT_MONO.md) | Format MONO, structure répertoire |
+| [`docs/AGENT_X45-METHODOLOGY.md`](../docs/AGENT_X45-METHODOLOGY.md) | Mode X45, boucles de feedback |
+| [`docs/AGENT_Z21-METHODOLOGY.md`](../docs/AGENT_Z21-METHODOLOGY.md) | Mode Z21, sous-contextes |

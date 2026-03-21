@@ -1,4 +1,4 @@
-# Multi-Agent System v2.1
+# Multi-Agent System v2.4
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Claude](https://img.shields.io/badge/Powered%20by-Claude-blueviolet)](https://claude.ai)
@@ -42,7 +42,7 @@ Système d'orchestration multi-agents pour projets de développement complexes a
 ### 1. Cloner le repository
 
 ```bash
-git clone https://github.com/OlesVanHermann/multi-agent.git
+git clone https://github.com/YOUR-ORG/multi-agent.git
 cd multi-agent
 ```
 
@@ -88,7 +88,7 @@ Si vous avez déjà une installation (ex: v2.0) et voulez mettre à jour :
 cd /chemin/vers/multi-agent
 
 # 1. Télécharger le script de mise à jour
-curl -O https://raw.githubusercontent.com/OlesVanHermann/multi-agent/main/upgrade.sh
+curl -O https://raw.githubusercontent.com/YOUR-ORG/multi-agent/main/upgrade.sh
 chmod +x upgrade.sh
 
 # 2. Simuler (optionnel, aucune modification)
@@ -99,10 +99,10 @@ chmod +x upgrade.sh
 ```
 
 Le script :
-- Met à jour **uniquement** les fichiers framework (`core/`, `scripts/`, `web/`, `docs/`)
+- Met à jour **uniquement** les fichiers framework (`scripts/`, `web/`, `docs/`)
 - **Préserve** vos fichiers projet (`prompts/`, `pool-requests/`, `project/`, `project-config.md`)
 
-Voir [UPGRADE.md](UPGRADE.md) et [upgrades/](upgrades/) pour les détails par version.
+Voir [UPGRADE.md](UPGRADE.md) pour le guide complet. Le script est dans `patch/upgrade.sh`.
 
 ## Configuration
 
@@ -140,7 +140,7 @@ export CLAUDE_CONFIG_DIR=~/.claude-profiles/mon-profil
 ./scripts/agent.sh stop 300      # Arrêter un agent
 
 # ── Dashboard web ──
-./scripts/web.sh start           # Build frontend (si besoin) + uvicorn :8090
+./scripts/web.sh start           # Build frontend (si besoin) + uvicorn :8050
 ./scripts/web.sh stop            # Arrêter uvicorn
 ./scripts/web.sh rebuild         # Stop + force rebuild frontend + start
 
@@ -149,16 +149,16 @@ export CLAUDE_CONFIG_DIR=~/.claude-profiles/mon-profil
 ./scripts/watch.sh 300           # Voir les réponses en temps réel
 
 # ── Proxy (optionnel) ──
-./scripts/proxy.sh start         # Reverse proxy 0.0.0.0:80 → 127.0.0.1:8090
+./scripts/proxy.sh start         # Reverse proxy 0.0.0.0:80 → 127.0.0.1:8050
 ./scripts/proxy.sh stop          # Arrêter le proxy
 
 # ── Monitoring ──
-python3 core/agent-bridge/healthcheck.py   # Healthcheck tous les agents
+python3 scripts/agent-bridge/healthcheck.py   # Healthcheck tous les agents
 
 # ── Hub (framework dev) ──
-./scripts/hub-receive.sh                   # Lister les patches par projet
-./scripts/hub-cherry-pick.sh <branch>      # Cherry-pick une branche patch
-./scripts/hub-release.sh [patch|minor|major]  # Test + tag + push GitHub
+./patch/hub-receive.sh                     # Lister les patches par projet
+./patch/hub-cherry-pick.sh <branch>        # Cherry-pick une branche patch
+./patch/hub-release.sh [patch|minor|major] # Test + tag + push GitHub
 ```
 
 ### Commandes interactives (mode non-headless)
@@ -176,11 +176,10 @@ python3 core/agent-bridge/healthcheck.py   # Healthcheck tous les agents
 
 ```
 multi-agent/
-├── core/
-│   ├── agent-bridge/        # Bridge Redis Streams + Claude
-│   │   ├── agent.py         # Agent principal
-│   │   ├── orchestrator.py  # Workflows multi-agents
-│   │   └── healthcheck.py   # Monitoring
+├── scripts/agent-bridge/    # Bridge Redis Streams + Claude
+│   ├── agent.py             # Agent principal
+│   ├── orchestrator.py      # Workflows multi-agents
+│   └── healthcheck.py       # Monitoring
 │   ├── bridge/              # SSH tunnel Mac↔VM
 │   └── dashboard/           # Web dashboard
 │
@@ -191,13 +190,10 @@ multi-agent/
 │   ├── proxy.sh             # reverse proxy :80 → :8090
 │   ├── send.sh              # Envoyer message à un agent
 │   ├── watch.sh             # Voir réponses en temps réel
-│   ├── hub-receive.sh       # Lister patches reçus
-│   ├── hub-cherry-pick.sh   # Cherry-pick patches
-│   └── hub-release.sh       # Test + tag + push GitHub
+│   └── status.sh            # Diagnostic rapide du système
 │
 ├── prompts/                 # Prompts système des agents
 ├── examples/                # Exemples de configuration
-├── templates/               # Templates pour nouveaux projets
 ├── docs/                    # Documentation détaillée
 │
 ├── pool-requests/           # Queue de travail (fichiers)
@@ -229,9 +225,9 @@ multi-agent/
 |---------|-------------|
 | [CLAUDE.md](CLAUDE.md) | Documentation principale |
 | [UPGRADE.md](UPGRADE.md) | Guide de mise à jour (processus général) |
-| [upgrades/](upgrades/) | **Guides par version** (2.0→2.1, etc.) |
+| [patch/PIPELINE.md](patch/PIPELINE.md) | **Pipeline de patches** (Mac → Hub → GitHub) |
 | [docs/BRIDGE.md](docs/BRIDGE.md) | Documentation technique du bridge |
-| [docs/CLI.md](docs/CLI.md) | Référence CLI |
+| [docs/AGENT_MONO.md](docs/AGENT_MONO.md) | Format agent mono |
 | [prompts/CONVENTIONS.md](prompts/CONVENTIONS.md) | Convention de numérotation |
 
 ## Workflows
@@ -239,7 +235,7 @@ multi-agent/
 ### Séquentiel
 
 ```bash
-python3 core/agent-bridge/orchestrator.py seq
+python3 scripts/agent-bridge/orchestrator.py seq
 ```
 
 Explorer → Developer → Tester
@@ -247,7 +243,7 @@ Explorer → Developer → Tester
 ### Parallèle
 
 ```bash
-python3 core/agent-bridge/orchestrator.py par
+python3 scripts/agent-bridge/orchestrator.py par
 ```
 
 Plusieurs workers simultanément
@@ -255,7 +251,7 @@ Plusieurs workers simultanément
 ### Code Review
 
 ```bash
-python3 core/agent-bridge/orchestrator.py review
+python3 scripts/agent-bridge/orchestrator.py review
 ```
 
 Developer → Reviewer → Developer (amélioration)
@@ -307,4 +303,4 @@ MIT - voir [LICENSE](LICENSE)
 
 ---
 
-*Multi-Agent System v2.1 - 2026*
+*Multi-Agent System v2.4 - 2026*

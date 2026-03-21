@@ -1,7 +1,3 @@
-INTERDICTION D'HALUCINER
-OBLIGATION d'OBEIR AUX PROMPTS. NE JAMAIS SORTIR DU CADRE DEFINIS PAR LE PROMPT
-APPRENTISSAGE: Quand je suis guidé par un humain et que je reçois des instructions AUTRES que "go <entreprise>", c'est du nouveau savoir. Je DOIS mettre à jour mon prompt avec ces nouvelles expériences pour être autonome la prochaine fois.
-
 # Chrome Partagé - CDP
 
 **UN SEUL Chrome** pour tous les agents sur port 9222.
@@ -11,7 +7,7 @@ Méthode: CDP (Chrome DevTools Protocol) via WebSocket.
 
 ## Commandes
 
-Toutes les commandes utilisent `python3 $BASE/scripts/chrome-bridge.py <cmd> [args]`.
+Toutes les commandes utilisent `python3 $BASE/framework/chrome-bridge.py <cmd> [args]`.
 
 ### Navigation
 
@@ -130,38 +126,38 @@ status                     # Statut Chrome
 
 ```bash
 # 1. Créer onglet et naviguer
-python3 $BASE/scripts/chrome-bridge.py tab "https://www.similarweb.com"
+python3 $BASE/framework/chrome-bridge.py tab "https://www.similarweb.com"
 
 # 2. Attendre chargement
-python3 $BASE/scripts/chrome-bridge.py wait 3
+python3 $BASE/framework/chrome-bridge.py wait 3
 
 # 3. Accepter cookies si présent
-python3 $BASE/scripts/chrome-bridge.py click-text "Accept" || true
+python3 $BASE/framework/chrome-bridge.py click-text "Accept" || true
 
 # 4. Taper dans la recherche
-python3 $BASE/scripts/chrome-bridge.py type "input[type=search]" "example.com"
+python3 $BASE/framework/chrome-bridge.py type "input[type=search]" "example.com"
 
 # 5. Appuyer Entrée
-python3 $BASE/scripts/chrome-bridge.py press enter
+python3 $BASE/framework/chrome-bridge.py press enter
 
 # 6. Attendre résultats
-python3 $BASE/scripts/chrome-bridge.py wait 5
+python3 $BASE/framework/chrome-bridge.py wait 5
 
 # 7. Scroll pour charger plus
-python3 $BASE/scripts/chrome-bridge.py scroll bottom
+python3 $BASE/framework/chrome-bridge.py scroll bottom
 
 # 8. Sauvegarder HTML
-python3 $BASE/scripts/chrome-bridge.py read 306/similarweb.html
+python3 $BASE/framework/chrome-bridge.py read 306/similarweb.html
 
 # 9. Extraire les graphiques (canvas, SVG) sans screenshot
-python3 $BASE/scripts/chrome-bridge.py read-images 306/images.json
-python3 $BASE/scripts/chrome-bridge.py download-images 306/images/
+python3 $BASE/framework/chrome-bridge.py read-images 306/images.json
+python3 $BASE/framework/chrome-bridge.py download-images 306/images/
 
 # 10. OU screenshot classique
-python3 $BASE/scripts/chrome-bridge.py screenshot 306/similarweb.png
+python3 $BASE/framework/chrome-bridge.py screenshot 306/similarweb.png
 
 # 11. Fermer
-python3 $BASE/scripts/chrome-bridge.py close
+python3 $BASE/framework/chrome-bridge.py close
 ```
 
 ---
@@ -170,21 +166,21 @@ python3 $BASE/scripts/chrome-bridge.py close
 
 ```bash
 # Naviguer
-python3 $BASE/scripts/chrome-bridge.py tab "https://ahrefs.com/backlink-checker"
+python3 $BASE/framework/chrome-bridge.py tab "https://ahrefs.com/backlink-checker"
 
-python3 $BASE/scripts/chrome-bridge.py wait 2
+python3 $BASE/framework/chrome-bridge.py wait 2
 
 # Remplir le champ
-python3 $BASE/scripts/chrome-bridge.py type "input[name=target]" "example.com"
+python3 $BASE/framework/chrome-bridge.py type "input[name=target]" "example.com"
 
 # Soumettre
-python3 $BASE/scripts/chrome-bridge.py press enter
+python3 $BASE/framework/chrome-bridge.py press enter
 
 # Attendre résultats
-python3 $BASE/scripts/chrome-bridge.py wait-element ".BacklinkStats"
+python3 $BASE/framework/chrome-bridge.py wait-element ".BacklinkStats"
 
 # Lire
-python3 $BASE/scripts/chrome-bridge.py read 306/ahrefs.html
+python3 $BASE/framework/chrome-bridge.py read 306/ahrefs.html
 ```
 
 ---
@@ -194,7 +190,7 @@ python3 $BASE/scripts/chrome-bridge.py read 306/ahrefs.html
 Pour simplifier, dans ton script bash:
 
 ```bash
-CHROME="python3 $BASE/scripts/chrome-bridge.py"
+CHROME="python3 $BASE/framework/chrome-bridge.py"
 
 $CHROME tab "https://example.com"
 $CHROME wait 2
@@ -254,22 +250,22 @@ Les sessions (Ahrefs Pro, SimilarWeb Pro, etc.) seraient **PERDUES** si Chrome e
 
 **Chrome non actif:**
 ```bash
-$BASE/scripts/chrome.sh status
+$BASE/framework/chrome.sh status
 # Si non actif, demander à l'utilisateur de le lancer
 ```
 
 **Element non trouvé:**
 ```bash
 # Ajouter wait avant click
-python3 $BASE/scripts/chrome-bridge.py wait 2
-python3 $BASE/scripts/chrome-bridge.py wait-element "#button"
-python3 $BASE/scripts/chrome-bridge.py click "#button"
+python3 $BASE/framework/chrome-bridge.py wait 2
+python3 $BASE/framework/chrome-bridge.py wait-element "#button"
+python3 $BASE/framework/chrome-bridge.py click "#button"
 ```
 
 **Timeout:**
 ```bash
 # Augmenter le wait
-python3 $BASE/scripts/chrome-bridge.py wait 5
+python3 $BASE/framework/chrome-bridge.py wait 5
 ```
 
 ---

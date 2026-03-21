@@ -10,7 +10,7 @@ ulimit -n 10240 2>/dev/null || true
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-BRIDGE_SCRIPT="$BASE_DIR/core/agent-bridge/agent.py"
+BRIDGE_SCRIPT="$BASE_DIR/scripts/agent-bridge/agent.py"
 LOG_DIR="$BASE_DIR/logs/000"
 WEB_DIR="$BASE_DIR/web"
 PROFILES_DIR="$BASE_DIR/login"
@@ -103,7 +103,7 @@ do_start() {
             REALM_MOUNT="-v $REALM_FILE:/opt/keycloak/data/import/realm-multi-agent.json:ro"
         fi
         $DOCKER run -d --name ma-keycloak -p 127.0.0.1:8080:8080 \
-            -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin \
+            -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD:-admin}" \
             -e KC_HEALTH_ENABLED=true \
             $REALM_MOUNT \
             -v ma-keycloak-data:/opt/keycloak/data \
@@ -131,7 +131,7 @@ do_start() {
             fi
         fi
         # Check if extension is installed
-        local CDP_BRIDGE_DIR="$SCRIPT_DIR/cdp-bridge"
+        local CDP_BRIDGE_DIR="$BASE_DIR/framework/cdp-bridge"
         if [ -d "$CDP_BRIDGE_DIR" ]; then
             log_warn "CDP Bridge extension available at: $CDP_BRIDGE_DIR/extension/"
             log_warn "To install:"

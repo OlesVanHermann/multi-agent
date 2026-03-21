@@ -53,6 +53,19 @@ web/frontend/dist/
 # Config locale (créé par 900)
 project-config.md
 
+# Config panel locale (overrides agent panel types)
+web/panel-config.json
+
+# Checksum local (généré par patch/sync-to-git.sh)
+file.md5
+
+# Pipeline output (project-specific)
+pipeline/
+
+# Project-specific test subdirs
+tests/messaging/
+tests/mail/
+
 # Pool requests runtime (garder la structure vide)
 pool-requests/pending/*
 pool-requests/assigned/*

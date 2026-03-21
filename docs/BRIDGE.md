@@ -69,7 +69,7 @@ pip install redis>=4.0.0 pexpect>=4.8.0
 ### Mode interactif (un agent)
 
 ```bash
-python core/agent-bridge/agent.py 300
+python scripts/agent-bridge/agent.py 300
 ```
 
 Commandes disponibles :
@@ -85,7 +85,7 @@ Commandes disponibles :
 ### Mode headless (daemon)
 
 ```bash
-python core/agent-bridge/agent.py 300 --headless
+python scripts/agent-bridge/agent.py 300 --headless
 ```
 
 ### Lancer plusieurs agents
@@ -177,19 +177,19 @@ Le bridge préserve le système de sessions pour le prompt caching :
 
 ```bash
 # Status unique
-python core/agent-bridge/healthcheck.py
+python scripts/agent-bridge/healthcheck.py
 
 # Mode watch (refresh 2s)
-python core/agent-bridge/healthcheck.py --watch
+python scripts/agent-bridge/healthcheck.py --watch
 
 # Avec stats streams
-python core/agent-bridge/healthcheck.py --streams
+python scripts/agent-bridge/healthcheck.py --streams
 ```
 
 ### Monitor temps réel
 
 ```bash
-./python3 scripts/monitor.py
+python3 scripts/monitor.py
 ```
 
 ## Orchestration
@@ -198,16 +198,16 @@ python core/agent-bridge/healthcheck.py --streams
 
 ```bash
 # Séquentiel: Explorer → Developer → Tester
-python core/agent-bridge/orchestrator.py seq
+python scripts/agent-bridge/orchestrator.py seq
 
 # Parallèle: plusieurs workers
-python core/agent-bridge/orchestrator.py par
+python scripts/agent-bridge/orchestrator.py par
 
 # Code review: Developer → Reviewer → Developer
-python core/agent-bridge/orchestrator.py review
+python scripts/agent-bridge/orchestrator.py review
 
 # Pipeline complet
-python core/agent-bridge/orchestrator.py pipeline
+python scripts/agent-bridge/orchestrator.py pipeline
 ```
 
 ### API Python
@@ -280,7 +280,7 @@ Pour migrer progressivement :
 1. Vérifier Redis : `redis-cli ping`
 2. Vérifier le process : `tmux ls | grep agent-`
 3. Vérifier les logs : `tail -F logs/{id}/bridge.log`
-4. Vérifier le status : `./python3 scripts/monitor.py`
+4. Vérifier le status : `python3 scripts/monitor.py`
 
 ### Messages perdus
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 # hub-receive.sh — List incoming patches from project machines
-# Usage: ./scripts/hub-receive.sh [--log]
+# Usage: ./patch/hub-receive.sh [--log]
 
 set -euo pipefail
 
@@ -66,7 +66,7 @@ done
 
 echo -e "${BOLD}Total: $TOTAL patch branch(es)${NC}"
 echo ""
-echo -e "Cherry-pick:  ${CYAN}./scripts/hub-cherry-pick.sh hub/patch/<project>/<desc>${NC}"
+echo -e "Cherry-pick:  ${CYAN}./patch/hub-cherry-pick.sh hub/patch/<project>/<desc>${NC}"
 echo -e "View commits: ${CYAN}git log main..hub/patch/<project>/<desc>${NC}"
 
 # Show push log if --log flag
