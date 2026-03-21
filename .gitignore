@@ -98,3 +98,6 @@ web/backend/venv/
 
 # Safe-delete archive
 removed/
+
+# Claude Code session history
+history.txt

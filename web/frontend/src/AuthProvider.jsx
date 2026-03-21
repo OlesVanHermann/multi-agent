@@ -274,7 +274,7 @@ export function LoginForm() {
         </form>
 
         <div className="login-hint">
-          Default: octave / changeme
+          Default: admin / changeme
         </div>
       </div>
     </div>

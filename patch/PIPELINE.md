@@ -1,10 +1,10 @@
-# Pipeline Git Multi-Agent : Mac → mx9 → GitHub
+# Pipeline Git Multi-Agent : Mac → hub → GitHub
 
 ## Architecture
 
 ```
 ┌─────────────────────┐    ┌─────────────────────┐
-│ MAC 1 (mx6)         │    │ MAC 2 (claude3)     │
+│ MAC 1 (client)         │    │ MAC 2 (client-2)     │
 │                     │    │                     │
 │ ~/multi-agent/      │    │ ~/multi-agent/      │
 │   (working copy)    │    │   (working copy)    │
@@ -16,7 +16,7 @@
          │ patch/projet/fix-xxx      │ patch/projet/fix-yyy
          ▼                           ▼
 ┌──────────────────────────────────────────────────────────┐
-│ MX9 (ubuntu@mx9.di2amp.com)                              │
+│ HUB (ubuntu@hub.example.com)                              │
 │                                                           │
 │ /home/ubuntu/multi-agent.git       ← BARE REPO (réception│
 │   hooks/post-receive → push.log      des patches)        │
@@ -32,14 +32,14 @@
 │                                                           │
 │ /home/ubuntu/multi-agent-inception/ ← TEST BROKER         │
 │   MA_PREFIX=mi (isolé)                                    │
-│   Dashboard :8090 — Keycloak :8080 requis (pas de        │
+│   Dashboard :8050 — Keycloak :8080 requis (pas de        │
 │   fallback SIMPLE_AUTH)                                    │
 │   rsync depuis multi-agent/ après chaque release          │
 └────────────────────┬─────────────────────────────────────┘
                      │ git push origin main --tags
                      │ (humain avec passphrase SSH)
                      ▼
-          github.com/OlesVanHermann/multi-agent
+          github.com/YOUR-NAME/multi-agent
 ```
 
 ---
@@ -51,10 +51,10 @@
 | Répertoire | Rôle |
 |-----------|------|
 | `~/multi-agent/` | Working copy avec le projet en cours (on code ici) |
-| `~/multi-agent-git/` | Clone git clean pour pousser les patches vers mx9 |
+| `~/multi-agent-git/` | Clone git clean pour pousser les patches vers hub |
 | `~/multi-agent/scripts/sync-to-git.sh` | Script qui sync `~/multi-agent/` → `~/multi-agent-git/` et push |
 
-### mx9 (serveur central)
+### hub (serveur central)
 
 | Répertoire | Rôle |
 |-----------|------|
@@ -84,14 +84,14 @@ git ls-files core docs examples infrastructure scripts upgrade.sh upgrades web \
 
 **Setup initial (une fois par Mac) :**
 ```bash
-git clone https://github.com/OlesVanHermann/multi-agent.git ~/multi-agent-git
+git clone https://github.com/YOUR-NAME/multi-agent.git ~/multi-agent-git
 cd ~/multi-agent-git
-git remote add hub ubuntu@mx9.di2amp.com:/home/ubuntu/multi-agent.git
+git remote add hub ubuntu@hub.example.com:/home/ubuntu/multi-agent.git
 ```
 
 ---
 
-### Étape 2 : mx9 — Réception automatique
+### Étape 2 : hub — Réception automatique
 
 Quand un `git push hub` arrive sur le bare repo, le hook `post-receive` :
 1. Log dans `/home/ubuntu/multi-agent.git/push.log`
@@ -101,7 +101,7 @@ La branche `hub/patch/NOM_PROJET/description` apparaît automatiquement dans le 
 
 ---
 
-### Étape 3 : mx9 — Triage et cherry-pick des patches
+### Étape 3 : hub — Triage et cherry-pick des patches
 
 **IMPORTANT : Ne JAMAIS cherry-pick aveuglément. Toujours inspecter d'abord.**
 
@@ -165,7 +165,7 @@ git push hub --delete patch/NOM_PROJET/description
 
 ---
 
-### Étape 4 : mx9 — Release
+### Étape 4 : hub — Release
 
 ```bash
 cd /home/ubuntu/multi-agent
@@ -180,6 +180,7 @@ git push hub main --tags
 rsync -av --exclude='__pycache__/' --exclude='node_modules/' \
   --exclude='dist/' --exclude='.pytest_cache/' --exclude='venv/' \
   --exclude='*.pyc' --exclude='dump.rdb' \
+  core/ /home/ubuntu/multi-agent-inception/core/
 # (répéter pour scripts/ web/ docs/ etc.)
 # Ou copier les fichiers modifiés individuellement :
 cp scripts/fichier.sh /home/ubuntu/multi-agent-inception/scripts/
@@ -205,15 +206,15 @@ git pull hub main --rebase
 
 | Remote | URL | Usage |
 |--------|-----|-------|
-| `hub` | `ubuntu@mx9.di2amp.com:/home/ubuntu/multi-agent.git` | Push patches |
-| `origin` | `github.com/OlesVanHermann/multi-agent.git` | Pull releases |
+| `hub` | `ubuntu@hub.example.com:/home/ubuntu/multi-agent.git` | Push patches |
+| `origin` | `github.com/YOUR-NAME/multi-agent.git` | Pull releases |
 
-### Sur mx9 (`/home/ubuntu/multi-agent/`)
+### Sur hub (`/home/ubuntu/multi-agent/`)
 
 | Remote | URL | Usage |
 |--------|-----|-------|
 | `hub` | `/home/ubuntu/multi-agent.git` (local bare repo) | Recevoir les patches |
-| `origin` | `git@github.com:OlesVanHermann/multi-agent.git` | Push releases (humain + passphrase) |
+| `origin` | `git@github.com:YOUR-NAME/multi-agent.git` | Push releases (humain + passphrase) |
 
 ---
 
@@ -230,22 +231,43 @@ Exemples :
 
 ---
 
+## Règles pour Claude Code (preparation des patches)
+
+Quand l'utilisateur demande de pousser un patch :
+
+1. **Copier les fichiers modifies** dans `~/multi-agent-git/` (seulement les vrais changements, pas le bruit)
+2. **Creer la branche + commit** soi-meme avec les outils Bash :
+   ```bash
+   cd ~/multi-agent-git && git checkout -B patch/project/<slug> main && git add -A && git commit -m "<message>"
+   ```
+3. **Donner a l'utilisateur UNE SEULE commande a taper** (il a la clef SSH, pas toi) :
+   ```
+   cd ~/multi-agent-git && git push hub patch/project/<slug>
+   ```
+
+Ne PAS :
+- Demander a l'utilisateur de creer la branche ou commiter — c'est TON job
+- Donner une longue chaine de commandes — l'utilisateur veut juste le `git push`
+- Expliquer le process — juste faire et donner la commande finale
+
+---
+
 ## Règles pour les agents Mac
 
 1. **Ne JAMAIS pousser directement sur `main`** — toujours via une branche `patch/`
 2. **Ne JAMAIS modifier `~/multi-agent-git/` manuellement** — utiliser `./scripts/sync-to-git.sh`
 3. **Un patch = un sujet** — ne pas mélanger des fixes différents
 4. **Description courte en slug** : `fix-timeout`, `add-prefix`, `update-bridge`
-5. **Après le push** : mx9 reçoit automatiquement, pas besoin de notifier
-6. **Ne JAMAIS exécuter de commandes SSH sur mx9** — les agents Mac poussent des patches, c'est tout
+5. **Après le push** : hub reçoit automatiquement, pas besoin de notifier
+6. **Ne JAMAIS exécuter de commandes SSH sur hub** — les agents Mac poussent des patches, c'est tout
 7. **Ne JAMAIS créer son propre sync-to-git.sh** — utiliser `./scripts/sync-to-git.sh` du repo
-8. **Ne JAMAIS cherry-pick ou release sur mx9 via SSH** — c'est le rôle de l'opérateur mx9
+8. **Ne JAMAIS cherry-pick ou release sur hub via SSH** — c'est le rôle de l'opérateur hub
 9. **Générer file.md5 avec `git ls-files | xargs md5`** — PAS avec `find` (inclut le junk)
-10. **Auteur git = OlesVanHermann** — jamais Claude/claude comme auteur
+10. **Auteur git = YOUR-NAME** — jamais Claude/claude comme auteur
 
 ---
 
-## Règles pour l'opérateur mx9
+## Règles pour l'opérateur hub
 
 1. **Toujours inspecter un patch avant cherry-pick** — `git diff --stat` d'abord
 2. **Exclure le bruit** des patches : `file.md5`, `framework.md5`, `good_start_prompt.md`, `.gitignore`
@@ -256,7 +278,7 @@ Exemples :
 7. **Push GitHub = humain** (passphrase SSH requise, pas automatisable)
 8. **Supprimer les branches patch** après intégration : `git push hub --delete patch/...`
 9. **Comparer les file.md5** de plusieurs Macs avec un script Python pour trouver les vrais changements
-10. **Auteur des commits = OlesVanHermann** — nettoyer si un agent a commité avec son propre nom
+10. **Auteur des commits = YOUR-NAME** — nettoyer si un agent a commité avec son propre nom
 
 ---
 
@@ -280,16 +302,16 @@ Exemples :
 **Cause** : L'agent a poussé sur main au lieu de créer une branche `patch/`.
 **Solution** : Inspecter les commits, garder les bons, reset si nécessaire.
 
-### Agent exécute des commandes SSH sur mx9
+### Agent exécute des commandes SSH sur hub
 
 **Symptôme** : Cherry-pick, `rm -rf`, release, tag créés depuis le Mac via SSH.
-**Cause** : L'agent contourne le pipeline et opère directement sur mx9.
+**Cause** : L'agent contourne le pipeline et opère directement sur hub.
 **Solution** : `git reset --hard` au dernier bon commit. Supprimer les tags bogus. Rappeler la règle 6.
 
 ### Bruit dans les patches
 
 **Symptôme** : Chaque patch inclut `file.md5`, `framework.md5`, `good_start_prompt.md`, diff `.gitignore`.
-**Cause** : Ces fichiers existent dans le working copy du Mac mais pas sur mx9.
+**Cause** : Ces fichiers existent dans le working copy du Mac mais pas sur hub.
 **Solution** : Après `cherry-pick --no-commit`, toujours faire `git reset HEAD` sur ces fichiers.
 
 ### Auteur Claude dans les commits
@@ -298,20 +320,20 @@ Exemples :
 **Cause** : Le Mac n'a pas configuré `user.name`/`user.email` correctement.
 **Solution** : Sur le Mac :
 ```bash
-git config --global user.name "OlesVanHermann"
-git config --global user.email "octave.klaba@ovh.com"
+git config --global user.name "YOUR-NAME"
+git config --global user.email "user@example.com"
 ```
 Pour nettoyer l'historique existant : `git checkout --orphan fresh && git add -A && git commit` avec le bon auteur.
 
 ---
 
-## Infrastructure (mx9)
+## Infrastructure (hub)
 
 ### Ports
 
 | Port | Service | Requis |
 |------|---------|--------|
-| **8090** | Dashboard (uvicorn) | Oui |
+| **8050** | Dashboard (uvicorn) | Oui |
 | **8080** | Keycloak (Docker) | Oui — pas de fallback, 503 si down |
 | **6379** | Redis | Oui |
 | **9222** | CDP Bridge (Chrome) | Optionnel |
@@ -324,10 +346,10 @@ Si Keycloak est down, le login retourne 503.
 
 ```bash
 # Installer Keycloak (Docker auto-installé si absent)
-./framework/install_keycloak.sh
+./setup/install_keycloak.sh
 
 # Changer un mot de passe utilisateur
-./framework/change_passwd_keycloak.sh octave nouveau-mdp
+./setup/keycloak_passwd_modify.sh admin nouveau-mdp
 
 # Vérifier que Keycloak est up
 curl -s http://localhost:8080/health/ready
@@ -349,12 +371,12 @@ Le frontend gère automatiquement :
 | Script | Machine | Répertoire | Rôle |
 |--------|---------|-----------|------|
 | `scripts/sync-to-git.sh` | Mac | `~/multi-agent/` | Sync framework → `~/multi-agent-git/` + push patch |
-| `scripts/hub-receive.sh` | mx9 | `/home/ubuntu/multi-agent/` | Lister les patches en attente |
-| `scripts/hub-cherry-pick.sh` | mx9 | `/home/ubuntu/multi-agent/` | Cherry-pick un patch dans main |
-| `scripts/hub-release.sh` | mx9 | `/home/ubuntu/multi-agent/` | Tests + tag + push GitHub |
-| `hooks/post-receive` | mx9 | `/home/ubuntu/multi-agent.git/` | Log + auto-fetch à la réception |
-| `framework/install_keycloak.sh` | mx9/Mac | `~/multi-agent/` | Installe Docker + Keycloak (Mac/Ubuntu) |
-| `framework/change_passwd_keycloak.sh` | mx9/Mac | `~/multi-agent/` | Change mot de passe Keycloak via API |
+| `patch/hub-receive.sh` | hub | `/home/ubuntu/multi-agent/` | Lister les patches en attente |
+| `patch/hub-cherry-pick.sh` | hub | `/home/ubuntu/multi-agent/` | Cherry-pick un patch dans main |
+| `patch/hub-release.sh` | hub | `/home/ubuntu/multi-agent/` | Tests + tag + push GitHub |
+| `hooks/post-receive` | hub | `/home/ubuntu/multi-agent.git/` | Log + auto-fetch à la réception |
+| `setup/install_keycloak.sh` | hub/Mac | `~/multi-agent/` | Installe Docker + Keycloak (Mac/Ubuntu) |
+| `framework/keycloak_passwd_modify.sh` | hub/Mac | `~/multi-agent/` | Change mot de passe Keycloak via API |
 
 ---
 
@@ -368,31 +390,31 @@ Le frontend gère automatiquement :
            | xargs md5 > file.md5
          ./scripts/sync-to-git.sh "fix-websocket-timeout"
    → crée patch/project/fix-websocket-timeout
-   → push sur le bare repo mx9
+   → push sur le bare repo hub
 
-3. mx9 : post-receive hook log + fetch
+3. hub : post-receive hook log + fetch
    → hub/patch/project/fix-websocket-timeout visible
 
-4. mx9 : inspecter le patch
+4. hub : inspecter le patch
          git diff --stat main..hub/patch/project/fix-websocket-timeout
    ⚠️ Si >1000 lignes de suppressions → sync cassé → rejeter
 
-5. mx9 : cherry-pick sélectif
+5. hub : cherry-pick sélectif
          git cherry-pick --no-commit hub/patch/project/fix-websocket-timeout
          git reset HEAD file.md5 framework.md5 2>/dev/null
          git diff --cached --stat   # vérifier
          git commit -m "fix: websocket timeout"
 
-6. mx9 : tag + push hub
+6. hub : tag + push hub
          git tag -a v2.5.1 -m "v2.5.1"
          git push hub main --tags
 
-7. mx9 : mettre à jour inception (fichiers modifiés + frontend build)
+7. hub : mettre à jour inception (fichiers modifiés + frontend build)
          cp web/backend/server.py /home/ubuntu/multi-agent-inception/web/backend/
          cd web/frontend && npm run build
          cp -r dist/* /home/ubuntu/multi-agent-inception/web/frontend/dist/
 
-8. mx9 : nettoyer la branche patch
+8. hub : nettoyer la branche patch
          git push hub --delete patch/project/fix-websocket-timeout
 
 9. humain : git push origin main --tags   (passphrase SSH)

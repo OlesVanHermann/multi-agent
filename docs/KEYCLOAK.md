@@ -65,7 +65,7 @@ Ce script :
 
 | Username | Email | Rôle | Password |
 |----------|-------|------|----------|
-| `octave` | octave@multi-agent.local | admin | `changeme` (temporaire) |
+| `admin` | admin@multi-agent.local | admin | `changeme` (temporaire) |
 | `operator` | operator@multi-agent.local | operator | `operator123` (temporaire) |
 | `viewer` | viewer@multi-agent.local | viewer | `viewer123` (temporaire) |
 
@@ -206,7 +206,7 @@ docker volume rm ma-keycloak-data
 ```bash
 # Login (password grant)
 curl -X POST http://localhost:8080/realms/multi-agent/protocol/openid-connect/token \
-  -d "grant_type=password&client_id=multi-agent-web&username=octave&password=changeme"
+  -d "grant_type=password&client_id=multi-agent-web&username=admin&password=changeme"
 
 # Refresh token
 curl -X POST http://localhost:8080/realms/multi-agent/protocol/openid-connect/token \

@@ -1537,7 +1537,7 @@ async def get_favoris_projects(user: str = "default"):
     prefix = f"favoris-{user}-"
     projects = []
     for path in sorted(g.glob(pattern)):
-        name = Path(path).stem  # e.g. favoris-octave-mail
+        name = Path(path).stem  # e.g. favoris-admin-mail
         if name.startswith(prefix):
             proj = name[len(prefix):]
             if proj:
