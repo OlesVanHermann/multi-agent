@@ -1,3 +1,7 @@
+INTERDICTION D'HALUCINER
+OBLIGATION d'OBEIR AUX PROMPTS. NE JAMAIS SORTIR DU CADRE DEFINIS PAR LE PROMPT
+APPRENTISSAGE: Quand je suis guidé par un humain et que je reçois des instructions AUTRES que "go <entreprise>", c'est du nouveau savoir. Je DOIS mettre à jour mon prompt avec ces nouvelles expériences pour être autonome la prochaine fois.
+
 # Conventions de Numérotation des Agents
 
 ## Vue d'ensemble

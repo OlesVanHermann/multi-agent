@@ -14,7 +14,7 @@ fi
 MA_PREFIX="${MA_PREFIX:-A}"
 
 # Dashboard URL
-DASH_URL="http://127.0.0.1:8090"
+DASH_URL="http://127.0.0.1:8050"
 
 # Colors
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -65,9 +65,9 @@ do_quick() {
     fi
 
     header "Dashboard"
-    if lsof -iTCP:8090 -sTCP:LISTEN &>/dev/null 2>&1; then
-        PID=$(lsof -iTCP:8090 -sTCP:LISTEN -t 2>/dev/null | head -1)
-        ok "Dashboard" ":8090 (PID: $PID)"
+    if lsof -iTCP:8050 -sTCP:LISTEN &>/dev/null 2>&1; then
+        PID=$(lsof -iTCP:8050 -sTCP:LISTEN -t 2>/dev/null | head -1)
+        ok "Dashboard" ":8050 (PID: $PID)"
     else
         fail "Dashboard" "not running"
     fi
@@ -156,15 +156,15 @@ do_full() {
 
     # ── 2. Dashboard backend ──
     header "2. Backend API"
-    if ! lsof -iTCP:8090 -sTCP:LISTEN &>/dev/null 2>&1; then
-        fail "uvicorn" "not running on :8090"
+    if ! lsof -iTCP:8050 -sTCP:LISTEN &>/dev/null 2>&1; then
+        fail "uvicorn" "not running on :8050"
         ERRORS=$((ERRORS + 1))
     else
-        PIDS=$(lsof -iTCP:8090 -sTCP:LISTEN -t 2>/dev/null | sort -u)
+        PIDS=$(lsof -iTCP:8050 -sTCP:LISTEN -t 2>/dev/null | sort -u)
         PID_COUNT=$(echo "$PIDS" | wc -l | tr -d ' ')
         PID=$(echo "$PIDS" | head -1)
         if [ "$PID_COUNT" -gt 1 ]; then
-            warn "uvicorn" "$PID_COUNT processes on :8090!"
+            warn "uvicorn" "$PID_COUNT processes on :8050!"
             for p in $PIDS; do
                 CWD=$(readlink /proc/$p/cwd 2>/dev/null || echo "?")
                 info "" "PID $p → $CWD"
@@ -295,7 +295,7 @@ except ImportError:
 
 async def test():
     try:
-        async with websockets.connect('ws://127.0.0.1:8090/ws/agent/$FIRST_AGENT', close_timeout=3) as ws:
+        async with websockets.connect('ws://127.0.0.1:8050/ws/agent/$FIRST_AGENT', close_timeout=3) as ws:
             msg = await asyncio.wait_for(ws.recv(), timeout=5)
             import json
             data = json.loads(msg)
@@ -349,7 +349,7 @@ except ImportError:
 
 async def test():
     try:
-        async with websockets.connect('ws://127.0.0.1:8090/ws/status', close_timeout=3) as ws:
+        async with websockets.connect('ws://127.0.0.1:8050/ws/status', close_timeout=3) as ws:
             msg = await asyncio.wait_for(ws.recv(), timeout=20)
             import json
             data = json.loads(msg)
@@ -379,7 +379,7 @@ asyncio.run(test())
     # ── 6. Reverse Proxy ──
     header "6. Reverse Proxy"
 
-    # Detect what's in front of :8090
+    # Detect what's in front of :8050
     for PORT in 443 80; do
         if lsof -i :$PORT &>/dev/null 2>&1 || sudo lsof -i :$PORT &>/dev/null 2>&1; then
             PROC=$(sudo lsof -i :$PORT 2>/dev/null | awk 'NR==2{print $1}' || echo "?")
@@ -389,9 +389,9 @@ asyncio.run(test())
             # Test HTTP through proxy
             PROXY_STATUS=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 5 "$PROXY_URL/api/health" 2>/dev/null)
             if [ "$PROXY_STATUS" = "200" ]; then
-                ok ":$PORT ($PROC)" "HTTP → :8090 OK"
+                ok ":$PORT ($PROC)" "HTTP → :8050 OK"
             else
-                warn ":$PORT ($PROC)" "HTTP → $PROXY_STATUS (may not proxy to :8090)"
+                warn ":$PORT ($PROC)" "HTTP → $PROXY_STATUS (may not proxy to :8050)"
                 WARNINGS=$((WARNINGS + 1))
             fi
 
@@ -434,7 +434,7 @@ asyncio.run(test())
     # Check if nothing on 80/443
     if ! (lsof -i :80 &>/dev/null 2>&1 || sudo lsof -i :80 &>/dev/null 2>&1 || \
           lsof -i :443 &>/dev/null 2>&1 || sudo lsof -i :443 &>/dev/null 2>&1); then
-        info "proxy" "no proxy on :80 or :443 (direct access to :8090 only)"
+        info "proxy" "no proxy on :80 or :443 (direct access to :8050 only)"
     fi
 
     # ── 7. Tmux agents ──
