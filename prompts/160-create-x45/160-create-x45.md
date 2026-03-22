@@ -374,10 +374,10 @@ for id in {ID}-1{XX} {ID}-{ID} {ID}-5{XX} {ID}-7{XX} {ID}-8{XX} {ID}-9{XX}; do
   ln -s ../AGENT.md ${id}.md
 done
 
-# Model + Login (Master+Dev=opus, reste=sonnet)
+# Model + Login (Master+Dev+Observer=opus, Curator+Coach+Architect=sonnet)
 ln -s ../opus-4-6.model {ID}-1{XX}.model
 ln -s ../opus-4-6.model {ID}-{ID}.model
-ln -s ../sonnet-4-6.model {ID}-5{XX}.model
+ln -s ../opus-4-6.model {ID}-5{XX}.model
 ln -s ../sonnet-4-6.model {ID}-7{XX}.model
 ln -s ../sonnet-4-6.model {ID}-8{XX}.model
 ln -s ../sonnet-4-6.model {ID}-9{XX}.model
@@ -400,6 +400,21 @@ mkdir -p pipeline/{ID}-output
 
 ---
 
+## PHASE 4.5 — CRONTAB MASTER
+
+Creer un crontab pour le Master ({ID}-1{XX}) qui s'execute toutes les 10 minutes :
+
+```bash
+cat > crontab/{ID}-1{XX}_10.prompt << 'EOF'
+tu es quel agent ? qui son tes slaves ? quel est leur etat ? est-ce que tous les jobs de tes slaves sont terminés ? est-ce que toi tu as terminé ? tout le plan est déjà executé ? si oui, bravo, on arrete là. si non, il faut avancer l'execution.
+EOF
+```
+
+Convention de nommage : `{AGENT_ID}_{INTERVAL_MIN}.prompt`
+- Exemple : `300-100_10.prompt` = agent 300-100, toutes les 10 minutes
+
+---
+
 ## PHASE 5 — VERIFICATION
 
 ```bash
@@ -415,6 +430,9 @@ echo "methodology.md:" && ls prompts/{ID}-{nom}/*-methodology.md | wc -l  # 2-6
 echo "TODO:" && find {repertoire_projet}/plan-TODO -name "*.md" | wc -l
 echo "DOING:" && find {repertoire_projet}/plan-DOING -name "*.md" | wc -l
 echo "DONE:" && find {repertoire_projet}/plan-DONE -name "*.md" | wc -l
+
+# Crontab
+echo "Crontab:" && cat crontab/{ID}-1{XX}_10.prompt
 ```
 
 ---

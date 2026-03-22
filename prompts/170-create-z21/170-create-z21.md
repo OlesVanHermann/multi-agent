@@ -211,7 +211,20 @@ Pour chaque sous-repertoire :
   - "Checklist pre-commit" (colonnes DB, JSONB params, auth, membership, sender, wc -l, git commit)
   - "Tests" (commande exacte avec `cd` + `grep` filter)
 
-### 3.6 Poser les symlinks
+### 3.6 Creer le crontab du Master
+
+Creer le fichier `crontab/{ID}-1{XX}_10.prompt` (nudge toutes les 10 minutes) :
+
+```bash
+mkdir -p crontab
+cat > crontab/{ID}-1{XX}_10.prompt << 'EOF'
+tu es quel agent ? qui son tes slaves ? quel est leur etat ? est-ce que tous les jobs de tes slaves sont terminés ? est-ce que toi tu as terminé ? tout le plan est déjà executé ? si oui, bravo, on arrete là. si non, il faut avancer l'execution.
+EOF
+```
+
+Ce crontab est injecte automatiquement toutes les 10 minutes dans l'inbox du Master pour relancer le cycle si des taches sont en attente.
+
+### 3.7 Poser les symlinks
 
 ```bash
 cd prompts/{ID}-{nom}
@@ -224,10 +237,10 @@ for id in {ID}-1{XX} {ID}-{ID} {ID}-5{XX} {ID}-7{XX} {ID}-8{XX} {ID}-9{XX}; do
   ln -s ../AGENT.md ${id}.md
 done
 
-# Model + Login (Master+Dev=opus, reste=sonnet)
+# Model (Master+Dev+Tester=opus, Reviewer+Coach+Architect=sonnet)
 ln -s ../opus-4-6.model {ID}-1{XX}.model
 ln -s ../opus-4-6.model {ID}-{ID}.model
-ln -s ../sonnet-4-6.model {ID}-5{XX}.model
+ln -s ../opus-4-6.model {ID}-5{XX}.model
 ln -s ../sonnet-4-6.model {ID}-7{XX}.model
 ln -s ../sonnet-4-6.model {ID}-8{XX}.model
 ln -s ../sonnet-4-6.model {ID}-9{XX}.model
