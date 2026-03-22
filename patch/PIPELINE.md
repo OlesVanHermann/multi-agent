@@ -1,0 +1,424 @@
+# Pipeline Git Multi-Agent : Mac → hub → GitHub
+
+## Architecture
+
+```
+┌─────────────────────┐    ┌─────────────────────┐
+│ MAC 1 (client)         │    │ MAC 2 (client-2)     │
+│                     │    │                     │
+│ ~/multi-agent/      │    │ ~/multi-agent/      │
+│   (working copy)    │    │   (working copy)    │
+│                     │    │                     │
+│ ~/multi-agent-git/  │    │ ~/multi-agent-git/  │
+│   (repo git clean)  │    │   (repo git clean)  │
+└────────┬────────────┘    └────────┬────────────┘
+         │ git push hub              │ git push hub
+         │ patch/projet/fix-xxx      │ patch/projet/fix-yyy
+         ▼                           ▼
+┌──────────────────────────────────────────────────────────┐
+│ HUB (ubuntu@hub.example.com)                              │
+│                                                           │
+│ /home/ubuntu/multi-agent.git       ← BARE REPO (réception│
+│   hooks/post-receive → push.log      des patches)        │
+│   auto-fetch dans working repo                            │
+│                                                           │
+│ /home/ubuntu/multi-agent/          ← WORKING REPO        │
+│   remote hub    = multi-agent.git (local)                 │
+│   remote origin = github.com (SSH)                        │
+│   → triage des patches (humain)                           │
+│   → cherry-pick sélectif (pas de merge aveugle)           │
+│   → préparation des releases                              │
+│   → push vers GitHub (humain avec passphrase SSH)         │
+│                                                           │
+│ /home/ubuntu/multi-agent-inception/ ← TEST BROKER         │
+│   MA_PREFIX=mi (isolé)                                    │
+│   Dashboard :8050 — Keycloak :8080 requis (pas de        │
+│   fallback SIMPLE_AUTH)                                    │
+│   rsync depuis multi-agent/ après chaque release          │
+└────────────────────┬─────────────────────────────────────┘
+                     │ git push origin main --tags
+                     │ (humain avec passphrase SSH)
+                     ▼
+          github.com/YOUR-NAME/multi-agent
+```
+
+---
+
+## Répertoires par machine
+
+### Mac 1 / Mac 2
+
+| Répertoire | Rôle |
+|-----------|------|
+| `~/multi-agent/` | Working copy avec le projet en cours (on code ici) |
+| `~/multi-agent-git/` | Clone git clean pour pousser les patches vers hub |
+| `~/multi-agent/scripts/sync-to-git.sh` | Script qui sync `~/multi-agent/` → `~/multi-agent-git/` et push |
+
+### hub (serveur central)
+
+| Répertoire | Rôle |
+|-----------|------|
+| `/home/ubuntu/multi-agent.git` | Bare repo — point d'arrivée des patches (SSH) |
+| `/home/ubuntu/multi-agent/` | **Working repo principal** — merge, release, push GitHub |
+| `/home/ubuntu/multi-agent-inception/` | Copie de test — rsync après chaque release |
+
+---
+
+## Pipeline complet
+
+### Étape 1 : Mac — Créer et pousser un patch
+
+```bash
+# Sur le Mac, dans ~/multi-agent/ (là où on code)
+cd ~/multi-agent
+
+# 1. Générer les checksums MD5 (vérification d'intégrité du sync)
+git ls-files docs examples scripts web \
+  | xargs md5 > file.md5
+# IMPORTANT: utiliser git ls-files (respecte .gitignore)
+# PAS find (inclut node_modules/, dist/, __pycache__/)
+
+# 2. Sync + push le patch (file.md5 est inclus automatiquement)
+./scripts/sync-to-git.sh "description-du-fix"
+```
+
+**Setup initial (une fois par Mac) :**
+```bash
+git clone https://github.com/YOUR-NAME/multi-agent.git ~/multi-agent-git
+cd ~/multi-agent-git
+git remote add hub ubuntu@hub.example.com:/home/ubuntu/multi-agent.git
+```
+
+---
+
+### Étape 2 : hub — Réception automatique
+
+Quand un `git push hub` arrive sur le bare repo, le hook `post-receive` :
+1. Log dans `/home/ubuntu/multi-agent.git/push.log`
+2. `git fetch hub` dans `/home/ubuntu/multi-agent/` (async)
+
+La branche `hub/patch/NOM_PROJET/description` apparaît automatiquement dans le working repo.
+
+---
+
+### Étape 3 : hub — Triage et cherry-pick des patches
+
+**IMPORTANT : Ne JAMAIS cherry-pick aveuglément. Toujours inspecter d'abord.**
+
+```bash
+cd /home/ubuntu/multi-agent
+
+# Voir les patches en attente
+git fetch hub
+git ls-remote hub 'refs/heads/patch/*'
+
+# Inspecter un patch AVANT de l'appliquer
+git diff --stat main..hub/patch/NOM_PROJET/description
+# ⚠️ SIGNAUX D'ALERTE d'un sync cassé :
+#   - Des milliers de suppressions (-32000 lines)
+#   - Des fichiers supprimés qui ne devraient pas l'être
+#   - file.md5 avec 2000+ lignes (inclut node_modules/dist)
+
+# Voir le vrai changement (exclure le bruit)
+git diff --stat main..hub/patch/NOM_PROJET/description \
+  -- ':!file.md5' ':!framework.md5' ':!scripts/good_start_prompt.md' ':!.gitignore'
+
+# Voir le diff d'un fichier spécifique
+git diff main..hub/patch/NOM_PROJET/description -- chemin/vers/fichier.py
+```
+
+**Appliquer un patch propre :**
+```bash
+# Cherry-pick sans commit (pour inspecter)
+git cherry-pick --no-commit hub/patch/NOM_PROJET/description
+
+# Retirer le bruit (file.md5, framework.md5, etc.)
+git reset HEAD file.md5 framework.md5 scripts/good_start_prompt.md .gitignore 2>/dev/null
+git checkout -- .gitignore 2>/dev/null
+
+# Vérifier ce qui reste (seulement les vrais changements)
+git diff --cached --stat
+
+# Commit
+git commit -m "feat: description du changement"
+```
+
+**Appliquer un fichier spécifique depuis un patch cassé :**
+```bash
+# Quand le sync est cassé mais un fichier est bon
+git show hub/patch/NOM_PROJET/description:chemin/vers/fichier.py > chemin/vers/fichier.py
+git add chemin/vers/fichier.py
+git commit -m "fix: description"
+```
+
+**Vérification MD5 (si file.md5 est propre) :**
+```bash
+# Convertir format BSD → GNU et vérifier
+sed 's/^MD5 (\(.*\)) = \(.*\)$/\2  \1/' file.md5 | md5sum -c | grep -v ': OK$'
+# Si des fichiers échouent → le sync était cassé
+```
+
+**Nettoyer après intégration :**
+```bash
+git push hub --delete patch/NOM_PROJET/description
+```
+
+---
+
+### Étape 4 : hub — Release
+
+```bash
+cd /home/ubuntu/multi-agent
+
+# Tag la release
+git tag -a vX.Y.Z -m "vX.Y.Z - Description"
+
+# Push sur hub
+git push hub main --tags
+
+# Mettre à jour inception
+rsync -av --exclude='__pycache__/' --exclude='node_modules/' \
+  --exclude='dist/' --exclude='.pytest_cache/' --exclude='venv/' \
+  --exclude='*.pyc' --exclude='dump.rdb' \
+  scripts/ /home/ubuntu/multi-agent-inception/scripts/
+# (répéter pour web/ docs/ etc.)
+# Ou copier les fichiers modifiés individuellement :
+cp scripts/fichier.sh /home/ubuntu/multi-agent-inception/scripts/
+
+# L'humain pousse sur GitHub (nécessite passphrase SSH)
+git push origin main --tags
+```
+
+---
+
+### Étape 5 : Mac — Récupérer la release
+
+```bash
+cd ~/multi-agent-git
+git pull hub main --rebase
+```
+
+---
+
+## Remotes
+
+### Sur les Mac
+
+| Remote | URL | Usage |
+|--------|-----|-------|
+| `hub` | `ubuntu@hub.example.com:/home/ubuntu/multi-agent.git` | Push patches |
+| `origin` | `github.com/YOUR-NAME/multi-agent.git` | Pull releases |
+
+### Sur hub (`/home/ubuntu/multi-agent/`)
+
+| Remote | URL | Usage |
+|--------|-----|-------|
+| `hub` | `/home/ubuntu/multi-agent.git` (local bare repo) | Recevoir les patches |
+| `origin` | `git@github.com:YOUR-NAME/multi-agent.git` | Push releases (humain + passphrase) |
+
+---
+
+## Convention de nommage des branches patch
+
+```
+patch/{NOM_PROJET}/{description}
+
+Exemples :
+  patch/onlyoffice/fix-timeout
+  patch/inception/add-ma-prefix
+  patch/project/sync-chrome-bridge
+```
+
+---
+
+## Règles pour Claude Code (preparation des patches)
+
+Quand l'utilisateur demande de pousser un patch :
+
+1. **Copier les fichiers modifies** dans `~/multi-agent-git/` (seulement les vrais changements, pas le bruit)
+2. **Creer la branche + commit** soi-meme avec les outils Bash :
+   ```bash
+   cd ~/multi-agent-git && git checkout -B patch/project/<slug> main && git add -A && git commit -m "<message>"
+   ```
+3. **Donner a l'utilisateur UNE SEULE commande a taper** (il a la clef SSH, pas toi) :
+   ```
+   cd ~/multi-agent-git && git push hub patch/project/<slug>
+   ```
+
+Ne PAS :
+- Demander a l'utilisateur de creer la branche ou commiter — c'est TON job
+- Donner une longue chaine de commandes — l'utilisateur veut juste le `git push`
+- Expliquer le process — juste faire et donner la commande finale
+
+---
+
+## Règles pour les agents Mac
+
+1. **Ne JAMAIS pousser directement sur `main`** — toujours via une branche `patch/`
+2. **Ne JAMAIS modifier `~/multi-agent-git/` manuellement** — utiliser `./scripts/sync-to-git.sh`
+3. **Un patch = un sujet** — ne pas mélanger des fixes différents
+4. **Description courte en slug** : `fix-timeout`, `add-prefix`, `update-bridge`
+5. **Après le push** : hub reçoit automatiquement, pas besoin de notifier
+6. **Ne JAMAIS exécuter de commandes SSH sur hub** — les agents Mac poussent des patches, c'est tout
+7. **Ne JAMAIS créer son propre sync-to-git.sh** — utiliser `./scripts/sync-to-git.sh` du repo
+8. **Ne JAMAIS cherry-pick ou release sur hub via SSH** — c'est le rôle de l'opérateur hub
+9. **Générer file.md5 avec `git ls-files | xargs md5`** — PAS avec `find` (inclut le junk)
+10. **Auteur git = YOUR-NAME** — jamais Claude/claude comme auteur
+
+---
+
+## Règles pour l'opérateur hub
+
+1. **Toujours inspecter un patch avant cherry-pick** — `git diff --stat` d'abord
+2. **Exclure le bruit** des patches : `file.md5`, `framework.md5`, `good_start_prompt.md`, `.gitignore`
+3. **Cherry-pick --no-commit** puis nettoyer le staged avant de commiter
+4. **Un sync cassé se reconnaît à** : suppressions massives, milliers de fichiers changés, file.md5 > 200 lignes
+5. **Si un patch est cassé** : extraire seulement les fichiers utiles avec `git show branch:path > path`
+6. **Après chaque release** : copier les fichiers modifiés dans `-inception/`
+7. **Push GitHub = humain** (passphrase SSH requise, pas automatisable)
+8. **Supprimer les branches patch** après intégration : `git push hub --delete patch/...`
+9. **Comparer les file.md5** de plusieurs Macs avec un script Python pour trouver les vrais changements
+10. **Auteur des commits = YOUR-NAME** — nettoyer si un agent a commité avec son propre nom
+
+---
+
+## Problèmes connus et solutions
+
+### Sync cassé (agent crée son propre sync-to-git.sh)
+
+**Symptôme** : Patch avec des milliers de suppressions, arborescence aplatie.
+**Cause** : L'agent a créé un script `~/sync-to-git.sh` maison au lieu d'utiliser `./scripts/sync-to-git.sh`.
+**Solution** : Rejeter le patch entier. Dire à l'agent d'utiliser le bon script.
+
+### file.md5 avec 2000+ lignes
+
+**Symptôme** : `file.md5` contient `node_modules/`, `dist/`, `__pycache__/`.
+**Cause** : Généré avec `find` au lieu de `git ls-files`.
+**Solution** : Régénérer avec `git ls-files ... | xargs md5 > file.md5`.
+
+### Agent pousse directement sur hub/main
+
+**Symptôme** : Nouveaux commits sur `hub/main` sans branche patch.
+**Cause** : L'agent a poussé sur main au lieu de créer une branche `patch/`.
+**Solution** : Inspecter les commits, garder les bons, reset si nécessaire.
+
+### Agent exécute des commandes SSH sur hub
+
+**Symptôme** : Cherry-pick, `rm -rf`, release, tag créés depuis le Mac via SSH.
+**Cause** : L'agent contourne le pipeline et opère directement sur hub.
+**Solution** : `git reset --hard` au dernier bon commit. Supprimer les tags bogus. Rappeler la règle 6.
+
+### Bruit dans les patches
+
+**Symptôme** : Chaque patch inclut `file.md5`, `framework.md5`, `good_start_prompt.md`, diff `.gitignore`.
+**Cause** : Ces fichiers existent dans le working copy du Mac mais pas sur hub.
+**Solution** : Après `cherry-pick --no-commit`, toujours faire `git reset HEAD` sur ces fichiers.
+
+### Auteur Claude dans les commits
+
+**Symptôme** : `git log` montre `Claude <claude@Claude1.local>` comme auteur.
+**Cause** : Le Mac n'a pas configuré `user.name`/`user.email` correctement.
+**Solution** : Sur le Mac :
+```bash
+git config --global user.name "YOUR-NAME"
+git config --global user.email "user@example.com"
+```
+Pour nettoyer l'historique existant : `git checkout --orphan fresh && git add -A && git commit` avec le bon auteur.
+
+---
+
+## Infrastructure (hub)
+
+### Ports
+
+| Port | Service | Requis |
+|------|---------|--------|
+| **8050** | Dashboard (uvicorn) | Oui |
+| **8080** | Keycloak (Docker) | Oui — pas de fallback, 503 si down |
+| **6379** | Redis | Oui |
+| **9222** | CDP Bridge (Chrome) | Optionnel |
+| **80** | Reverse proxy (`proxy.sh`) | Optionnel |
+
+### Keycloak
+
+Keycloak est **obligatoire** pour l'authentification. Il n'y a plus de fallback SIMPLE_AUTH.
+Si Keycloak est down, le login retourne 503.
+
+```bash
+# Installer Keycloak (Docker auto-installé si absent)
+./setup/install_keycloak.sh
+
+# Changer un mot de passe utilisateur
+./setup/keycloak_passwd_modify.sh admin nouveau-mdp
+
+# Vérifier que Keycloak est up
+curl -s http://localhost:8080/health/ready
+```
+
+Données utilisateurs stockées dans le **volume Docker `ma-keycloak-data`** — un `git pull` ou upgrade ne les écrase pas.
+
+### Token refresh
+
+Le frontend gère automatiquement :
+- Check expiration JWT au chargement (token expiré → tente refresh, sinon logout)
+- Auto-refresh 60s avant expiration via `refresh_token`
+- Keycloak 503 → retry 30s en arrière-plan
+
+---
+
+## Scripts
+
+| Script | Machine | Répertoire | Rôle |
+|--------|---------|-----------|------|
+| `scripts/sync-to-git.sh` | Mac | `~/multi-agent/` | Sync framework → `~/multi-agent-git/` + push patch |
+| `patch/hub-receive.sh` | hub | `/home/ubuntu/multi-agent/` | Lister les patches en attente |
+| `patch/hub-cherry-pick.sh` | hub | `/home/ubuntu/multi-agent/` | Cherry-pick un patch dans main |
+| `patch/hub-release.sh` | hub | `/home/ubuntu/multi-agent/` | Tests + tag + push GitHub |
+| `hooks/post-receive` | hub | `/home/ubuntu/multi-agent.git/` | Log + auto-fetch à la réception |
+| `setup/install_keycloak.sh` | hub/Mac | `~/multi-agent/` | Installe Docker + Keycloak (Mac/Ubuntu) |
+| `setup/keycloak_user_create.sh` | hub/Mac | `~/multi-agent/` | Créer un utilisateur Keycloak via API |
+
+---
+
+## Flux complet (exemple)
+
+```
+1. Mac1 : développeur corrige un bug dans web/backend/server.py
+
+2. Mac1 : cd ~/multi-agent
+         git ls-files docs examples scripts web \
+           | xargs md5 > file.md5
+         ./scripts/sync-to-git.sh "fix-websocket-timeout"
+   → crée patch/project/fix-websocket-timeout
+   → push sur le bare repo hub
+
+3. hub : post-receive hook log + fetch
+   → hub/patch/project/fix-websocket-timeout visible
+
+4. hub : inspecter le patch
+         git diff --stat main..hub/patch/project/fix-websocket-timeout
+   ⚠️ Si >1000 lignes de suppressions → sync cassé → rejeter
+
+5. hub : cherry-pick sélectif
+         git cherry-pick --no-commit hub/patch/project/fix-websocket-timeout
+         git reset HEAD file.md5 framework.md5 2>/dev/null
+         git diff --cached --stat   # vérifier
+         git commit -m "fix: websocket timeout"
+
+6. hub : tag + push hub
+         git tag -a v2.5.1 -m "v2.5.1"
+         git push hub main --tags
+
+7. hub : mettre à jour inception (fichiers modifiés + frontend build)
+         cp web/backend/server.py /home/ubuntu/multi-agent-inception/web/backend/
+         cd web/frontend && npm run build
+         cp -r dist/* /home/ubuntu/multi-agent-inception/web/frontend/dist/
+
+8. hub : nettoyer la branche patch
+         git push hub --delete patch/project/fix-websocket-timeout
+
+9. humain : git push origin main --tags   (passphrase SSH)
+
+10. Mac1 : cd ~/multi-agent-git && git pull hub main --rebase
+    → récupère la release
+```
