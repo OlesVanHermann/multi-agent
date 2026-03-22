@@ -14,8 +14,8 @@ git clone https://github.com/YOUR-ORG/multi-agent.git ~/multi-agent
 cd ~/multi-agent
 
 # Configurer les secrets
-cp setup/secrets.cfg scripts/.env
-# Éditer scripts/.env avec les vraies valeurs
+cp setup/secrets.cfg scripts/secrets.cfg
+# Éditer scripts/secrets.cfg avec les vraies valeurs
 ```
 
 ## 2. Répertoire git (pour les patches)

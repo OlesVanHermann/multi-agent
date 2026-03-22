@@ -29,7 +29,7 @@ Agent bridges :9100-10010 (127.0.0.1 only, HEALTH_TOKEN)
 - **Port** : 127.0.0.1:8080
 - **Realm** : `multi-agent`
 - **Client** : `multi-agent-web` (public, direct access grants)
-- **Admin credentials** : `scripts/.env` → `KEYCLOAK_ADMIN_PASSWORD`
+- **Admin credentials** : `scripts/secrets.cfg` → `KEYCLOAK_ADMIN_PASSWORD`
 - **Mode** : production (`start`, not `start-dev`)
 
 ### Users
@@ -47,7 +47,7 @@ Agent bridges :9100-10010 (127.0.0.1 only, HEALTH_TOKEN)
 ./setup/keycloak_user_delete.sh <username>                   # Delete user
 ```
 
-Scripts read credentials from `scripts/.env` automatically.
+Scripts read credentials from `scripts/secrets.cfg` automatically.
 
 ## Dashboard API Auth
 
@@ -142,7 +142,7 @@ Applied by middleware on every response:
 
 - **Instance** : `ma-redis` Docker container
 - **Port** : 127.0.0.1:6379 (local only)
-- **Auth** : `requirepass` (password in `scripts/.env` → `REDIS_PASSWORD`)
+- **Auth** : `requirepass` (password in `scripts/secrets.cfg` → `REDIS_PASSWORD`)
 - **Prefix** : `A:` for all multi-agent keys
 
 ## Agent Bridge Health Endpoints

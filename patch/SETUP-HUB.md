@@ -57,9 +57,9 @@ git config user.email "you@example.com"
 ## 3. Secrets
 
 ```bash
-cp setup/secrets.cfg scripts/.env
-# Éditer .env avec les vraies valeurs
-nano scripts/.env
+cp setup/secrets.cfg scripts/secrets.cfg
+# Éditer secrets.cfg avec les vraies valeurs
+nano scripts/secrets.cfg
 ```
 
 ## 4. Infrastructure (Docker + Keycloak + Redis)
@@ -89,9 +89,9 @@ rsync -av --exclude='__pycache__/' --exclude='node_modules/' \
   /home/ubuntu/multi-agent/ /home/ubuntu/multi-agent-inception/
 
 cd /home/ubuntu/multi-agent-inception
-cp setup/secrets.cfg scripts/.env
-# Éditer .env — changer les ports si besoin
-nano scripts/.env
+cp setup/secrets.cfg scripts/secrets.cfg
+# Éditer secrets.cfg — changer les ports si besoin
+nano scripts/secrets.cfg
 
 # Démarrer avec un prefix différent pour isoler
 MA_PREFIX=mi ./scripts/infra.sh start
