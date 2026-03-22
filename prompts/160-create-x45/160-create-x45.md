@@ -7,6 +7,13 @@
 - **Type** : mono
 - **Role** : Creer un triangle x45 complet a partir d'un ID, un nom et un repertoire projet
 
+## References additionnelles
+
+Avant de commencer, lire ces fichiers dans le meme repertoire :
+- `160-plan-structure.md` — Comment organiser plan-TODO/DOING/DONE (categories, nommage, arborescence)
+- `160-spec-template.md` — Template standard pour ecrire les specs des taches
+- `160-plan-from-source.md` — Methodologie pour deriver un plan depuis la documentation source
+
 ## Quand tu es appele
 
 L'utilisateur ou le Master 100 t'envoie :
@@ -14,12 +21,76 @@ L'utilisateur ou le Master 100 t'envoie :
 CREER x45 {ID}-{nom} pour {description} dans {repertoire_projet}
 ```
 
-Exemple : `CREER x45 357-backend-api pour le service API principale dans ~/myproject/`
+Exemple : `CREER x45 357-backend-api pour le service API principale dans plans/train-model/`
 
-Le repertoire projet contient deja (ou contiendra) :
+Le `{repertoire_projet}` est relatif a `$BASE` (racine multi-agent).
+Convention : `plans/{nom-projet}/` (ex: `plans/train-model/`, `plans/mail/`, `plans/visio/`)
+
+### Deux cas possibles
+
+**Cas 1 : Le plan existe deja**
+`{repertoire_projet}` contient deja :
 - `plan-TODO/` avec les specs des features a developper
 - `plan-DOING/` (vide au debut)
 - `plan-DONE/` (vide au debut)
+→ Passer directement a la **PHASE 1**
+
+**Cas 2 : Le plan n'existe PAS encore**
+`{repertoire_projet}` contient de la documentation source (CAHIER_DES_CHARGES.md, RECAP.md, README.md, docs/, etc.) mais pas de plan-TODO/.
+→ Executer la **PHASE 0** d'abord pour creer le plan
+
+---
+
+## PHASE 0 — CREATION DU PLAN (si plan-TODO/ n'existe pas)
+
+**Condition** : `plan-TODO/` n'existe pas dans `{repertoire_projet}`
+
+Suivre la methodologie de `160-plan-from-source.md` :
+
+### 0.1 Collecter les sources
+Lire dans `{repertoire_projet}` :
+- CAHIER_DES_CHARGES.md ou equivalent
+- RECAP.md (etat des lieux)
+- README.md / README-pipeline.md (architecture)
+- docs/*.md (documentation technique)
+- Code existant (pour savoir ce qui est deja fait)
+
+### 0.2 Categoriser
+Identifier les grandes phases/domaines → lettres A, B, C...
+Voir `160-plan-structure.md` pour les conventions.
+
+### 0.3 Decouper en taches
+Pour chaque section du cahier des charges :
+- 1 tache = 1 objectif verifiable
+- Granularite : 15 min - 12h de travail agent
+- Numerotation sequentielle globale
+
+### 0.4 Generer l'arborescence
+```bash
+# Creer les categories
+for cat in A-{cat1} B-{cat2} C-{cat3} ...; do
+  mkdir -p {repertoire_projet}/plan-TODO/$cat
+  mkdir -p {repertoire_projet}/plan-DOING/$cat
+  mkdir -p {repertoire_projet}/plan-DONE/$cat
+done
+
+# Pour chaque tache
+mkdir -p {repertoire_projet}/plan-TODO/{categorie}/{NN}-{nom}/sources
+mkdir -p {repertoire_projet}/plan-TODO/{categorie}/{NN}-{nom}/bilans
+mkdir -p {repertoire_projet}/plan-TODO/{categorie}/{NN}-{nom}/output
+```
+
+### 0.5 Ecrire les specs
+Pour chaque tache, ecrire `{NN}-{nom}.md` en suivant `160-spec-template.md`.
+Copier les sources pertinentes dans `sources/`.
+
+### 0.6 Verification du plan
+```bash
+echo "Categories:" && ls {repertoire_projet}/plan-TODO/
+echo "Taches:" && find {repertoire_projet}/plan-TODO -name "*.md" -not -path "*/sources/*" | wc -l
+echo "DOING miroir:" && ls {repertoire_projet}/plan-DOING/
+echo "DONE miroir:" && ls {repertoire_projet}/plan-DONE/
+```
 
 ---
 
