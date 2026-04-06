@@ -54,7 +54,7 @@ if [[ "$pane_cmd" == "claude" || "$pane_cmd" == "node" ]]; then claude_alive=1; 
 busy=0; has_bashes=0; has_down=0; plan_mode=0; compacted=0; ctx=-1
 done_compacting=0; prompt_loaded=0; ctx_limit=0; api_error=0; model_change=0; waiting_approval=0
 bp_line=$(echo "$out" | grep "bypass permissions" | tail -1)
-if echo "$bp_line" | grep -q "bashes"; then has_bashes=1; fi
+if echo "$bp_line" | grep -qE "bashes|shell"; then has_bashes=1; fi
 if [ "$claude_alive" -eq 0 ]; then
     busy=0
 elif echo "$bp_line" | grep -q "esc to interrupt"; then
@@ -70,7 +70,7 @@ if echo "$out" | grep -q "Enter to select"; then waiting_approval=1; fi
 if echo "$out" | grep -qiE "compacting conversation"; then compacted=1; fi
 if echo "$out" | grep -qi "Conversation compacted"; then done_compacting=1; fi
 if [ "$done_compacting" -eq 1 ] && echo "$out" | grep -qE "prompts/[0-9]+/${{id}}[.-]|prompts/${{id}}-"; then prompt_loaded=1; fi
-pct=$(echo "$bp_line" | grep -oE "[0-9]+% until auto-compact|auto-compact: [0-9]+%" | grep -oE "[0-9]+")
+pct=$(echo "$out" | grep -oE "[0-9]+% until auto-compact|auto-compact: [0-9]+%" | grep -oE "[0-9]+" | tail -1)
 if [ -n "$pct" ]; then ctx=$pct; fi
 if echo "$out" | grep -q "Context limit reached"; then ctx_limit=1; fi
 api_err_count=$(echo "$out" | grep -c "API Error:" 2>/dev/null || echo 0)
