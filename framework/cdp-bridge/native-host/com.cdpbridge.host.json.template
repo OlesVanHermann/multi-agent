@@ -1,0 +1,9 @@
+{
+  "name": "com.cdpbridge.host",
+  "description": "CDP Bridge Native Messaging Host — HTTP server bridging Python to Chrome Extension",
+  "path": "__NATIVE_HOST_PATH__",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://__EXTENSION_ID__/"
+  ]
+}
