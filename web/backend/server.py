@@ -783,52 +783,6 @@ def _find_agent_prompt(prompts_dir: Path, agent_id: str) -> Optional[Path]:
     return None
 
 
-async def _trigger_context_clear(agent_id: str):
-    """Send /clear then 'deviens agent' when Context limit reached (agent is stuck)."""
-    debounce_key = f"{MA_PREFIX}:agent:{agent_id}:last_clear"
-    try:
-        if redis_pool:
-            last = await redis_pool.get(debounce_key)
-            if last and time.time() - float(last) < 120:
-                return  # debounce: too soon (2 min)
-            await redis_pool.set(debounce_key, str(time.time()), ex=300)
-
-        # Find prompt file
-        prompts_dir = BASE_DIR / "prompts"
-        prompt_path = _find_agent_prompt(prompts_dir, agent_id)
-        if not prompt_path:
-            print(f"[clear] No prompt file found for agent {agent_id}")
-            return
-
-        session = f"{MA_PREFIX}-agent-{agent_id}"
-        pane = f"{session}:0.0"
-
-        # Step 1: Rotate events + log clear
-        _rotate_events(agent_id)
-        _log_event(agent_id, "clear", "auto /clear triggered")
-
-        # Step 2: Send /clear
-        await _run_subprocess(["tmux", "send-keys", "-t", pane, "/clear"], text=True, timeout=5)
-        await asyncio.sleep(0.3)
-        await _run_subprocess(["tmux", "send-keys", "-t", pane, "C-m"], text=True, timeout=5)
-        print(f"[clear] Sent /clear to {agent_id}")
-
-        # Step 3: Wait for Claude to be ready
-        await asyncio.sleep(3)
-
-        # Step 4: Send deviens agent
-        cmd = f"deviens agent {prompt_path}"
-        await _run_subprocess(["tmux", "send-keys", "-t", pane, cmd], text=True, timeout=5)
-        await asyncio.sleep(0.3)
-        result = await _run_subprocess(["tmux", "send-keys", "-t", pane, "C-m"], text=True, timeout=5)
-        if result.returncode == 0:
-            _log_event(agent_id, "deviens_agent", prompt_path.name)
-            print(f"[clear] Sent /clear + 'deviens agent' to {agent_id} ({prompt_path.name})")
-        else:
-            print(f"[clear] Failed tmux send-keys for {agent_id}: {result.stderr}")
-    except Exception as e:
-        print(f"[clear] Error for {agent_id}: {e}")
-
 
 async def _trigger_prompt_reload(agent_id: str):
     """Send 'deviens agent' via tmux send-keys after compacting (1x, debounced 60s)."""
@@ -929,7 +883,6 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
             # Context limit reached OR repeated API errors — agent is STUCK, immediate /clear + reload
             if context_limit or api_error:
                 overrides[aid] = "needs_clear"
-                asyncio.ensure_future(_trigger_context_clear(aid))
                 continue
 
             if is_compacting and not done_compacting:
