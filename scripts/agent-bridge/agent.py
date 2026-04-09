@@ -699,6 +699,35 @@ class TmuxAgent:
                     self.metrics.record_error(self.agent_id, type(e).__name__, str(e))
                 response = f"[ERROR] {e}"
 
+            # API error detection — retry with backoff (max 2 retries)
+            API_ERROR_PATTERNS = [
+                'API Error: 401', 'authentication_error', 'API error',
+                'APIError', 'rate_limit', 'overloaded_error',
+            ]
+            retry_count = task.get('_retry_count', 0)
+            is_api_error = any(pat in response for pat in API_ERROR_PATTERNS)
+
+            if is_api_error and retry_count < 2:
+                self._log(f"API ERROR detected (retry {retry_count+1}/2), re-queuing prompt")
+                self._log_event("api_error_retry", f"retry={retry_count+1}")
+                try:
+                    self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", "status", "api_error_retry")
+                except Exception:
+                    pass
+                self.prompt_queue.put({
+                    'prompt': task['prompt'],
+                    'from_agent': task.get('from_agent', 'unknown'),
+                    'msg_id': task.get('msg_id', ''),
+                    '_retry_count': retry_count + 1,
+                    'source': task.get('source', 'retry')
+                })
+                with self.state_lock:
+                    self.current_task = None
+                    self.state = State.IDLE
+                self._set_redis_status()
+                time.sleep(10)
+                continue
+
             # Compaction detected — re-queue with identity + context reminder
             if response == self._COMPACTION_SENTINEL:
                 self._log(f"COMPACTION: re-queuing with identity + context reminder")
@@ -801,6 +830,28 @@ class TmuxAgent:
             # EF-003: update message counters
             self._messages_processed += 1
             self._last_message_ts = int(time.time())
+
+            # DONE/SCORE relay — detect send.sh calls in response and forward via bridge Redis
+            try:
+                done_pattern = re.compile(
+                    r'send\.sh\s+(\S+)\s+.*?FROM:' + re.escape(self.agent_id) + r'\|(DONE\b[^"\']*|SCORE\s+\d+[^"\']*)',
+                    re.IGNORECASE
+                )
+                for match in done_pattern.finditer(response):
+                    target_agent = match.group(1).strip('"\'')
+                    signal = match.group(2).strip()
+                    if target_agent != task.get('from_agent'):
+                        relay_msg = f"FROM:{self.agent_id}|{signal}"
+                        self.redis.xadd(f"{MA_PREFIX}:agent:{target_agent}:inbox", {
+                            'prompt': relay_msg,
+                            'from_agent': self.agent_id,
+                            'type': 'prompt',
+                            'timestamp': int(time.time())
+                        })
+                        self._log(f"RELAY: {signal} -> agent {target_agent}")
+                        self._log_event("done_relay", f"{signal} -> {target_agent}")
+            except Exception as e:
+                self._log(f"DONE relay error: {e}")
 
             # Notify sender if it was another agent
             from_agent = task.get('from_agent')

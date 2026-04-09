@@ -5,7 +5,7 @@
 #
 # Auto-detects sender from tmux session name (agent-100 -> from_agent=100)
 
-set -e
+# No set -e — handle errors explicitly for reliable error reporting
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$SCRIPT_DIR/.."
@@ -62,9 +62,12 @@ fi
 TIMESTAMP=$(date +%s)
 
 # Envoyer via Redis Streams (nouveau format)
-$REDIS_CLI XADD "${MA_PREFIX}:agent:${TO_AGENT}:inbox" '*' \
+if ! $REDIS_CLI XADD "${MA_PREFIX}:agent:${TO_AGENT}:inbox" '*' \
     prompt "$MESSAGE" \
     from_agent "$FROM_AGENT" \
-    timestamp "$TIMESTAMP" > /dev/null
+    timestamp "$TIMESTAMP" > /dev/null 2>&1; then
+    echo "[send.sh] ERROR: Failed to send to agent $TO_AGENT (REDIS_CLI=$REDIS_CLI)" >&2
+    exit 1
+fi
 
 echo "Sent to agent $TO_AGENT: ${MESSAGE:0:60}..."

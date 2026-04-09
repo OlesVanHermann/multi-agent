@@ -33,6 +33,34 @@ else
 fi
 export REDIS_CLI
 
+# Validate REDIS_CLI works — if not, try docker fallback
+_redis_validate() {
+    $REDIS_CLI PING 2>/dev/null | grep -q PONG
+}
+
+if ! _redis_validate; then
+    # Current method failed, try docker fallback
+    _DOCKER="docker"
+    if ! docker info &>/dev/null 2>&1 && sudo docker info &>/dev/null 2>&1; then
+        _DOCKER="sudo docker"
+    fi
+    if [ -n "${REDIS_PASSWORD:-}" ]; then
+        REDIS_CLI="$_DOCKER exec ma-redis redis-cli --no-auth-warning -a $REDIS_PASSWORD"
+    else
+        REDIS_CLI="$_DOCKER exec ma-redis redis-cli"
+    fi
+    export REDIS_CLI
+
+    if ! _redis_validate; then
+        echo "[redis.sh] WARNING: No working Redis CLI found" >&2
+        export REDIS_CLI_VALID=false
+    else
+        export REDIS_CLI_VALID=true
+    fi
+else
+    export REDIS_CLI_VALID=true
+fi
+
 # If called directly (not sourced), execute the command
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     exec $REDIS_CLI "$@"
