@@ -139,6 +139,32 @@ export function AuthProvider({ children }) {
     }
   }, [])
 
+  // Refresh token when tab becomes visible / network returns / window focused
+  // (protects against macOS sleep breaking the scheduled setTimeout)
+  useEffect(() => {
+    const handleWake = () => {
+      const stored = localStorage.getItem('access_token')
+      if (!stored) return
+      if (isTokenExpired(stored) || tokenExpiresInSec(stored) < 30) {
+        refreshAccessToken()
+      }
+    }
+
+    const handleVisibility = () => {
+      if (!document.hidden) handleWake()
+    }
+
+    document.addEventListener('visibilitychange', handleVisibility)
+    window.addEventListener('online', handleWake)
+    window.addEventListener('focus', handleWake)
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility)
+      window.removeEventListener('online', handleWake)
+      window.removeEventListener('focus', handleWake)
+    }
+  }, [refreshAccessToken])
+
   const login = async (username, password) => {
     setError(null)
     setLoading(true)
