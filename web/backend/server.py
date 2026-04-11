@@ -178,7 +178,8 @@ async def _refresh_cache_once():
             'if echo "$out" | grep -q "Enter to select"; then waiting_approval=1; fi; '
             'if echo "$out" | grep -qiE "compacting conversation"; then compacted=1; fi; '
             'if echo "$out" | grep -qi "Conversation compacted"; then done_compacting=1; fi; '
-            'if [ "$done_compacting" -eq 1 ] && echo "$out" | grep -qE "prompts/[0-9]+/${id}[.-]|prompts/${id}-"; then prompt_loaded=1; fi; '
+            'pid="${id%%-*}"; '
+            'if [ "$done_compacting" -eq 1 ] && echo "$out" | grep -qE "prompts/${pid}[^ ]*/${id}[.-]|prompts/${id}-"; then prompt_loaded=1; fi; '
             'pct=$(echo "$out" | grep -oE "[0-9]+% until auto-compact|auto-compact: [0-9]+%" | grep -oE "[0-9]+" | tail -1); '
             'if [ -n "$pct" ]; then ctx=$pct; fi; '
             'if echo "$out" | grep -q "Context limit reached"; then ctx_limit=1; fi; '
@@ -785,7 +786,7 @@ def _find_agent_prompt(prompts_dir: Path, agent_id: str) -> Optional[Path]:
 
 
 async def _trigger_prompt_reload(agent_id: str):
-    """Send 'deviens agent' via tmux send-keys after compacting (1x, debounced 60s)."""
+    """Send 'deviens agent' + last prompt via tmux send-keys after compacting (1x, debounced 60s)."""
     debounce_key = f"{MA_PREFIX}:agent:{agent_id}:last_reload"
     try:
         if redis_pool:
@@ -803,6 +804,18 @@ async def _trigger_prompt_reload(agent_id: str):
         session = f"{MA_PREFIX}-agent-{agent_id}"
         cmd = f"deviens agent {prompt_path}"
 
+        # Read last prompt from .history file
+        last_history = ""
+        try:
+            history_file = prompt_path.parent / f"{agent_id}.history"
+            if history_file.exists():
+                for line in reversed(history_file.read_text().strip().split('\n')):
+                    if line and line[:4].isdigit() and ' | ' in line[:25]:
+                        last_history = line
+                        break
+        except Exception:
+            pass
+
         # Send text then C-m (Enter) separately to avoid lost keystrokes
         await _run_subprocess(
             ["tmux", "send-keys", "-t", f"{session}:0.0", cmd],
@@ -818,8 +831,54 @@ async def _trigger_prompt_reload(agent_id: str):
             print(f"[reload] Sent 'deviens agent' to {agent_id} ({prompt_path.name})")
         else:
             print(f"[reload] Failed tmux send-keys for {agent_id}: {result.stderr}")
+            return
+
+        # Send context reminder after Claude finishes processing "deviens agent"
+        if last_history:
+            asyncio.ensure_future(_send_reload_context(session, agent_id, last_history))
+
     except Exception as e:
         print(f"[reload] Error for {agent_id}: {e}")
+
+
+async def _send_reload_context(session: str, agent_id: str, last_history: str):
+    """Wait for Claude to finish 'deviens agent', then send last prompt as context reminder."""
+    target = f"{session}:0.0"
+    try:
+        # Poll tmux pane for prompt marker (up to 180s)
+        for _ in range(36):
+            await asyncio.sleep(5)
+            pane = await _run_subprocess(
+                ["tmux", "capture-pane", "-t", target, "-p", "-S", "-5"],
+                text=True, timeout=5
+            )
+            if not pane.stdout:
+                continue
+            tail = pane.stdout.strip().split('\n')
+            tail3 = ' '.join(line.strip() for line in tail[-3:] if line.strip())
+            if 'bypass permissions' in tail3 or 'plan mode on' in tail3:
+                # Claude is at prompt — send context reminder
+                reminder = f'Dernière ligne de ton historique : "{last_history}"\nContinue.'
+                await _run_subprocess(
+                    ["tmux", "send-keys", "-t", target, "C-u"],
+                    text=True, timeout=5
+                )
+                await asyncio.sleep(0.3)
+                await _run_subprocess(
+                    ["tmux", "send-keys", "-t", target, "-l", reminder],
+                    text=True, timeout=5
+                )
+                await asyncio.sleep(0.3)
+                await _run_subprocess(
+                    ["tmux", "send-keys", "-t", target, "C-m"],
+                    text=True, timeout=5
+                )
+                _log_event(agent_id, "reload_context", last_history[:80])
+                print(f"[reload] Sent context reminder to {agent_id}: {last_history[:60]}...")
+                return
+        print(f"[reload] Timeout waiting for prompt on {agent_id}, context reminder skipped")
+    except Exception as e:
+        print(f"[reload] Context reminder error for {agent_id}: {e}")
 
 
 async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
@@ -951,9 +1010,10 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
                     text=True, timeout=5
                 )
                 deep_text = deep.stdout if deep and deep.stdout else ""
-                # Check for prompt path in deep capture: both flat (prompts/345-) and x45 (prompts/345/345)
+                # Check for prompt path in deep capture: both flat (prompts/345-) and x45 (prompts/380-*/380-980)
                 parent_aid = aid.split('-')[0] if '-' in aid else aid
-                if f"prompts/{parent_aid}/{aid}" in deep_text or f"prompts/{aid}-" in deep_text:
+                if (f"prompts/{aid}-" in deep_text or
+                    re.search(rf"prompts/{re.escape(parent_aid)}\S*/{re.escape(aid)}[.\-]", deep_text)):
                     clear_ids.append(aid)
                     print(f"[reload] Agent {aid}: prompt in deep capture ({int(elapsed)}s), no reload needed")
                 else:
