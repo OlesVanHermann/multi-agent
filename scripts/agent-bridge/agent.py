@@ -910,6 +910,16 @@ class TmuxAgent:
             self._log(traceback.format_exc())
         self._log("WARNING: queue_processor thread exiting")
 
+    def _resolve_triangle(self, to_agent):
+        """Auto-resolve bare suffix to full triangle ID based on sender's triangle.
+        E.g. sender=388-388, target=188 → 388-188"""
+        if '-' not in str(to_agent) and '-' in str(self.agent_id):
+            triangle = str(self.agent_id).split('-')[0]
+            resolved = f"{triangle}-{to_agent}"
+            self._log(f"WARNING: auto-resolved {to_agent} -> {resolved} (sender {self.agent_id} in triangle {triangle})")
+            return resolved
+        return to_agent
+
     def send_to_agent(self, to_agent, prompt):
         """Send message to another agent"""
         if to_agent == 'all':
@@ -928,6 +938,7 @@ class TmuxAgent:
                         sent_count += 1
             self._log(f"-> Broadcast to {sent_count} agents: {prompt[:60]}...")
         else:
+            to_agent = self._resolve_triangle(to_agent)
             self.redis.xadd(f"{MA_PREFIX}:agent:{to_agent}:inbox", {
                 'prompt': prompt,
                 'from_agent': self.agent_id,

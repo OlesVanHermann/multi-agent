@@ -61,6 +61,16 @@ fi
 
 TIMESTAMP=$(date +%s)
 
+# ── Triangle auto-resolve ──
+# If sender is in a triangle (NNN-XXX) and target is a bare suffix (YYY),
+# resolve target to NNN-YYY (same triangle as sender).
+if [[ "$FROM_AGENT" =~ ^([0-9]+)-[0-9]+$ ]] && [[ "$TO_AGENT" =~ ^[0-9]+$ ]] && [[ ! "$TO_AGENT" =~ - ]]; then
+    TRIANGLE="${BASH_REMATCH[1]}"
+    RESOLVED="${TRIANGLE}-${TO_AGENT}"
+    echo "[send.sh] WARNING: auto-resolved $TO_AGENT -> $RESOLVED (sender $FROM_AGENT is in triangle $TRIANGLE)" >&2
+    TO_AGENT="$RESOLVED"
+fi
+
 # Envoyer via Redis Streams (nouveau format)
 if ! $REDIS_CLI XADD "${MA_PREFIX}:agent:${TO_AGENT}:inbox" '*' \
     prompt "$MESSAGE" \
