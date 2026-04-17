@@ -62,9 +62,16 @@ get_triangle_ids() {
     local dir
     dir=$(find_x45_dir "$id") || return 1
     local ids=("$id")
+    # Local satellites (.md)
     for sat_link in "$dir"/${id}-[0-9][0-9][0-9].md; do
         [ -f "$sat_link" ] || continue
         ids+=("$(basename "$sat_link" .md)")
+    done
+    # Remote satellites (.remote)
+    for rf in "$dir"/${id}-[0-9][0-9][0-9].remote; do
+        [ -f "$rf" ] || continue
+        local sat_id=$(basename "$rf" .remote)
+        [[ " ${ids[*]} " == *" $sat_id "* ]] || ids+=("$sat_id")
     done
     echo "${ids[@]}"
 }
@@ -94,6 +101,48 @@ resolve_config() {
     fi
 }
 
+# ── Remote ──
+
+start_remote() {
+    local agent_id=$1
+    local agent_dir
+    agent_dir=$(find_x45_dir "$agent_id") || return 1
+    local remote_cmd="$agent_dir/remote.mosh"
+    local mosh_cmd
+    mosh_cmd=$(cat "$remote_cmd")
+
+    log_info "Remote agent $agent_id (via $(basename "$remote_cmd"))"
+
+    # Find all .remote files → list of (local_id, remote_session)
+    local count=0
+    for rf in "$agent_dir"/*.remote; do
+        [ -f "$rf" ] || continue
+        local local_id=$(basename "$rf" .remote)
+        local remote_session=$(cat "$rf" | tr -d '[:space:]')
+        local SESSION_NAME="${MA_PREFIX}-agent-${local_id}"
+
+        if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+            log_warn "$SESSION_NAME already exists, skipping"
+            continue
+        fi
+
+        log_info "  $local_id → $remote_session (remote)"
+        mkdir -p "$LOG_DIR/$local_id"
+
+        # Create local tmux session that mosh-es into remote + attaches
+        # Use large window so local tmux never constrains the remote pane
+        tmux new-session -d -s "$SESSION_NAME" -x 220 -y 50
+        tmux send-keys -t "$SESSION_NAME" "$mosh_cmd" Enter
+        sleep 2
+        tmux send-keys -t "$SESSION_NAME" "tmux attach -t $remote_session \\; set status off" Enter
+
+        count=$((count + 1))
+        log_ok "  $SESSION_NAME → $remote_session"
+    done
+
+    log_ok "Remote agent $agent_id: $count sessions attached"
+}
+
 # ── Start ──
 
 start_single() {
@@ -107,6 +156,13 @@ start_single() {
 
     if is_protected "$agent_id"; then
         log_warn "Skipping $agent_id (use ./scripts/infra.sh start for Architect)"
+        return
+    fi
+
+    # Remote agent? Delegate to start_remote
+    local agent_dir
+    if agent_dir=$(find_x45_dir "$agent_id" 2>/dev/null) && [ -f "$agent_dir/remote.mosh" ]; then
+        start_remote "$agent_id"
         return
     fi
 
@@ -190,7 +246,7 @@ start_all() {
         local dir_name=$(basename "$agent_dir")
         # Extract numeric prefix (341 from 341-analyse-archi-...)
         local agent_id="${dir_name:0:3}"
-        { [ -f "$agent_dir/${agent_id}-system.md" ] || [ -f "$agent_dir/system.md" ] || [ -f "$agent_dir/${dir_name}.md" ] || ls "$agent_dir"/${agent_id}-*-system.md &>/dev/null; } || continue
+        { [ -f "$agent_dir/${agent_id}-system.md" ] || [ -f "$agent_dir/system.md" ] || [ -f "$agent_dir/${dir_name}.md" ] || ls "$agent_dir"/${agent_id}-*-system.md &>/dev/null || [ -f "$agent_dir/remote.mosh" ]; } || continue
         is_protected "$agent_id" && continue
         # Skip duplicates (already found in flat format or verbose duplicate)
         if ! [[ " ${agents[*]} " == *" $agent_id "* ]]; then
@@ -237,6 +293,14 @@ start_all() {
         # Sequential start: launch each agent, wait for ready, configure, then next
         local agent_count=0
         for agent_id in "${batch[@]}"; do
+            # Remote agent? Handle separately (no Claude, no bridge)
+            local agent_dir_check
+            if agent_dir_check=$(find_x45_dir "$agent_id" 2>/dev/null) && [ -f "$agent_dir_check/remote.mosh" ]; then
+                start_remote "$agent_id"
+                agent_count=$((agent_count + 1))
+                continue
+            fi
+
             local SESSION="${MA_PREFIX}-agent-$agent_id"
             mkdir -p "$LOG_DIR/$agent_id"
 

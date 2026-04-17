@@ -350,8 +350,16 @@ async def _refresh_cache_once():
     if mode == "x45":
         for did, d in x45_dirs:
             tri = {"worker": f"{did}-{did}"}
+            # Scan system.md files (local) + .remote files (remote agents)
+            sat_entries = []
             for f in d.glob(f"{did}-*-system.md"):
                 suffix = f.stem.replace(f"{did}-", "", 1).replace("-system", "")
+                sat_entries.append(suffix)
+            for f in d.glob(f"{did}-*.remote"):
+                suffix = f.stem.replace(f"{did}-", "", 1)
+                if suffix not in [s for s in sat_entries]:
+                    sat_entries.append(suffix)
+            for suffix in sat_entries:
                 if not suffix or not suffix[0].isdigit():
                     continue
                 role_digit = suffix[0]
@@ -1362,6 +1370,10 @@ async def get_logins_models():
                 sm = re.match(r'^(\d{3}-\d{3})-system\.md$', sf.name)
                 if sm:
                     agent_ids.add(sm.group(1))
+                # Remote agents: .remote files (e.g. 390-190.remote)
+                rm = re.match(r'^(\d{3}-\d{3})\.remote$', sf.name)
+                if rm:
+                    agent_ids.add(rm.group(1))
         else:
             # Legacy: no agent.type — check for compound system.md files
             has_compound = any(re.match(r'^\d{3}-\d{3}-system\.md$', sf.name) for sf in f.iterdir())
