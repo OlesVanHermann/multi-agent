@@ -43,6 +43,78 @@ async def _run_subprocess(cmd, **kwargs):
         _tmux_executor, lambda: subprocess.run(cmd, **kwargs)
     )
 
+
+def _get_remote_info(agent_id: str):
+    """Return (ssh_cmd, remote_session) for remote agents, or None for local ones.
+
+    A remote agent has prompts/<dir>/<agent_id>.remote + prompts/<dir>/remote.ssh.
+    The dashboard should SSH-capture the remote tmux pane directly instead of
+    capturing the local wrapper pane (which only has ~pane_height lines).
+    """
+    prompts_dir = BASE_DIR / "prompts"
+    if not prompts_dir.is_dir():
+        return None
+    for d in prompts_dir.iterdir():
+        if not d.is_dir():
+            continue
+        remote_file = d / f"{agent_id}.remote"
+        if not remote_file.exists():
+            continue
+        ssh_file = d / "remote.ssh"
+        if not ssh_file.exists():
+            return None
+        try:
+            ssh_cmd = ssh_file.read_text().strip()
+            remote_session = remote_file.read_text().strip()
+        except Exception:
+            return None
+        if not ssh_cmd or not remote_session:
+            return None
+        return (ssh_cmd, remote_session)
+    return None
+
+
+async def _capture_agent_pane(agent_id: str, lines: int = 500, ansi: bool = False):
+    """Capture pane output for an agent, transparently handling remote agents via SSH.
+
+    For remote agents, runs tmux capture-pane on the REMOTE host via SSH so we get
+    the full scrollback, not just the local wrapper pane's visible rows.
+    Returns a subprocess.CompletedProcess-like result with .returncode and .stdout.
+    """
+    remote = _get_remote_info(agent_id)
+    if remote:
+        ssh_cmd, remote_session = remote
+        target = f"{remote_session}:0.0"
+        if ansi:
+            inner = f"tmux capture-pane -t {target} -p -e -S -20"
+        else:
+            inner = f"tmux capture-pane -t {target} -p -J -S -{lines}"
+        full = f"{ssh_cmd} -o ConnectTimeout=5 {inner!r}"
+        # shell=True so ssh_cmd string is parsed by the shell
+        return await _run_subprocess(full, shell=True, text=True)
+    else:
+        target = f"{MA_PREFIX}-agent-{agent_id}:0.0"
+        if ansi:
+            args = ["tmux", "capture-pane", "-t", target, "-p", "-e", "-S", "-20"]
+        else:
+            args = ["tmux", "capture-pane", "-t", target, "-p", "-J", "-S", f"-{lines}"]
+        return await _run_subprocess(args, text=True)
+
+
+async def _agent_session_exists(agent_id: str) -> bool:
+    """Check whether the agent's tmux session exists (locally or on remote host)."""
+    remote = _get_remote_info(agent_id)
+    if remote:
+        ssh_cmd, remote_session = remote
+        full = f"{ssh_cmd} -o ConnectTimeout=5 'tmux has-session -t {remote_session} 2>/dev/null'"
+        result = await _run_subprocess(full, shell=True)
+        return result.returncode == 0
+    else:
+        session_name = f"{MA_PREFIX}-agent-{agent_id}"
+        result = await _run_subprocess(["tmux", "has-session", "-t", session_name])
+        return result.returncode == 0
+
+
 # Frontend static files path
 FRONTEND_DIR = os.environ.get("FRONTEND_DIR", "../frontend/dist")
 
@@ -2313,26 +2385,18 @@ async def send_keys_to_agent(agent_id: str, data: SendKeys):
 
 @app.get("/api/agent/{agent_id}/output")
 async def get_agent_output(agent_id: str, lines: int = 500):
-    """Capture tmux pane output for an agent"""
-    session_name = f"{MA_PREFIX}-agent-{agent_id}"
-    target = f"{session_name}:0.0"
-
+    """Capture tmux pane output for an agent (remote-aware via SSH)."""
     try:
-        # Check if session exists
-        result = await _run_subprocess(["tmux", "has-session", "-t", session_name])
-        if result.returncode != 0:
+        # Check if session exists (remote via SSH if applicable)
+        if not await _agent_session_exists(agent_id):
             raise HTTPException(status_code=404, detail=f"Agent {agent_id} session not found")
 
         # Capture pane content (plain for display)
-        result = await _run_subprocess(
-            ["tmux", "capture-pane", "-t", target, "-p", "-J", "-S", f"-{lines}"], text=True
-        )
+        result = await _capture_agent_pane(agent_id, lines=lines, ansi=False)
         output = result.stdout.rstrip('\n ')
 
         # Capture with ANSI codes for input detection (suggestion vs typed)
-        result_ansi = await _run_subprocess(
-            ["tmux", "capture-pane", "-t", target, "-p", "-e", "-S", "-20"], text=True
-        )
+        result_ansi = await _capture_agent_pane(agent_id, ansi=True)
         current_input = _extract_current_input(result_ansi.stdout)
 
         return {
@@ -2444,17 +2508,13 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
     poll = float(websocket.query_params.get("poll", "2.0"))
     poll = max(0.5, min(poll, 10.0))  # Clamp 0.5-10s
 
-    session_name = f"{MA_PREFIX}-agent-{agent_id}"
-    target = f"{session_name}:0.0"
     last_output = ""
     last_input = ""
 
     try:
         while True:
-            # Capture pane content (plain for display)
-            result = await _run_subprocess(
-                ["tmux", "capture-pane", "-t", target, "-p", "-J", "-S", "-500"], text=True
-            )
+            # Capture pane content (plain for display, remote-aware via SSH)
+            result = await _capture_agent_pane(agent_id, lines=500, ansi=False)
 
             if result.returncode != 0:
                 await websocket.send_json({
@@ -2466,9 +2526,7 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
             current_output = result.stdout.rstrip('\n ')
 
             # Capture with ANSI for input detection (suggestion vs typed)
-            result_ansi = await _run_subprocess(
-                ["tmux", "capture-pane", "-t", target, "-p", "-e", "-S", "-20"], text=True
-            )
+            result_ansi = await _capture_agent_pane(agent_id, ansi=True)
             current_input = _extract_current_input(result_ansi.stdout)
 
             # Send output if changed
