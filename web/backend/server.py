@@ -2352,7 +2352,7 @@ async def post_chat(msg: ChatMessage):
     return {"status": "ok"}
 
 
-ALLOWED_KEYS = {"Enter", "C-c", "Escape", "C-u", "C-d", "C-l", "C-z", "Up", "Down", "Left", "Right", "Tab", "Space", "y", "n"}
+ALLOWED_KEYS = {"Enter", "C-c", "Escape", "C-u", "C-d", "C-l", "C-z", "Up", "Down", "Left", "Right", "Tab", "S-Tab", "Space", "y", "n"}
 
 
 @app.post("/api/agent/{agent_id}/keys")

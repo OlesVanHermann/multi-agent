@@ -569,6 +569,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
           <button onClick={() => sendKeys('Left')} className="key-btn" title="Left arrow">←</button>
           <button onClick={() => sendKeys('Down')} className="key-btn" title="Down arrow">↓</button>
           <button onClick={() => sendKeys('Right')} className="key-btn" title="Right arrow">→</button>
+          <button onClick={() => sendKeys('S-Tab')} className="key-btn" title="Shift+Tab (cycle permission mode)">⇧⇥</button>
         </span>
       </div>
     </div>
