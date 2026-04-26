@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react'
+import { createLogger } from './lib/logger'
 
+const log = createLogger('Auth')
 const AuthContext = createContext(null)
 
 // Keycloak configuration
@@ -36,8 +38,10 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const refreshTimerRef = useRef(null)
+  const inflightRefreshRef = useRef(null)
 
   const clearSession = useCallback(() => {
+    log.action('logout')
     setToken(null)
     setUser(null)
     localStorage.removeItem('access_token')
@@ -76,46 +80,66 @@ export function AuthProvider({ children }) {
   }, [])
 
   const refreshAccessToken = useCallback(async () => {
+    if (inflightRefreshRef.current) return inflightRefreshRef.current
     const storedRefresh = localStorage.getItem('refresh_token')
     if (!storedRefresh) {
       clearSession()
       return false
     }
 
-    try {
-      const response = await fetch(
-        `${KEYCLOAK_URL}/realms/${REALM}/protocol/openid-connect/token`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            grant_type: 'refresh_token',
-            client_id: CLIENT_ID,
-            refresh_token: storedRefresh,
-          }),
-        }
-      )
+    const promise = (async () => {
+      try {
+        const response = await fetch(
+          `${KEYCLOAK_URL}/realms/${REALM}/protocol/openid-connect/token`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              grant_type: 'refresh_token',
+              client_id: CLIENT_ID,
+              refresh_token: storedRefresh,
+            }),
+          }
+        )
 
-      if (response.status === 503) {
-        // Keycloak down — keep current session, retry in 30s
+        if (response.status === 503) {
+          log.warn('keycloak unreachable, retry in 30s')
+          refreshTimerRef.current = setTimeout(() => refreshAccessToken(), 30000)
+          return false
+        }
+
+        if (!response.ok) {
+          log.warn('refresh token expired, forcing re-login')
+          clearSession()
+          return false
+        }
+
+        const data = await response.json()
+        log.info('token refreshed')
+        return applyTokens(data.access_token, data.refresh_token)
+      } catch {
+        log.error('token refresh network error')
         refreshTimerRef.current = setTimeout(() => refreshAccessToken(), 30000)
         return false
+      } finally {
+        inflightRefreshRef.current = null
       }
+    })()
 
-      if (!response.ok) {
-        // Refresh token expired or invalid — force re-login
-        clearSession()
-        return false
-      }
-
-      const data = await response.json()
-      return applyTokens(data.access_token, data.refresh_token)
-    } catch {
-      // Network error — retry in 30s
-      refreshTimerRef.current = setTimeout(() => refreshAccessToken(), 30000)
-      return false
-    }
+    inflightRefreshRef.current = promise
+    return promise
   }, [clearSession, applyTokens])
+
+  // Awaitable: resolves with a fresh access token (or null if refresh failed).
+  // Used by WS code that must avoid the expired-token race at wake time.
+  const ensureFreshToken = useCallback(async () => {
+    const stored = localStorage.getItem('access_token')
+    if (stored && !isTokenExpired(stored) && tokenExpiresInSec(stored) > REFRESH_MARGIN_S) {
+      return stored
+    }
+    const ok = await refreshAccessToken()
+    return ok ? localStorage.getItem('access_token') : null
+  }, [refreshAccessToken])
 
   // Check for existing session on mount
   useEffect(() => {
@@ -184,6 +208,8 @@ export function AuthProvider({ children }) {
         }
       )
 
+      log.api('POST', '/auth/.../token', { grant: 'password', status: response.status })
+
       if (response.status === 503) {
         throw new Error('Keycloak is not reachable. Start Keycloak first.')
       }
@@ -194,6 +220,7 @@ export function AuthProvider({ children }) {
       }
 
       const data = await response.json()
+      log.action('login', { username })
       applyTokens(data.access_token, data.refresh_token)
 
       // Redirect to root after login
@@ -203,6 +230,7 @@ export function AuthProvider({ children }) {
 
       return true
     } catch (err) {
+      log.error('login failed', { username, error: err.message })
       setError(err.message)
       return false
     } finally {
@@ -232,6 +260,7 @@ export function AuthProvider({ children }) {
     isOperator,
     isViewer,
     isAuthenticated: !!token,
+    ensureFreshToken,
   }
 
   return (

@@ -2511,13 +2511,38 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
     last_output = ""
     last_input = ""
 
+    # Serialize sends so the heartbeat reader and the main poll loop
+    # do not interleave bytes on the ASGI send channel.
+    send_lock = asyncio.Lock()
+
+    async def safe_send(payload: dict):
+        async with send_lock:
+            await websocket.send_json(payload)
+
+    async def heartbeat_reader():
+        # Receive client pings and reply pong. Any disconnect raises here,
+        # the main loop will detect it on its next send.
+        try:
+            while True:
+                msg = await websocket.receive_text()
+                try:
+                    data = json.loads(msg)
+                except Exception:
+                    continue
+                if isinstance(data, dict) and data.get("type") == "ping":
+                    await safe_send({"type": "pong"})
+        except Exception:
+            pass
+
+    ping_task = asyncio.create_task(heartbeat_reader())
+
     try:
         while True:
             # Capture pane content (plain for display, remote-aware via SSH)
             result = await _capture_agent_pane(agent_id, lines=500, ansi=False)
 
             if result.returncode != 0:
-                await websocket.send_json({
+                await safe_send({
                     "type": "error",
                     "message": f"Agent {agent_id} session not found"
                 })
@@ -2531,7 +2556,7 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
 
             # Send output if changed
             if current_output != last_output:
-                await websocket.send_json({
+                await safe_send({
                     "type": "output",
                     "agent_id": agent_id,
                     "output": current_output,
@@ -2541,7 +2566,7 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
 
             # Send input if changed (separate message for input sync)
             if current_input != last_input:
-                await websocket.send_json({
+                await safe_send({
                     "type": "input_sync",
                     "agent_id": agent_id,
                     "current_input": current_input,
@@ -2556,6 +2581,8 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
         # IncompleteReadError, ConnectionClosedError, ClientDisconnected)
         # is normal — the client or proxy closed the connection.
         pass
+    finally:
+        ping_task.cancel()
 
 
 @app.websocket("/ws/messages")
@@ -2633,6 +2660,27 @@ async def websocket_status(websocket: WebSocket):
 
     last_sent = ""  # JSON string of last sent data to avoid sending duplicates
 
+    send_lock = asyncio.Lock()
+
+    async def safe_send(payload: dict):
+        async with send_lock:
+            await websocket.send_json(payload)
+
+    async def heartbeat_reader():
+        try:
+            while True:
+                msg = await websocket.receive_text()
+                try:
+                    data = json.loads(msg)
+                except Exception:
+                    continue
+                if isinstance(data, dict) and data.get("type") == "ping":
+                    await safe_send({"type": "pong"})
+        except Exception:
+            pass
+
+    ping_task = asyncio.create_task(heartbeat_reader())
+
     try:
         while True:
             agents = _cache["agents"]
@@ -2651,13 +2699,15 @@ async def websocket_status(websocket: WebSocket):
 
             # Only send if data changed
             if payload_str != last_sent:
-                await websocket.send_json(payload)
+                await safe_send(payload)
                 last_sent = payload_str
 
             await asyncio.sleep(poll)
 
     except Exception:
         pass
+    finally:
+        ping_task.cancel()
 
 
 

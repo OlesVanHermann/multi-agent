@@ -1,6 +1,6 @@
 import React from 'react'
 
-function StatusBar({ agentCount, activeCount, warningCount, compactedCount, redisOk, lastUpdate }) {
+function StatusBar({ agentCount, activeCount, warningCount, compactedCount, redisOk, lastUpdate, reconnecting }) {
   const timeSince = lastUpdate
     ? Math.floor((Date.now() - lastUpdate.getTime()) / 1000)
     : null
@@ -39,6 +39,11 @@ function StatusBar({ agentCount, activeCount, warningCount, compactedCount, redi
           {timeSince !== null ? `${timeSince}s ago` : '---'}
         </span>
       </div>
+      {reconnecting && (
+        <div className="status-item">
+          <span className="indicator reconnecting">Reconnexion…</span>
+        </div>
+      )}
     </footer>
   )
 }

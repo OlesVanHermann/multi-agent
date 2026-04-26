@@ -10,6 +10,7 @@ import DevChat from './components/DevChat'
 import { useAuth, LoginForm } from './AuthProvider'
 import { api, wsUrl } from './basePath'
 import { createLogger } from './lib/logger'
+import { useWakeDetector } from './lib/useWakeDetector'
 
 const log = createLogger('App')
 
@@ -51,7 +52,7 @@ function usePollSetting(key, defaultVal) {
 }
 
 function App() {
-  const { user, logout, isOperator, isAuthenticated } = useAuth()
+  const { user, logout, isOperator, isAuthenticated, ensureFreshToken } = useAuth()
 
   if (!isAuthenticated) return <LoginForm />
   const [agents, setAgents] = useState([])
@@ -70,6 +71,9 @@ function App() {
   const [statusPoll, setStatusPoll] = usePollSetting('status', 10)
   const [fetchSec, setFetchSec] = usePollSetting('fetch', 15)
   const reconnectTimer = useRef(null)
+  const [reconnecting, setReconnecting] = useState(false)
+  const wakeReconnectRef = useRef(null)
+  const refetchAgentsRef = useRef(null)
 
   // Fetch agents on mount and periodically
   useEffect(() => {
@@ -84,9 +88,10 @@ function App() {
           if (data.mode) setMode(data.mode)
           if (data.triangles) setTriangles(data.triangles)
           if (data.agent_names) setAgentNames(data.agent_names)
+          setReconnecting(false)
         }
       } catch (err) {
-        console.error('Failed to fetch agents:', err)
+        log.error('fetchAgents failed', { error: err.message })
         // Don't clear agents on error - keep showing last known state
       }
     }
@@ -101,6 +106,7 @@ function App() {
       }
     }
 
+    refetchAgentsRef.current = () => { fetchAgents(); checkHealth() }
     fetchAgents()
     checkHealth()
 
@@ -109,26 +115,56 @@ function App() {
       checkHealth()
     }, fetchSec * 1000)
 
-    return () => clearInterval(interval)
+    return () => {
+      clearInterval(interval)
+      refetchAgentsRef.current = null
+    }
   }, [fetchSec])
 
   // WebSocket for real-time status (pauses when tab is hidden)
   useEffect(() => {
     let intentionalClose = false
+    let pingTimer = null
+    let pongTimer = null
 
-    const connect = () => {
+    const clearHeartbeat = () => {
+      if (pingTimer) { clearInterval(pingTimer); pingTimer = null }
+      if (pongTimer) { clearTimeout(pongTimer); pongTimer = null }
+    }
+
+    const startHeartbeat = (ws) => {
+      clearHeartbeat()
+      pingTimer = setInterval(() => {
+        if (ws.readyState !== WebSocket.OPEN) return
+        try { ws.send(JSON.stringify({ type: 'ping' })) } catch {}
+        if (pongTimer) clearTimeout(pongTimer)
+        pongTimer = setTimeout(() => {
+          // Pong missed → consider WS dead
+          log.ws('pong-miss', { endpoint: 'ws/status' })
+          try { ws.close() } catch {}
+        }, 5000)
+      }, 25000)
+    }
+
+    const connect = async () => {
       if (document.hidden) return
-      // Don't attempt connection without a token (race condition after login)
-      if (!localStorage.getItem('access_token')) {
-        setTimeout(connect, 1000)
+      const token = await ensureFreshToken()
+      if (!token) {
+        // No valid token; retry shortly (e.g. just after login race or refresh failure)
+        setTimeout(() => connect(), 1000)
         return
       }
       intentionalClose = false
       const freshStatusUrl = wsUrl(`ws/status?poll=${statusPoll}`)
-      wsRef.current = new WebSocket(freshStatusUrl)
+      const ws = new WebSocket(freshStatusUrl)
+      wsRef.current = ws
 
-      wsRef.current.onmessage = (event) => {
+      ws.onmessage = (event) => {
         const data = JSON.parse(event.data)
+        if (data.type === 'pong') {
+          if (pongTimer) { clearTimeout(pongTimer); pongTimer = null }
+          return
+        }
         if (data.type === 'status_update') {
           if (data.agents && Array.isArray(data.agents) && data.agents.length > 0) {
             setAgents(data.agents)
@@ -136,13 +172,18 @@ function App() {
             if (data.mode) setMode(data.mode)
             if (data.triangles) setTriangles(data.triangles)
             if (data.agent_names) setAgentNames(data.agent_names)
+            setReconnecting(false)
           }
         }
       }
 
-      wsRef.current.onopen = () => log.ws('open', { endpoint: 'ws/status' })
+      ws.onopen = () => {
+        log.ws('open', { endpoint: 'ws/status' })
+        startHeartbeat(ws)
+      }
 
       const scheduleReconnect = () => {
+        clearHeartbeat()
         if (intentionalClose) return
         if (reconnectTimer.current) return  // already scheduled
         reconnectTimer.current = setTimeout(() => {
@@ -151,21 +192,37 @@ function App() {
         }, 3000)
       }
 
-      wsRef.current.onclose = () => {
+      ws.onclose = () => {
         log.ws('close', { endpoint: 'ws/status' })
+        if (wsRef.current === ws) wsRef.current = null
         scheduleReconnect()
       }
 
-      wsRef.current.onerror = () => {
+      ws.onerror = () => {
         log.ws('error', { endpoint: 'ws/status' })
         // onclose always fires after onerror — reconnect handled there
       }
     }
 
+    // Force a fresh connection: cancel pending reconnect, close current ws,
+    // refresh token, reopen. Used by wake detector.
+    const forceReconnect = async () => {
+      log.ws('force-reconnect', { endpoint: 'ws/status' })
+      setReconnecting(true)
+      if (reconnectTimer.current) { clearTimeout(reconnectTimer.current); reconnectTimer.current = null }
+      clearHeartbeat()
+      const ws = wsRef.current
+      wsRef.current = null
+      if (ws) { try { ws.close() } catch {} }
+      await connect()
+    }
+    wakeReconnectRef.current = forceReconnect
+
     const handleVisibility = () => {
       if (document.hidden) {
         intentionalClose = true
-        if (wsRef.current) { wsRef.current.close(); wsRef.current = null }
+        clearHeartbeat()
+        if (wsRef.current) { try { wsRef.current.close() } catch {}; wsRef.current = null }
       } else {
         if (!wsRef.current) connect()
       }
@@ -174,7 +231,7 @@ function App() {
     // Reconnect immediately when network comes back
     const handleOnline = () => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-        connect()
+        forceReconnect()
       }
     }
 
@@ -186,10 +243,20 @@ function App() {
       document.removeEventListener('visibilitychange', handleVisibility)
       window.removeEventListener('online', handleOnline)
       intentionalClose = true
+      clearHeartbeat()
       if (reconnectTimer.current) { clearTimeout(reconnectTimer.current); reconnectTimer.current = null }
-      if (wsRef.current) wsRef.current.close()
+      if (wsRef.current) { try { wsRef.current.close() } catch {} ; wsRef.current = null }
+      wakeReconnectRef.current = null
     }
-  }, [statusPoll])
+  }, [statusPoll, ensureFreshToken])
+
+  // Wake detection → force reconnect WS + immediate HTTP refetch
+  useWakeDetector((info) => {
+    log.info('wake detected', info)
+    setReconnecting(true)
+    if (refetchAgentsRef.current) refetchAgentsRef.current()
+    if (wakeReconnectRef.current) wakeReconnectRef.current()
+  })
 
   // Fetch panel config on mount
   useEffect(() => {
@@ -261,6 +328,7 @@ function App() {
   }
 
   const handleFileClick = (filePath) => {
+    log.action('file-click', { path: filePath })
     setSelectedFile(filePath)
     setActivePanel('agent')
   }
@@ -279,6 +347,7 @@ function App() {
   const cronCreate = async () => {
     if (!cronAgent) return alert('Selectionnez un agent')
     if (!cronPrompt.trim()) return alert('Le prompt ne peut pas etre vide')
+    log.action('cron-create', { agent: cronAgent, period: cronPeriod })
     const res = await fetch(api('api/config/crontab'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -296,6 +365,7 @@ function App() {
     if (!crontabEdit) return
     if (!cronAgent) return alert('Selectionnez un agent')
     if (!cronPrompt.trim()) return alert('Le prompt ne peut pas etre vide')
+    log.action('cron-update', { agent: cronAgent, period: cronPeriod })
     const agentChanged = cronAgent !== crontabEdit.agent_id
     const periodChanged = cronPeriod !== crontabEdit.period
     if (agentChanged || periodChanged) {
@@ -326,6 +396,7 @@ function App() {
   }
 
   const cronSuspendResume = async (entry) => {
+    log.action(entry.suspended ? 'cron-resume' : 'cron-suspend', { agent: entry.agent_id })
     await fetch(api('api/config/crontab'), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -335,6 +406,7 @@ function App() {
   }
 
   const cronDelete = async (entry) => {
+    log.action('cron-delete', { agent: entry.agent_id, period: entry.period })
     await fetch(api('api/config/crontab'), {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
@@ -409,6 +481,7 @@ function App() {
   useEffect(() => { if (showKeepAlive) fetchKeepAlive() }, [showKeepAlive])
 
   const kaStart = async (profile) => {
+    log.action('keepalive-start', { profile })
     await fetch(api('api/config/keepalive/start'), {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ profile })
@@ -417,6 +490,7 @@ function App() {
   }
 
   const kaStop = async (profile) => {
+    log.action('keepalive-stop', { profile })
     await fetch(api('api/config/keepalive/stop'), {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ profile })
@@ -436,25 +510,25 @@ function App() {
         <h1>MULTI-AGENT DASHBOARD</h1>
         <button
           className={`config-btn ${showLoginModel ? 'config-btn-active' : ''}`}
-          onClick={() => { setShowLoginModel(!showLoginModel); setShowColors(false); setShowCrontab(false); setShowKeepAlive(false) }}
+          onClick={() => { log.nav('panel-toggle', { panel: 'loginModel' }); setShowLoginModel(!showLoginModel); setShowColors(false); setShowCrontab(false); setShowKeepAlive(false) }}
         >
           Login &amp; Model
         </button>
         <button
           className={`config-btn ${showColors ? 'config-btn-active' : ''}`}
-          onClick={() => { setShowColors(!showColors); setShowLoginModel(false); setShowCrontab(false); setShowKeepAlive(false) }}
+          onClick={() => { log.nav('panel-toggle', { panel: 'couleurs' }); setShowColors(!showColors); setShowLoginModel(false); setShowCrontab(false); setShowKeepAlive(false) }}
         >
           Couleurs
         </button>
         <button
           className={`config-btn ${showCrontab ? 'config-btn-active' : ''}`}
-          onClick={() => { setShowCrontab(!showCrontab); setShowLoginModel(false); setShowColors(false); setShowKeepAlive(false) }}
+          onClick={() => { log.nav('panel-toggle', { panel: 'crontab' }); setShowCrontab(!showCrontab); setShowLoginModel(false); setShowColors(false); setShowKeepAlive(false) }}
         >
           Crontab
         </button>
         <button
           className={`config-btn ${showKeepAlive ? 'config-btn-active' : ''}`}
-          onClick={() => { setShowKeepAlive(!showKeepAlive); setShowLoginModel(false); setShowColors(false); setShowCrontab(false) }}
+          onClick={() => { log.nav('panel-toggle', { panel: 'keepAlive' }); setShowKeepAlive(!showKeepAlive); setShowLoginModel(false); setShowColors(false); setShowCrontab(false) }}
         >
           Keep Alive
         </button>
@@ -478,7 +552,7 @@ function App() {
             </select>
           </span>
           <span className="poll-label">{user?.username}</span>
-          <button onClick={logout} className="logout-btn">Logout</button>
+          <button onClick={() => { log.action('logout'); logout() }} className="logout-btn">Logout</button>
         </div>
       </header>
 
@@ -723,6 +797,7 @@ function App() {
         compactedCount={compactedCount}
         redisOk={redisOk}
         lastUpdate={lastUpdate}
+        reconnecting={reconnecting}
       />
     </div>
   )

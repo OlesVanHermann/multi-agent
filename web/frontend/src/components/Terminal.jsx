@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { api, wsUrl } from '../basePath'
 import { createLogger } from '../lib/logger'
+import { useWakeDetector } from '../lib/useWakeDetector'
+import { useAuth } from '../AuthProvider'
 
 function UsageBars({ usage }) {
   if (!usage) return null
@@ -21,6 +23,7 @@ function UsageBars({ usage }) {
 
 function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   const log = createLogger(`Terminal:${agentId}`)
+  const { ensureFreshToken } = useAuth()
   const [output, setOutput] = useState('')
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -38,6 +41,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   const fileRef = useRef(null)
   const lastSentInput = useRef('')
   const syncTimeoutRef = useRef(null)
+  const wakeReconnectRef = useRef(null)
 
   // Fetch plan usage for this agent's login
   useEffect(() => {
@@ -165,12 +169,32 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
 
     // Connect WebSocket (pauses when tab is hidden)
     let intentionalClose = false
+    let pingTimer = null
+    let pongTimer = null
 
-    const connect = () => {
+    const clearHeartbeat = () => {
+      if (pingTimer) { clearInterval(pingTimer); pingTimer = null }
+      if (pongTimer) { clearTimeout(pongTimer); pongTimer = null }
+    }
+
+    const startHeartbeat = (ws) => {
+      clearHeartbeat()
+      pingTimer = setInterval(() => {
+        if (ws.readyState !== WebSocket.OPEN) return
+        try { ws.send(JSON.stringify({ type: 'ping' })) } catch {}
+        if (pongTimer) clearTimeout(pongTimer)
+        pongTimer = setTimeout(() => {
+          log.ws('pong-miss', { agentId })
+          try { ws.close() } catch {}
+        }, 5000)
+      }, 25000)
+    }
+
+    const connect = async () => {
       if (document.hidden) return  // Don't connect if tab is hidden
-      // Don't attempt connection without a token (race condition after login)
-      if (!localStorage.getItem('access_token')) {
-        reconnectTimeoutRef.current = setTimeout(connect, 1000)
+      const token = await ensureFreshToken()
+      if (!token) {
+        reconnectTimeoutRef.current = setTimeout(() => connect(), 1000)
         return
       }
       intentionalClose = false
@@ -187,11 +211,16 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
         }
         setConnected(true)
         log.ws('open', { agentId })
+        startHeartbeat(ws)
       }
 
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data)
 
+        if (data.type === 'pong') {
+          if (pongTimer) { clearTimeout(pongTimer); pongTimer = null }
+          return
+        }
         if (data.type === 'output') {
           if (userScrolledRef.current || selectingRef.current) {
             pendingOutputRef.current = data.output || ''
@@ -219,6 +248,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       }
 
       const scheduleReconnect = () => {
+        clearHeartbeat()
         if (intentionalClose) return  // prevent zombie reconnects after cleanup
         if (reconnectTimeoutRef.current) return  // already scheduled, avoid double-fire
         reconnectTimeoutRef.current = setTimeout(() => {
@@ -241,9 +271,23 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       }
     }
 
+    // Force-close current WS and reconnect (used by wake detector)
+    const forceReconnect = async () => {
+      log.ws('force-reconnect', { agentId })
+      if (reconnectTimeoutRef.current) { clearTimeout(reconnectTimeoutRef.current); reconnectTimeoutRef.current = null }
+      clearHeartbeat()
+      const ws = wsRef.current
+      wsRef.current = null
+      setConnected(false)
+      if (ws) { try { ws.close() } catch {} }
+      await connect()
+    }
+    wakeReconnectRef.current = forceReconnect
+
     const handleVisibility = () => {
       if (document.hidden) {
         intentionalClose = true
+        clearHeartbeat()
         if (reconnectTimeoutRef.current) { clearTimeout(reconnectTimeoutRef.current); reconnectTimeoutRef.current = null }
         // Only close OPEN sockets immediately; CONNECTING ones are handled in onopen to avoid Chrome warning
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -272,6 +316,8 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       window.removeEventListener('online', handleOnline)
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current)
       intentionalClose = true
+      clearHeartbeat()
+      wakeReconnectRef.current = null
       if (wsRef.current) {
         // Only close OPEN sockets; CONNECTING ones will be closed in onopen via stale check
         if (wsRef.current.readyState === WebSocket.OPEN) {
@@ -284,7 +330,12 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       if (selectResumeRef.current) clearTimeout(selectResumeRef.current)
       selectingRef.current = false
     }
-  }, [agentId, pollInterval])
+  }, [agentId, pollInterval, ensureFreshToken])
+
+  // Wake handler: trigger force-reconnect on wake event
+  useWakeDetector(() => {
+    if (wakeReconnectRef.current) wakeReconnectRef.current()
+  })
 
   // Sync mutex: prevent concurrent syncs that interleave in tmux
   const syncInFlightRef = useRef(false)
@@ -340,6 +391,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
 
   // Send raw tmux keys
   const sendKeys = async (...keys) => {
+    log.action('send-keys', { agentId, keys: keys.join(',') })
     try {
       await fetch(api(`api/agent/${agentId}/keys`), {
         method: 'POST',
@@ -460,6 +512,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
         paths += data.path + ' '
       }
       if (paths) {
+        log.action('upload', { agentId, fileCount: files.length })
         setInput(prev => prev + paths)
         inputValueRef.current += paths
         lastLocalEditRef.current = Date.now()
@@ -468,6 +521,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
         syncTimeoutRef.current = setTimeout(() => doSyncToTmux(inputValueRef.current), 150)
       }
     } catch (err) {
+      log.error('upload failed', { agentId, error: err.message })
       alert(`Upload error: ${err.message}`)
     } finally {
       setUploading(false)
@@ -480,6 +534,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       setShowHistory(false)
       return
     }
+    log.action('toggle-history', { agentId, show: true })
     setShowNotes(false)
     try {
       const res = await fetch(api(`api/agent/${agentId}/history`))
@@ -495,7 +550,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
 
   const toggleNotes = async () => {
     if (showNotes) {
-      // Save on close
+      log.action('toggle-notes', { agentId, show: false })
       try {
         await fetch(api(`api/agent/${agentId}/notes`), {
           method: 'POST',
@@ -506,6 +561,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       setShowNotes(false)
       return
     }
+    log.action('toggle-notes', { agentId, show: true })
     setShowHistory(false)
     try {
       const res = await fetch(api(`api/agent/${agentId}/notes`))

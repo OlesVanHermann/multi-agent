@@ -1031,6 +1031,14 @@ body {
 
 .status-item .indicator.ok { color: var(--green); }
 .status-item .indicator.error { color: var(--red); }
+.status-item .indicator.reconnecting {
+  color: var(--orange);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {
