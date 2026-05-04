@@ -205,7 +205,10 @@ function App() {
     }
 
     // Force a fresh connection: cancel pending reconnect, close current ws,
-    // refresh token, reopen. Used by wake detector.
+    // refresh token, reopen. Used by wake detector and watchdog.
+    // Set intentionalClose=true *before* close() so the closing socket's
+    // onclose does not arm a stale 3s reconnectTimer that would race the
+    // fresh socket created here.
     const forceReconnect = async () => {
       log.ws('force-reconnect', { endpoint: 'ws/status' })
       setReconnecting(true)
@@ -213,10 +216,18 @@ function App() {
       clearHeartbeat()
       const ws = wsRef.current
       wsRef.current = null
-      if (ws) { try { ws.close() } catch {} }
-      await connect()
+      if (ws) {
+        intentionalClose = true   // suppress onclose → scheduleReconnect race
+        try { ws.close() } catch {}
+      }
+      await connect()             // connect() resets intentionalClose=false
     }
     wakeReconnectRef.current = forceReconnect
+
+    // A WS is "live" only when present AND readyState is CONNECTING (0) or OPEN (1).
+    // CLOSING (2) and CLOSED (3) mean we should not assume an existing socket;
+    // some browsers/states fail to fire onclose, so we must not gate on truthiness alone.
+    const isLive = (ws) => ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)
 
     const handleVisibility = () => {
       if (document.hidden) {
@@ -224,15 +235,13 @@ function App() {
         clearHeartbeat()
         if (wsRef.current) { try { wsRef.current.close() } catch {}; wsRef.current = null }
       } else {
-        if (!wsRef.current) connect()
+        if (!isLive(wsRef.current)) forceReconnect()
       }
     }
 
     // Reconnect immediately when network comes back
     const handleOnline = () => {
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-        forceReconnect()
-      }
+      if (!isLive(wsRef.current)) forceReconnect()
     }
 
     document.addEventListener('visibilitychange', handleVisibility)
@@ -257,6 +266,31 @@ function App() {
     if (refetchAgentsRef.current) refetchAgentsRef.current()
     if (wakeReconnectRef.current) wakeReconnectRef.current()
   })
+
+  // WS health watchdog: independent timer that recovers from cases where the
+  // normal reconnect chain is broken (browser-throttled setTimeout, onclose
+  // that never fires, stale reconnectTimer.current ref). Runs every 30s.
+  useEffect(() => {
+    const tick = () => {
+      if (document.hidden) return
+      const ws = wsRef.current
+      const live = ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)
+      if (live) return
+      // No live WS. If a reconnect timer is armed, give it 1 more cycle then
+      // assume it has been suspended/lost and force a fresh attempt.
+      if (reconnectTimer.current) {
+        // Clear stale timer; force a clean reconnect via forceReconnect.
+        clearTimeout(reconnectTimer.current)
+        reconnectTimer.current = null
+      }
+      if (wakeReconnectRef.current) {
+        log.info('watchdog: no live ws, forcing reconnect')
+        wakeReconnectRef.current()
+      }
+    }
+    const id = setInterval(tick, 30000)
+    return () => clearInterval(id)
+  }, [])
 
   // Fetch panel config on mount
   useEffect(() => {

@@ -2503,6 +2503,8 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
         return
     print(f"[ws] ACCEPTED agent={agent_id} from={websocket.client}")
     await websocket.accept()
+    _ws_started_at = time.time()
+    _ws_close_reason = "normal"
 
     # Poll interval from query param (default 1.0s)
     poll = float(websocket.query_params.get("poll", "2.0"))
@@ -2576,13 +2578,15 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
 
             await asyncio.sleep(poll)
 
-    except Exception:
+    except Exception as exc:
         # Any disconnect (WebSocketDisconnect, ConnectionResetError,
         # IncompleteReadError, ConnectionClosedError, ClientDisconnected)
         # is normal — the client or proxy closed the connection.
-        pass
+        _ws_close_reason = f"{type(exc).__name__}: {getattr(exc, 'code', '') or str(exc)[:80]}"
     finally:
         ping_task.cancel()
+        _ws_duration = time.time() - _ws_started_at
+        print(f"[ws] CLOSED agent={agent_id} from={websocket.client} duration={_ws_duration:.1f}s reason={_ws_close_reason}")
 
 
 @app.websocket("/ws/messages")
@@ -2653,6 +2657,8 @@ async def websocket_status(websocket: WebSocket):
         await websocket.close(code=1008)
         return
     await websocket.accept()
+    _ws_started_at = time.time()
+    _ws_close_reason = "normal"
 
     # Poll interval from query param (default 5s, min = cache interval)
     poll = float(websocket.query_params.get("poll", "5"))
@@ -2704,10 +2710,12 @@ async def websocket_status(websocket: WebSocket):
 
             await asyncio.sleep(poll)
 
-    except Exception:
-        pass
+    except Exception as exc:
+        _ws_close_reason = f"{type(exc).__name__}: {getattr(exc, 'code', '') or str(exc)[:80]}"
     finally:
         ping_task.cancel()
+        _ws_duration = time.time() - _ws_started_at
+        print(f"[ws] CLOSED endpoint=ws/status from={websocket.client} duration={_ws_duration:.1f}s reason={_ws_close_reason}")
 
 
 

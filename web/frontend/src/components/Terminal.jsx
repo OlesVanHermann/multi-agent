@@ -271,7 +271,9 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       }
     }
 
-    // Force-close current WS and reconnect (used by wake detector)
+    // Force-close current WS and reconnect (used by wake detector and watchdog).
+    // intentionalClose=true *before* close() suppresses the stale onclose →
+    // scheduleReconnect path that would race the fresh socket.
     const forceReconnect = async () => {
       log.ws('force-reconnect', { agentId })
       if (reconnectTimeoutRef.current) { clearTimeout(reconnectTimeoutRef.current); reconnectTimeoutRef.current = null }
@@ -279,10 +281,17 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       const ws = wsRef.current
       wsRef.current = null
       setConnected(false)
-      if (ws) { try { ws.close() } catch {} }
-      await connect()
+      if (ws) {
+        intentionalClose = true
+        try { ws.close() } catch {}
+      }
+      await connect()             // connect() resets intentionalClose=false
     }
     wakeReconnectRef.current = forceReconnect
+
+    // Live = present AND CONNECTING/OPEN. Do not gate on truthiness alone:
+    // CLOSING/CLOSED refs without onclose firing would block reconnects.
+    const isLive = (ws) => ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)
 
     const handleVisibility = () => {
       if (document.hidden) {
@@ -297,14 +306,13 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
         setConnected(false)
       } else {
         intentionalClose = false
-        // Only connect if there's no WS and no pending reconnect timer (avoid double-connect)
-        if (!wsRef.current && !reconnectTimeoutRef.current) connect()
+        if (!isLive(wsRef.current) && !reconnectTimeoutRef.current) forceReconnect()
       }
     }
 
     // Reconnect immediately when network comes back (only if no active/pending connection)
     const handleOnline = () => {
-      if (!wsRef.current && !reconnectTimeoutRef.current) connect()
+      if (!isLive(wsRef.current) && !reconnectTimeoutRef.current) forceReconnect()
     }
 
     document.addEventListener('visibilitychange', handleVisibility)
@@ -336,6 +344,28 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   useWakeDetector(() => {
     if (wakeReconnectRef.current) wakeReconnectRef.current()
   })
+
+  // WS health watchdog (per terminal). Recovers from broken reconnect chains
+  // (suspended setTimeout, onclose never firing). 30s cadence.
+  useEffect(() => {
+    if (!agentId) return
+    const tick = () => {
+      if (document.hidden) return
+      const ws = wsRef.current
+      const live = ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)
+      if (live) return
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current)
+        reconnectTimeoutRef.current = null
+      }
+      if (wakeReconnectRef.current) {
+        log.info('watchdog: no live ws, forcing reconnect')
+        wakeReconnectRef.current()
+      }
+    }
+    const id = setInterval(tick, 30000)
+    return () => clearInterval(id)
+  }, [agentId])
 
   // Sync mutex: prevent concurrent syncs that interleave in tmux
   const syncInFlightRef = useRef(false)
