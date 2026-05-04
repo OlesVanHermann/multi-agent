@@ -152,6 +152,18 @@ prompts/{ID}-{nom}/
 
 ---
 
+## REFERENCE : exemple mono
+
+**S'inspirer UNIQUEMENT de `prompts/010-mono-exemple/`** — c'est le modele de reference mono.
+
+```bash
+ls prompts/010-mono-exemple/
+```
+
+Ce repertoire contient un agent mono complet (1 fichier .md + symlinks + agent.type → agent_mono.type).
+
+---
+
 ## RÈGLES ABSOLUES
 
 1. **TOUJOURS** `agent.type → ../agent_mono.type`

@@ -112,3 +112,21 @@ Si un agent doit faire une tâche longue (crawl, analyse):
 2. Envoyer `PROGRESS` toutes les 30 minutes
 3. Envoyer `DONE` quand terminé
 4. NE JAMAIS demander confirmation pour continuer
+
+## 8. INTERDICTION DU /loop wakeup en mode IDLE
+
+Quand tu es IDLE (aucune tache en cours, aucun dispatch en attente) :
+
+- NE JAMAIS utiliser `ScheduleWakeup`, `/loop`, ou tout mecanisme de self-trigger pour te reveiller periodiquement.
+- NE JAMAIS produire des messages "Claude resuming /loop wakeup ...".
+- NE JAMAIS poller ton inbox Redis en boucle pour verifier les messages.
+- TU NE FAIS RIEN tant qu'un message externe (user, hub, autre agent) n'arrive pas dans ton inbox.
+
+Le pipeline est **event-driven** : un nouveau message dans inbox declenche
+ton activation via le bridge agent.py. Pas de polling. Pas de wakeup.
+
+**Pourquoi :** les wakeups inutiles polluent les conversations, brulent du
+token, et masquent les vrais messages. Un agent IDLE doit etre SILENCIEUX.
+
+**Exception :** si ton `system.md` decrit explicitement un cycle a duree
+fixe (ex: heartbeat health-check), respecte-le. Sinon, IDLE = silence total.

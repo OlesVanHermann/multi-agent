@@ -491,15 +491,16 @@ $BASE/scripts/send.sh 100 "FROM:160|DONE x45 {ID}-{nom} cree — 6 satellites, {
 
 ---
 
-## REFERENCE : triangles x45 existants
+## REFERENCE : exemple x45
 
-Pour s'inspirer, lire les triangles deja crees dans `prompts/` :
+**S'inspirer UNIQUEMENT de `prompts/011-x45-exemple/`** — c'est le modele de reference x45.
 
 ```bash
-ls prompts/ | grep -E '^[0-9]{3}-'
+ls prompts/011-x45-exemple/
 ```
 
-Choisir un triangle complet comme modele, puis adapter les templates ci-dessus.
+Ce repertoire contient un triangle x45 complet (6 satellites × 3 fichiers + symlinks + agent.type → agent_x45.type).
+**NE PAS s'inspirer d'autres agents dans prompts/** — la plupart sont mono et te feront produire du mono au lieu du x45.
 
 ---
 

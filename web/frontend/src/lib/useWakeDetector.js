@@ -20,7 +20,9 @@ export function useWakeDetector(onWake) {
       const now = Date.now()
       const drift = now - lastTick - TICK_MS
       lastTick = now
-      if (drift > DRIFT_THRESHOLD_MS) fire('drift', { driftMs: drift })
+      // Ignore drift on hidden tabs: Chrome throttles setInterval to 30-60s in background,
+      // which looks like a wake event but isn't. Real OS wakes are caught by visibilitychange.
+      if (drift > DRIFT_THRESHOLD_MS && !document.hidden) fire('drift', { driftMs: drift })
     }, TICK_MS)
 
     const onVisibility = () => {

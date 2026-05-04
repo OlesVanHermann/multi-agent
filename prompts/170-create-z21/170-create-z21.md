@@ -1273,15 +1273,16 @@ $BASE/scripts/send.sh {ID}-1{XX} "{ID}-9{XX} DONE | <action: creation|update|aud
 
 ---
 
-## REFERENCE : agents z21 existants
+## REFERENCE : exemple z21
 
-Pour s'inspirer, lire les triangles z21 deja crees dans `prompts/` :
+**S'inspirer UNIQUEMENT de `prompts/012-z21-exemple/`** — c'est le modele de reference z21.
 
 ```bash
-ls prompts/ | grep -E '^[0-9]{3}-'
+ls prompts/012-z21-exemple/
 ```
 
-Choisir un z21 existant comme modele et lire ses templates avant d'adapter les sections ci-dessus.
+Ce repertoire contient un triangle z21 complet (6 satellites × 3 fichiers + symlinks + sous-contextes + agent.type → agent_z21.type).
+**NE PAS s'inspirer d'autres agents dans prompts/** — la plupart sont mono ou x45 et te feront produire le mauvais format.
 
 ---
 

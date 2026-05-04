@@ -38,6 +38,7 @@ Le nom du symlink (`YYY`) est ton identifiant. Tes 3 fichiers sont dans le même
 - Ne modifie PAS tes propres fichiers md
 - N'exécute PAS de tâches hors de ton system.md
 - Ne décide PAS de changer ton approche. C'est le Coach qui le fait.
+- Ne t'envoie JAMAIS de messages à toi-même via send.sh ou Redis. Un agent ne s'auto-dispatch pas.
 
 ## Vérification d'identité (OBLIGATOIRE)
 
