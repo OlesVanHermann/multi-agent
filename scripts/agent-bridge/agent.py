@@ -295,16 +295,25 @@ class TmuxAgent:
             capture_output=True
         )
 
-        # Verify Enter was received — if text is still in input, retry
+        # Verify Enter was submitted by checking the CURSOR LINE only.
+        # The previous version checked "any line in last 3 lines", which matched
+        # scrollback echo (false positive) and missed busy/streaming states.
+        target_pane = f"{self.session_name}:0"
         check_snippet = text[:40] if len(text) > 40 else text
-        for retry in range(3):
-            time.sleep(1)
-            pane = self._capture_pane(5)
-            last_lines = pane.strip().split('\n')[-3:]
-            still_in_input = any(check_snippet in line for line in last_lines)
-            if not still_in_input:
-                break
-            self._log(f"Enter not received (retry {retry+1}/3) — resending")
+        for delay in (1, 2, 4, 8):  # 15s total budget
+            time.sleep(delay)
+            try:
+                cy = subprocess.run(
+                    ["tmux", "display-message", "-t", target_pane, "-p", "#{cursor_y}"],
+                    capture_output=True, text=True
+                ).stdout.strip()
+                lines = self._capture_pane(50).split('\n')
+                cursor_line = lines[int(cy)] if cy.isdigit() and int(cy) < len(lines) else ''
+            except Exception:
+                cursor_line = ''
+            if check_snippet not in cursor_line:
+                break  # submitted (text no longer on the input line)
+            self._log(f"Enter not received after {delay}s — resending")
             subprocess.run(
                 ["tmux", "send-keys", "-t", target, "Enter"],
                 capture_output=True
@@ -857,34 +866,37 @@ class TmuxAgent:
             from_agent = task.get('from_agent')
 
             if from_agent and from_agent not in ['manual', 'cli', 'auto_init', 'unknown', 'legacy', 'compaction_reload', 'compaction_resume']:
-                try:
-                    MAX_CHUNK = 15000
+                if not self._agent_alive(from_agent):
+                    self._log(f"ko response routing: '{from_agent}' not alive or invalid format — skipping")
+                else:
+                    try:
+                        MAX_CHUNK = 15000
 
-                    if len(response) <= MAX_CHUNK:
-                        self.redis.xadd(f"{MA_PREFIX}:agent:{from_agent}:inbox", {
-                            'response': response,
-                            'from_agent': self.agent_id,
-                            'type': 'response',
-                            'timestamp': int(time.time()),
-                            'complete': 'true'
-                        })
-                    else:
-                        chunks = [response[i:i+MAX_CHUNK] for i in range(0, len(response), MAX_CHUNK)]
-                        for i, chunk in enumerate(chunks):
+                        if len(response) <= MAX_CHUNK:
                             self.redis.xadd(f"{MA_PREFIX}:agent:{from_agent}:inbox", {
-                                'response': chunk,
+                                'response': response,
                                 'from_agent': self.agent_id,
                                 'type': 'response',
                                 'timestamp': int(time.time()),
-                                'chunk': f"{i+1}/{len(chunks)}",
-                                'complete': 'true' if i == len(chunks)-1 else 'false'
+                                'complete': 'true'
                             })
+                        else:
+                            chunks = [response[i:i+MAX_CHUNK] for i in range(0, len(response), MAX_CHUNK)]
+                            for i, chunk in enumerate(chunks):
+                                self.redis.xadd(f"{MA_PREFIX}:agent:{from_agent}:inbox", {
+                                    'response': chunk,
+                                    'from_agent': self.agent_id,
+                                    'type': 'response',
+                                    'timestamp': int(time.time()),
+                                    'chunk': f"{i+1}/{len(chunks)}",
+                                    'complete': 'true' if i == len(chunks)-1 else 'false'
+                                })
 
-                    self._log(f"-> Full response sent to {from_agent} ({len(response)} chars)")
-                except Exception as e:
-                    self._log(f"Failed to send response to {from_agent}: {e}")
-                    if self.metrics:
-                        self.metrics.record_error(self.agent_id, "SendError", str(e))
+                        self._log(f"ok -> response sent to {from_agent} ({len(response)} chars)")
+                    except Exception as e:
+                        self._log(f"ko response to {from_agent}: {e}")
+                        if self.metrics:
+                            self.metrics.record_error(self.agent_id, "SendError", str(e))
 
             self._log(f"Response sent ({len(response)} chars)")
             self.tasks_completed += 1
@@ -920,8 +932,22 @@ class TmuxAgent:
             return resolved
         return to_agent
 
+    def _agent_alive(self, agent_id: str) -> bool:
+        """Return True if agent_id is valid format and has a running tmux session."""
+        import re
+        if not re.fullmatch(r'[0-9]{3}(-[0-9]{3})?', str(agent_id)):
+            return False
+        try:
+            result = subprocess.run(
+                ['tmux', 'has-session', '-t', f'{MA_PREFIX}-agent-{agent_id}'],
+                capture_output=True
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+
     def send_to_agent(self, to_agent, prompt):
-        """Send message to another agent"""
+        """Send message to another agent. Returns 'ok' or 'ko'."""
         if to_agent == 'all':
             agent_keys = self.redis.keys(f'{MA_PREFIX}:agent:*')
             sent_count = 0
@@ -936,15 +962,24 @@ class TmuxAgent:
                             'timestamp': int(time.time())
                         })
                         sent_count += 1
-            self._log(f"-> Broadcast to {sent_count} agents: {prompt[:60]}...")
+            self._log(f"ok -> broadcast to {sent_count} agents: {prompt[:60]}...")
+            return 'ok'
         else:
             to_agent = self._resolve_triangle(to_agent)
-            self.redis.xadd(f"{MA_PREFIX}:agent:{to_agent}:inbox", {
-                'prompt': prompt,
-                'from_agent': self.agent_id,
-                'timestamp': int(time.time())
-            })
-            self._log(f"-> Sent to agent {to_agent}: {prompt[:60]}...")
+            try:
+                self.redis.xadd(f"{MA_PREFIX}:agent:{to_agent}:inbox", {
+                    'prompt': prompt,
+                    'from_agent': self.agent_id,
+                    'timestamp': int(time.time())
+                })
+            except Exception as e:
+                self._log(f"ko send_to_agent {to_agent}: {e}")
+                return 'ko'
+            if not self._agent_alive(to_agent):
+                self._log(f"ko: agent {to_agent} not running — msg in orphan queue")
+                return 'ko'
+            self._log(f"ok -> agent {to_agent}: {prompt[:60]}...")
+            return 'ok'
 
     def run(self):
         """Main loop - also accepts stdin commands"""

@@ -72,12 +72,19 @@ if [[ "$FROM_AGENT" =~ ^([0-9]+)-[0-9]+$ ]] && [[ "$TO_AGENT" =~ ^[0-9]+$ ]] && 
 fi
 
 # Envoyer via Redis Streams (nouveau format)
-if ! $REDIS_CLI XADD "${MA_PREFIX}:agent:${TO_AGENT}:inbox" '*' \
+MSG_ID=$($REDIS_CLI XADD "${MA_PREFIX}:agent:${TO_AGENT}:inbox" '*' \
     prompt "$MESSAGE" \
     from_agent "$FROM_AGENT" \
-    timestamp "$TIMESTAMP" > /dev/null 2>&1; then
-    echo "[send.sh] ERROR: Failed to send to agent $TO_AGENT (REDIS_CLI=$REDIS_CLI)" >&2
+    timestamp "$TIMESTAMP" 2>/dev/null)
+
+if [ -z "$MSG_ID" ]; then
+    echo "ko: XADD failed for agent $TO_AGENT (REDIS_CLI=$REDIS_CLI)" >&2
     exit 1
 fi
 
-echo "Sent to agent $TO_AGENT: ${MESSAGE:0:60}..."
+if ! tmux has-session -t "${MA_PREFIX}-agent-${TO_AGENT}" 2>/dev/null; then
+    echo "ko: agent $TO_AGENT not running — msg $MSG_ID in orphan queue" >&2
+    exit 1
+fi
+
+echo "ok: $TO_AGENT $MSG_ID"
