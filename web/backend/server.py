@@ -2967,10 +2967,15 @@ if os.path.exists(frontend_path):
 
     @app.get("/{path:path}")
     async def serve_spa(path: str):
-        """Catch-all for SPA routing"""
-        file_path = os.path.join(frontend_path, path)
-        if os.path.exists(file_path) and os.path.isfile(file_path):
-            return FileResponse(file_path)
+        """Catch-all for SPA routing — path-traversal hardened"""
+        if not path or path.startswith("/") or ".." in path or "\\" in path:
+            return FileResponse(os.path.join(frontend_path, "index.html"))
+        candidate = os.path.normpath(os.path.join(frontend_path, path))
+        fp_abs = os.path.abspath(frontend_path)
+        if not (candidate == fp_abs or candidate.startswith(fp_abs + os.sep)):
+            return FileResponse(os.path.join(frontend_path, "index.html"))
+        if os.path.isfile(candidate):
+            return FileResponse(candidate)
         return FileResponse(os.path.join(frontend_path, "index.html"))
 
 
