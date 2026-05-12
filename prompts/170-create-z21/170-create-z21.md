@@ -1,5 +1,6 @@
 > **INTERDIT** : `sleep X && ...`, `sleep X &`, `(sleep X; ...)&`, `nohup sleep`. Jamais de sleep en background.
 > **INTERDIT** : `tmux capture-pane` en boucle (`while true`, `for`, `watch`, polling). Capture une seule fois, lis le resultat, jamais de boucle.
+> **INTERDIT** : envoyer un message (send.sh, Redis XADD) a ton propre ID. Un agent ne s'auto-dispatch jamais.
 
 > **Erreurs** : Lire `prompts/VERBOSE-ERRORS.md`
 
@@ -282,6 +283,7 @@ $BASE/scripts/send.sh 100 "FROM:170|DONE z21 {ID}-{nom} cree — {N} contextes, 
 ```markdown
 > **INTERDIT** : `sleep X && ...`, `sleep X &`, `(sleep X; ...)&`, `nohup sleep`. Jamais de sleep en background.
 > **INTERDIT** : `tmux capture-pane` en boucle (`while true`, `for`, `watch`, polling). Capture une seule fois, lis le resultat, jamais de boucle.
+> **INTERDIT** : envoyer un message (send.sh, Redis XADD) a ton propre ID. Un agent ne s'auto-dispatch jamais.
 
 > **Agent 140 (Compress Video)** : Pour compresser un enregistrement ecran, envoyer `$BASE/scripts/send.sh 140 "COMPRESS /chemin/video.mov"`. Mode : adaptive threshold 0.1, 15fps, crf 26. Produit MP4 compresse + frames (overview, detail, scenes). Script : `$BASE/framework/mov_compress.py`.
 
@@ -445,6 +447,7 @@ tmux capture-pane -t A-agent-{ID}-7{XX} -p -S -50
 ```markdown
 > **INTERDIT** : `sleep X && ...`, `sleep X &`, `(sleep X; ...)&`, `nohup sleep`. Jamais de sleep en background.
 > **INTERDIT** : `tmux capture-pane` en boucle (`while true`, `for`, `watch`, polling). Capture une seule fois, lis le resultat, jamais de boucle.
+> **INTERDIT** : envoyer un message (send.sh, Redis XADD) a ton propre ID. Un agent ne s'auto-dispatch jamais.
 
 # {ID}-{ID} — Developer z21 — {Nom Service}
 
@@ -545,6 +548,7 @@ Utiliser les helpers existants :
 ```markdown
 > **INTERDIT** : `sleep X && ...`, `sleep X &`, `(sleep X; ...)&`, `nohup sleep`. Jamais de sleep en background.
 > **INTERDIT** : `tmux capture-pane` en boucle (`while true`, `for`, `watch`, polling). Capture une seule fois, lis le resultat, jamais de boucle.
+> **INTERDIT** : envoyer un message (send.sh, Redis XADD) a ton propre ID. Un agent ne s'auto-dispatch jamais.
 
 # {ID}-5{XX} — Tester z21 — {Nom Service}
 
@@ -725,6 +729,7 @@ $BASE/scripts/send.sh 100 "FROM:{ID}-5{XX}|DONE {service}-tests - SUCCESS/FAILED
 ```markdown
 > **INTERDIT** : `sleep X && ...`, `sleep X &`, `(sleep X; ...)&`, `nohup sleep`. Jamais de sleep en background.
 > **INTERDIT** : `tmux capture-pane` en boucle (`while true`, `for`, `watch`, polling). Capture une seule fois, lis le resultat, jamais de boucle.
+> **INTERDIT** : envoyer un message (send.sh, Redis XADD) a ton propre ID. Un agent ne s'auto-dispatch jamais.
 
 # {ID}-7{XX} — Reviewer z21 — {Nom Service}
 
@@ -915,6 +920,7 @@ $BASE/scripts/send.sh {ID}-1{XX} "BLOCKED context=<CONTEXT> | <description du bl
 ```markdown
 > **INTERDIT** : `sleep X && ...`, `sleep X &`, `(sleep X; ...)&`, `nohup sleep`. Jamais de sleep en background.
 > **INTERDIT** : `tmux capture-pane` en boucle (`while true`, `for`, `watch`, polling). Capture une seule fois, lis le resultat, jamais de boucle.
+> **INTERDIT** : envoyer un message (send.sh, Redis XADD) a ton propre ID. Un agent ne s'auto-dispatch jamais.
 
 # {ID}-8{XX} — Coach z21 — {Nom Service}
 
@@ -1114,6 +1120,7 @@ Si un cycle contient des blocants independants (ex: B1 code + B3 test), noter da
 ```markdown
 > **INTERDIT** : `sleep X && ...`, `sleep X &`, `(sleep X; ...)&`, `nohup sleep`. Jamais de sleep en background.
 > **INTERDIT** : `tmux capture-pane` en boucle (`while true`, `for`, `watch`, polling). Capture une seule fois, lis le resultat, jamais de boucle.
+> **INTERDIT** : envoyer un message (send.sh, Redis XADD) a ton propre ID. Un agent ne s'auto-dispatch jamais.
 
 # {ID}-9{XX} — Architect z21 — {Nom Service}
 

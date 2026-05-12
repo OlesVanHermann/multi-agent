@@ -1,5 +1,6 @@
 # 170 — Reference : Templates des 6 satellites z21
 > **INTERDIT** : `tmux capture-pane` en boucle (`while true`, `for`, `watch`, polling). Capture une seule fois, lis le resultat, jamais de boucle.
+> **INTERDIT** : envoyer un message (send.sh, Redis XADD) a ton propre ID. Un agent ne s'auto-dispatch jamais.
 
 Ce fichier contient les templates des 6 system.md satellites a creer pour chaque z21.
 Remplacer les variables `{ID}`, `{nom}`, `{service}`, `{PORT}`, `{repertoire_projet}`, `{XX}` avant ecriture.

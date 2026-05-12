@@ -130,3 +130,11 @@ token, et masquent les vrais messages. Un agent IDLE doit etre SILENCIEUX.
 
 **Exception :** si ton `system.md` decrit explicitement un cycle a duree
 fixe (ex: heartbeat health-check), respecte-le. Sinon, IDLE = silence total.
+
+## 9. INTERDICTION DES MESSAGES A SOI-MEME
+
+**INTERDIT** : envoyer un message (send.sh, Redis XADD) a ton propre ID.
+
+- Un agent ne s'auto-dispatch JAMAIS.
+- Un agent ne s'envoie JAMAIS de signal DONE/SCORE a lui-meme.
+- Si tu dois boucler, c'est ta logique interne — pas un message Redis.

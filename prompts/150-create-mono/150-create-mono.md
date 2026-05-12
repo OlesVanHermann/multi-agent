@@ -1,5 +1,6 @@
 > **INTERDIT** : `sleep X && ...`, `sleep X &`, `(sleep X; ...)&`, `nohup sleep`. Jamais de sleep en background.
 > **INTERDIT** : `tmux capture-pane` en boucle (`while true`, `for`, `watch`, polling). Capture une seule fois, lis le resultat, jamais de boucle.
+> **INTERDIT** : envoyer un message (send.sh, Redis XADD) a ton propre ID. Un agent ne s'auto-dispatch jamais.
 
 # 150 — Créateur d'agents mono
 
@@ -72,6 +73,7 @@ Créer `$DIR/{ID}-{nom}.md` avec le contenu suivant comme base, **adapté à la 
 ```markdown
 > **INTERDIT** : `sleep X && ...`, `sleep X &`, `(sleep X; ...)&`, `nohup sleep`. Jamais de sleep en background.
 > **INTERDIT** : `tmux capture-pane` en boucle (`while true`, `for`, `watch`, polling). Capture une seule fois, lis le resultat, jamais de boucle.
+> **INTERDIT** : envoyer un message (send.sh, Redis XADD) a ton propre ID. Un agent ne s'auto-dispatch jamais.
 
 > **Agent 140 (Compress Video)** : Pour compresser un enregistrement ecran, envoyer `$BASE/scripts/send.sh 140 "COMPRESS /chemin/video.mov"`. Mode : adaptive threshold 0.1, 15fps, crf 26. Produit MP4 compresse + frames (overview, detail, scenes). Script : `$BASE/framework/mov_compress.py`.
 
