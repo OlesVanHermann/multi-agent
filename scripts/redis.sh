@@ -12,24 +12,21 @@ if [ -z "${REDIS_PASSWORD:-}" ] && [ -f "$BASE_DIR/setup/secrets.cfg" ]; then
     REDIS_PASSWORD=$(grep '^REDIS_PASSWORD=' "$BASE_DIR/setup/secrets.cfg" 2>/dev/null | cut -d= -f2)
 fi
 
-# Build redis-cli command with auth (fallback to docker exec if not installed)
+# Export password via env var (invisible to ps aux, unlike -a flag)
+if [ -n "${REDIS_PASSWORD:-}" ]; then
+    export REDISCLI_AUTH="$REDIS_PASSWORD"
+fi
+
+# Build redis-cli command (fallback to docker exec if not installed)
 if command -v redis-cli &>/dev/null; then
-    if [ -n "${REDIS_PASSWORD:-}" ]; then
-        REDIS_CLI="redis-cli --no-auth-warning -a $REDIS_PASSWORD"
-    else
-        REDIS_CLI="redis-cli"
-    fi
+    REDIS_CLI="redis-cli"
 else
     # Detect if sudo is needed for docker
     _DOCKER="docker"
     if ! docker info &>/dev/null 2>&1 && sudo docker info &>/dev/null 2>&1; then
         _DOCKER="sudo docker"
     fi
-    if [ -n "${REDIS_PASSWORD:-}" ]; then
-        REDIS_CLI="$_DOCKER exec ma-redis redis-cli --no-auth-warning -a $REDIS_PASSWORD"
-    else
-        REDIS_CLI="$_DOCKER exec ma-redis redis-cli"
-    fi
+    REDIS_CLI="$_DOCKER exec -e REDISCLI_AUTH=$REDIS_PASSWORD ma-redis redis-cli"
 fi
 export REDIS_CLI
 
@@ -44,11 +41,7 @@ if ! _redis_validate; then
     if ! docker info &>/dev/null 2>&1 && sudo docker info &>/dev/null 2>&1; then
         _DOCKER="sudo docker"
     fi
-    if [ -n "${REDIS_PASSWORD:-}" ]; then
-        REDIS_CLI="$_DOCKER exec ma-redis redis-cli --no-auth-warning -a $REDIS_PASSWORD"
-    else
-        REDIS_CLI="$_DOCKER exec ma-redis redis-cli"
-    fi
+    REDIS_CLI="$_DOCKER exec -e REDISCLI_AUTH=$REDIS_PASSWORD ma-redis redis-cli"
     export REDIS_CLI
 
     if ! _redis_validate; then

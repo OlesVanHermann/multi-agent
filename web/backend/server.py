@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, UploadFile
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, UploadFile, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -32,6 +32,17 @@ import httpx
 _tmux_executor = concurrent.futures.ThreadPoolExecutor(
     max_workers=64, thread_name_prefix="tmux"
 )
+
+
+_AGENT_ID_RE = re.compile(r'^\d{3}(-\d{3})?$')
+
+def _validated_agent_id(agent_id: str) -> str:
+    """Validate agent_id format. Reject path traversal and injection attempts."""
+    if not _AGENT_ID_RE.match(agent_id):
+        raise HTTPException(status_code=400, detail="Invalid agent_id format")
+    return agent_id
+
+ValidAgentId = Depends(lambda agent_id: _validated_agent_id(agent_id))
 
 
 async def _run_subprocess(cmd, **kwargs):
@@ -666,22 +677,9 @@ def _verify_jwt_minimal(token: str) -> bool:
         if f"/realms/{KEYCLOAK_REALM}" not in payload.get("iss", ""):
             return False
         return True
-    except Exception:
-        # Fallback: check payload only (reject unsigned tokens)
-        try:
-            import base64
-            parts = token.split(".")
-            if len(parts) != 3 or not parts[2]:
-                return False
-            payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
-            payload = json.loads(base64.b64decode(payload_b64))
-            if time.time() >= payload.get("exp", 0):
-                return False
-            if f"/realms/{KEYCLOAK_REALM}" not in payload.get("iss", ""):
-                return False
-            return True
-        except Exception:
-            return False
+    except Exception as e:
+        logger.warning("JWT verification failed: %s", e)
+        return False
 
 # Public paths that don't require auth
 _PUBLIC_PATHS = {"/api/agent-chat/health", "/api/agent-chat/spec", "/api/agent-chat/events"}
@@ -1312,7 +1310,7 @@ async def get_usage():
 
 
 @app.get("/api/usage/{agent_id}")
-async def get_usage_for_agent(agent_id: str):
+async def get_usage_for_agent(agent_id: str = Depends(lambda agent_id: _validated_agent_id(agent_id))):
     """Return plan usage bars for the login associated with this agent."""
     import json as _json
     prompts_dir = BASE_DIR / "prompts"
@@ -1360,7 +1358,7 @@ async def get_usage_for_agent(agent_id: str):
 
 
 @app.get("/api/agent/{agent_id}")
-async def get_agent(agent_id: str):
+async def get_agent(agent_id: str = Depends(lambda agent_id: _validated_agent_id(agent_id))):
     """Get single agent details"""
     if not redis_pool:
         raise HTTPException(status_code=503, detail="Redis not available")
@@ -2067,7 +2065,7 @@ async def restart_agent(agent_id: str):
 
 
 @app.get("/api/agent/{agent_id}/events")
-async def get_agent_events(agent_id: str, all: int = 0):
+async def get_agent_events(agent_id: str = Depends(lambda agent_id: _validated_agent_id(agent_id)), all: int = 0):
     """Get event log for an agent. ?all=1 includes archived (rotated) files."""
     d = _events_dir(agent_id)
 
@@ -2172,7 +2170,7 @@ def _extract_current_input(ansi_output: str) -> str:
 
 
 @app.post("/api/agent/{agent_id}/send")
-async def send_to_agent(agent_id: str, msg: SendMessage):
+async def send_to_agent(msg: SendMessage, agent_id: str = Depends(lambda agent_id: _validated_agent_id(agent_id))):
     """Send message to an agent via tmux send-keys (with Enter)"""
     session_name = f"{MA_PREFIX}-agent-{agent_id}"
     target = f"{session_name}:0.0"
@@ -2183,9 +2181,12 @@ async def send_to_agent(agent_id: str, msg: SendMessage):
         if result.returncode != 0:
             raise HTTPException(status_code=404, detail=f"Agent {agent_id} session not found")
 
-        # Send message via tmux send-keys
+        # Send message via tmux send-keys (-l = literal, prevents C-c/C-d injection)
         await _run_subprocess(
-            ["tmux", "send-keys", "-t", target, msg.message, "Enter"], check=True
+            ["tmux", "send-keys", "-t", target, "-l", msg.message], check=True
+        )
+        await _run_subprocess(
+            ["tmux", "send-keys", "-t", target, "Enter"], check=True
         )
 
         return {
@@ -2258,7 +2259,7 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
 
 
 @app.get("/api/agent/{agent_id}/history")
-async def get_agent_history(agent_id: str):
+async def get_agent_history(agent_id: str = Depends(lambda agent_id: _validated_agent_id(agent_id))):
     """Read prompt history file for an agent."""
     prompts_dir = BASE_DIR / "prompts"
     parent_id = agent_id.split('-')[0] if '-' in agent_id else agent_id
@@ -2275,7 +2276,7 @@ async def get_agent_history(agent_id: str):
 
 
 @app.get("/api/agent/{agent_id}/notes")
-async def get_agent_notes(agent_id: str):
+async def get_agent_notes(agent_id: str = Depends(lambda agent_id: _validated_agent_id(agent_id))):
     """Read notes file for an agent."""
     prompts_dir = BASE_DIR / "prompts"
     parent_id = agent_id.split('-')[0] if '-' in agent_id else agent_id
@@ -2287,7 +2288,7 @@ async def get_agent_notes(agent_id: str):
 
 
 @app.post("/api/agent/{agent_id}/notes")
-async def save_agent_notes(agent_id: str, req: Request):
+async def save_agent_notes(req: Request, agent_id: str = Depends(lambda agent_id: _validated_agent_id(agent_id))):
     """Save notes file for an agent."""
     body = await req.json()
     content = body.get("content", "")
@@ -2356,7 +2357,7 @@ ALLOWED_KEYS = {"Enter", "C-c", "Escape", "C-u", "C-d", "C-l", "C-z", "Up", "Dow
 
 
 @app.post("/api/agent/{agent_id}/keys")
-async def send_keys_to_agent(agent_id: str, data: SendKeys):
+async def send_keys_to_agent(data: SendKeys, agent_id: str = Depends(lambda agent_id: _validated_agent_id(agent_id))):
     """Send raw tmux keys to an agent (Enter, Ctrl+C, Escape, etc.)"""
     session_name = f"{MA_PREFIX}-agent-{agent_id}"
     target = f"{session_name}:0.0"
@@ -2384,7 +2385,7 @@ async def send_keys_to_agent(agent_id: str, data: SendKeys):
 
 
 @app.get("/api/agent/{agent_id}/output")
-async def get_agent_output(agent_id: str, lines: int = 500):
+async def get_agent_output(agent_id: str = Depends(lambda agent_id: _validated_agent_id(agent_id)), lines: int = 500):
     """Capture tmux pane output for an agent (remote-aware via SSH)."""
     try:
         # Check if session exists (remote via SSH if applicable)
@@ -2442,9 +2443,19 @@ async def post_frontend_logs(request: Request):
 
 # === Keycloak Proxy ===
 
+_KEYCLOAK_ALLOWED_PREFIXES = (
+    f"realms/{KEYCLOAK_REALM}/protocol/openid-connect/",
+    f"realms/{KEYCLOAK_REALM}/.well-known/",
+    f"realms/{KEYCLOAK_REALM}/account",
+)
+
 @app.api_route("/auth/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 async def proxy_keycloak(request: Request, path: str):
     """Auth endpoint: proxy to Keycloak. Returns 503 if Keycloak is unavailable."""
+
+    if "/admin/" in path or not any(path.startswith(p) for p in _KEYCLOAK_ALLOWED_PREFIXES):
+        return Response(content=json.dumps({"error": "forbidden", "error_description": "Path not allowed"}),
+                        status_code=403, headers={"Content-Type": "application/json"})
 
     url = f"{KEYCLOAK_URL}/{path}"
     body = await request.body()
