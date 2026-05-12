@@ -11,6 +11,9 @@ import base64
 import time
 import subprocess
 import concurrent.futures
+import logging
+
+logger = logging.getLogger(__name__)
 from pathlib import Path
 from typing import Optional
 from contextlib import asynccontextmanager
@@ -896,7 +899,7 @@ async def _trigger_prompt_reload(agent_id: str):
 
         # Send text then C-m (Enter) separately to avoid lost keystrokes
         await _run_subprocess(
-            ["tmux", "send-keys", "-t", f"{session}:0.0", cmd],
+            ["tmux", "send-keys", "-t", f"{session}:0.0", "-l", cmd],
             text=True, timeout=5
         )
         await asyncio.sleep(0.3)
@@ -1618,10 +1621,9 @@ async def update_effort(data: EffortUpdate):
 # --- Favoris (persisted JSON per user per project) ---
 
 def _favoris_file(user: str, project: str) -> Path:
-    safe = "".join(c for c in project if c.isalnum() or c in "-_ ")[:30].strip()
-    if not safe:
-        safe = "default"
-    return BASE_DIR / "prompts" / f"favoris-{user}-{safe}.json"
+    safe_user = "".join(c for c in user if c.isalnum() or c in "-_")[:30].strip() or "default"
+    safe_proj = "".join(c for c in project if c.isalnum() or c in "-_ ")[:30].strip() or "default"
+    return BASE_DIR / "prompts" / f"favoris-{safe_user}-{safe_proj}.json"
 
 @app.get("/api/config/favoris")
 async def get_favoris(user: str = "default", project: str = "default"):

@@ -87,9 +87,12 @@ do_start() {
     if redis_cli ping &>/dev/null 2>&1; then
         log_ok "Redis already running"
     else
+        REDIS_PASS="${REDIS_PASSWORD:-}"
+        REDIS_EXTRA=""
+        [ -n "$REDIS_PASS" ] && REDIS_EXTRA="--requirepass $REDIS_PASS"
         $DOCKER run -d --name ma-redis -p 127.0.0.1:6379:6379 \
             -v ma-redis-data:/data --restart unless-stopped \
-            redis:7-alpine redis-server --appendonly yes 2>/dev/null \
+            redis:7-alpine redis-server --appendonly yes $REDIS_EXTRA 2>/dev/null \
             || $DOCKER start ma-redis 2>/dev/null || true
         sleep 2
         if redis_cli ping &>/dev/null 2>&1; then

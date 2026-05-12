@@ -233,8 +233,8 @@ function handleExtensionResponse(msg) {
 // =============================================================================
 
 const server = http.createServer(async (req, res) => {
-  // CORS headers for potential browser-based clients
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  // No CORS — only localhost CLI/agent access, never browser pages
+  res.setHeader("Access-Control-Allow-Origin", "null");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
