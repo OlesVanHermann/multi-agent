@@ -84,6 +84,12 @@ def _get_remote_info(agent_id: str):
             return None
         if not ssh_cmd or not remote_session:
             return None
+        if not ssh_cmd.startswith("ssh "):
+            return None
+        if not re.match(r'^[A-Za-z0-9@._:/ -]+$', ssh_cmd):
+            return None
+        if not re.match(r'^[A-Za-z0-9_.-]+$', remote_session):
+            return None
         return (ssh_cmd, remote_session)
     return None
 
@@ -140,6 +146,8 @@ REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
 MA_PREFIX = os.environ.get("MA_PREFIX", "A")
+if not re.match(r'^[A-Za-z0-9]+$', MA_PREFIX):
+    raise ValueError(f"Invalid MA_PREFIX: {MA_PREFIX}")
 BASE_DIR = Path(os.environ.get("MA_BASE", Path.home() / "multi-agent"))
 PANEL_CONFIG_PATH = BASE_DIR / "web" / "panel-config.json"
 
@@ -2509,6 +2517,9 @@ manager = ConnectionManager()
 @app.websocket("/ws/agent/{agent_id}")
 async def websocket_agent_output(websocket: WebSocket, agent_id: str):
     """WebSocket endpoint for real-time agent tmux output with input sync"""
+    if not _AGENT_ID_RE.match(agent_id):
+        await websocket.close(code=1008)
+        return
     token = websocket.query_params.get("token", "")
     if not token or not _verify_jwt_minimal(token):
         print(f"[ws] REJECTED agent={agent_id} token_len={len(token)} from={websocket.client}")
@@ -2940,6 +2951,8 @@ async def agent_chat_conversations(request: Request):
 @app.get("/api/agent-chat/conversations/{conv_id}/messages")
 async def agent_chat_conversation_messages(conv_id: str, request: Request):
     """Proxy to shim /api/conversations/{id}/messages — requires auth."""
+    if not re.match(r'^[a-zA-Z0-9_-]+$', conv_id):
+        raise HTTPException(status_code=400, detail="Invalid conversation ID format")
     auth_header = request.headers.get("authorization", "")
     username = _extract_username_from_jwt(auth_header)
     if not username:

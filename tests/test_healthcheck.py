@@ -134,10 +134,10 @@ class TestWatchdogDiscovery:
     def test_discover_via_redis_heartbeat(self):
         """EF-002 : Découverte via {MA_PREFIX}:agent:*:heartbeat (source de vérité)."""
         redis_mock = MagicMock()
-        redis_mock.keys.return_value = [
+        redis_mock.scan_iter.return_value = iter([
             "A:agent:300:heartbeat",
             "A:agent:345:heartbeat"
-        ]
+        ])
         wd = AgentWatchdog(redis_mock, prefix="A")
 
         agents = wd.discover_agents()
@@ -148,7 +148,7 @@ class TestWatchdogDiscovery:
     def test_discover_tmux_fallback(self, mock_run):
         """EF-002 : Fallback tmux si Redis échoue."""
         redis_mock = MagicMock()
-        redis_mock.keys.side_effect = Exception("Redis down")
+        redis_mock.scan_iter.side_effect = Exception("Redis down")
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout="A-agent-300\nA-agent-345\nother-session\n")
@@ -162,7 +162,7 @@ class TestWatchdogDiscovery:
     def test_discover_no_agents(self):
         """EF-002 : Aucun agent actif → liste vide."""
         redis_mock = MagicMock()
-        redis_mock.keys.return_value = []
+        redis_mock.scan_iter.return_value = iter([])
         wd = AgentWatchdog(redis_mock, prefix="test")
 
         agents = wd.discover_agents()
@@ -241,7 +241,7 @@ class TestWatchdogRestart:
         result = wd.restart_agent("300")
 
         assert result is True
-        assert mock_run.call_count == 2  # C-c + python3 agent.py
+        assert mock_run.call_count == 3  # C-c + python3 agent.py (send-keys -l) + Enter
 
     @patch('healthcheck.subprocess.run')
     def test_restart_agent_failure(self, mock_run):
@@ -453,7 +453,7 @@ class TestWatchdogRunCycle:
         mock_urlopen.return_value = mock_resp
 
         redis_mock = MagicMock()
-        redis_mock.keys.return_value = ["test:agent:300:heartbeat"]
+        redis_mock.scan_iter.return_value = iter(["test:agent:300:heartbeat"])
         wd = AgentWatchdog(redis_mock, prefix="test")
 
         results = wd.run_cycle()

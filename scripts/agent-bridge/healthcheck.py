@@ -13,6 +13,7 @@ Options:
 """
 
 import redis
+import re
 import time
 import sys
 import os
@@ -171,10 +172,12 @@ class AgentWatchdog:
         """
         agents = set()
         try:
-            for key in self.redis.keys(f"{self.prefix}:agent:*:heartbeat"):
+            for key in self.redis.scan_iter(match=f"{self.prefix}:agent:*:heartbeat"):
                 parts = key.split(':')
                 if len(parts) == 4:
-                    agents.add(parts[2])
+                    candidate = parts[2]
+                    if re.fullmatch(r'[0-9]{3}(-[0-9]{3})?', candidate):
+                        agents.add(candidate)
         except Exception:
             agents = self._discover_tmux_fallback()
         return sorted(agents)
@@ -197,9 +200,13 @@ class AgentWatchdog:
 
     def check_health(self, agent_id):
         """Interroge /health d'un agent — EF-002, CA-002 (timeout 2s)."""
+        if not re.fullmatch(r'[0-9]{3}(-[0-9]{3})?', str(agent_id)):
+            return None
         try:
             numeric_id = int(agent_id.split('-')[0])
         except (ValueError, IndexError):
+            return None
+        if not (0 <= numeric_id <= 999):
             return None
         port = self.health_port_base + numeric_id
         url = f"http://localhost:{port}/health"
@@ -212,15 +219,21 @@ class AgentWatchdog:
 
     def restart_agent(self, agent_id):
         """Redémarre un agent via tmux — EF-002, CA-002."""
-        session_name = f"A-agent-{agent_id}"
+        if not re.fullmatch(r'[0-9]{3}(-[0-9]{3})?', str(agent_id)):
+            logger.warning("restart_agent: invalid agent_id format: %s", agent_id)
+            return False
+        session_name = f"{MA_PREFIX}-agent-{agent_id}"
         try:
             result = subprocess.run(
                 ["tmux", "send-keys", "-t", session_name, "C-c", ""],
                 capture_output=True, text=True, timeout=5)
             time.sleep(1)
             subprocess.run(
-                ["tmux", "send-keys", "-t", session_name,
-                 f"python3 agent.py {agent_id}", "Enter"],
+                ["tmux", "send-keys", "-t", session_name, "-l",
+                 f"python3 agent.py {agent_id}"],
+                capture_output=True, text=True, timeout=5)
+            subprocess.run(
+                ["tmux", "send-keys", "-t", session_name, "Enter"],
                 capture_output=True, text=True, timeout=5)
             return result.returncode == 0
         except (subprocess.TimeoutExpired, FileNotFoundError):

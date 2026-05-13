@@ -36,6 +36,23 @@ log_ok() { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+validate_agent_id() {
+    local id="$1"
+    if [[ ! "$id" =~ ^[0-9]{3}(-[0-9]{3})?$ ]]; then
+        log_error "Invalid agent ID format: $id"
+        return 1
+    fi
+}
+
+validate_ma_prefix() {
+    if [[ ! "$MA_PREFIX" =~ ^[A-Za-z0-9]+$ ]]; then
+        log_error "Invalid MA_PREFIX: $MA_PREFIX"
+        exit 1
+    fi
+}
+
+validate_ma_prefix
+
 # ── Helpers ──
 
 is_protected() {
@@ -115,6 +132,7 @@ start_remote() {
     # Start ONE remote session for agent_id. The triangle expansion loop
     # in do_start/start_all calls us once per member — do not iterate here.
     local agent_id=$1
+    validate_agent_id "$agent_id" || return 1
     local agent_dir
     agent_dir=$(find_x45_dir "$agent_id") || return 1
 
@@ -126,6 +144,10 @@ start_remote() {
 
     local ssh_cmd
     ssh_cmd=$(cat "$agent_dir/remote.ssh")
+    if [[ ! "$ssh_cmd" =~ ^ssh[[:space:]] ]]; then
+        log_error "Invalid remote.ssh content for $agent_id (must start with 'ssh ')"
+        return 1
+    fi
     local remote_session
     remote_session=$(cat "$rf" | tr -d '[:space:]')
     local SESSION_NAME="${MA_PREFIX}-agent-${agent_id}"
@@ -153,6 +175,7 @@ start_remote() {
 
 start_single() {
     local agent_id=$1
+    validate_agent_id "$agent_id" || return 1
     local SESSION_NAME="${MA_PREFIX}-agent-$agent_id"
 
     if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
@@ -199,7 +222,7 @@ start_single() {
     # Prompt injection is handled by the bridge (agent.py auto-init)
 
     tmux new-window -t "$SESSION_NAME" -n bridge
-    tmux send-keys -t "$SESSION_NAME:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX=$MA_PREFIX python3 '$BRIDGE_SCRIPT' $agent_id 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
+    tmux send-keys -t "$SESSION_NAME:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX='$MA_PREFIX' python3 '$BRIDGE_SCRIPT' '$agent_id' 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
     tmux select-window -t "$SESSION_NAME:0"
 
     log_ok "Agent $agent_id started: $SESSION_NAME"
@@ -337,7 +360,7 @@ start_all() {
 
                 # Start bridge in second window
                 tmux new-window -t "$SESSION" -n bridge
-                tmux send-keys -t "$SESSION:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX=$MA_PREFIX python3 '$BRIDGE_SCRIPT' $agent_id 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
+                tmux send-keys -t "$SESSION:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX='$MA_PREFIX' python3 '$BRIDGE_SCRIPT' '$agent_id' 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
                 tmux select-window -t "$SESSION:0"
 
                 log_ok "  Agent $agent_id ready"

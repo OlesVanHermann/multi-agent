@@ -50,10 +50,11 @@ do_start() {
 
     log_info "Starting proxy $LISTEN_HOST:$LISTEN_PORT → $BACKEND_HOST:$BACKEND_PORT..."
 
-    # Write proxy script to a temp file (avoids quoting issues)
+    # Write proxy script to a secure temp file (unpredictable name, read-only)
     # Asyncio TCP proxy: single-threaded, non-blocking, handles thousands of connections
     # Supports HTTP, WebSocket, and any protocol transparently
-    PROXY_PY="$LOG_DIR/.proxy.py"
+    PROXY_PY=$(mktemp "$LOG_DIR/.proxy.XXXXXX.py")
+    chmod 0400 "$PROXY_PY"
     cat > "$PROXY_PY" << 'PYEOF'
 import asyncio, sys, signal, traceback
 from datetime import datetime
@@ -182,8 +183,15 @@ PYEOF
 do_stop() {
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
-        if sudo kill "$PID" 2>/dev/null || kill "$PID" 2>/dev/null; then
-            log_ok "Proxy stopped (PID: $PID)"
+        # Verify the PID is actually a python3 process before killing
+        if [ -f "/proc/$PID/cmdline" ] && grep -q python3 "/proc/$PID/cmdline" 2>/dev/null; then
+            if sudo kill "$PID" 2>/dev/null || kill "$PID" 2>/dev/null; then
+                log_ok "Proxy stopped (PID: $PID)"
+            else
+                log_warn "Proxy not running (PID: $PID)"
+            fi
+        elif kill -0 "$PID" 2>/dev/null || sudo kill -0 "$PID" 2>/dev/null; then
+            log_warn "PID $PID is not a python3 process, refusing to kill"
         else
             log_warn "Proxy not running (PID: $PID)"
         fi

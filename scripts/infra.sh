@@ -10,7 +10,12 @@ ulimit -n 10240 2>/dev/null || true
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-[ -f "$BASE_DIR/setup/secrets.cfg" ] && source "$BASE_DIR/setup/secrets.cfg"
+if [ -f "$BASE_DIR/setup/secrets.cfg" ]; then
+    REDIS_PASSWORD=$(grep '^REDIS_PASSWORD=' "$BASE_DIR/setup/secrets.cfg" 2>/dev/null | cut -d= -f2-)
+    KEYCLOAK_ADMIN_PASSWORD=$(grep '^KEYCLOAK_ADMIN_PASSWORD=' "$BASE_DIR/setup/secrets.cfg" 2>/dev/null | cut -d= -f2-)
+    JWT_SECRET=$(grep '^JWT_SECRET=' "$BASE_DIR/setup/secrets.cfg" 2>/dev/null | cut -d= -f2-)
+    export REDIS_PASSWORD KEYCLOAK_ADMIN_PASSWORD JWT_SECRET
+fi
 BRIDGE_SCRIPT="$BASE_DIR/scripts/agent-bridge/agent.py"
 LOG_DIR="$BASE_DIR/logs/000"
 WEB_DIR="$BASE_DIR/web"
@@ -21,6 +26,10 @@ if [ -z "${MA_PREFIX:-}" ] && [ -f "$BASE_DIR/project-config.md" ]; then
     MA_PREFIX=$(grep '^MA_PREFIX=' "$BASE_DIR/project-config.md" 2>/dev/null | cut -d= -f2 | tr -d ' ' || true)
 fi
 MA_PREFIX="${MA_PREFIX:-A}"
+if [[ ! "$MA_PREFIX" =~ ^[A-Za-z0-9]+$ ]]; then
+    log_error "Invalid MA_PREFIX: $MA_PREFIX"
+    exit 1
+fi
 SESSION_NAME="${MA_PREFIX}-agent-000"
 
 # Colors

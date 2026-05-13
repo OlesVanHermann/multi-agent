@@ -48,6 +48,12 @@ const COMMAND_TIMEOUT_MS = 60000; // 60s timeout per command
 const MAX_NATIVE_MSG_SIZE = 1024 * 1024; // 1MB native messaging limit
 const MAX_CONCURRENT_COMMANDS = 8; // Max commands in-flight to extension at once
 const MAX_QUEUED_COMMANDS = 64; // Max commands waiting in queue
+const MAX_HTTP_BODY_SIZE = 10 * 1024 * 1024; // 10MB max HTTP body
+const CDP_BRIDGE_TOKEN = process.env.CDP_BRIDGE_TOKEN || "";
+const ALLOWED_HOSTS = new Set([
+  `127.0.0.1:${PORT}`, `localhost:${PORT}`,
+  "127.0.0.1", "localhost"
+]);
 
 // =============================================================================
 // STATE
@@ -233,11 +239,23 @@ function handleExtensionResponse(msg) {
 // =============================================================================
 
 const server = http.createServer(async (req, res) => {
-  // No CORS — only localhost CLI/agent access, never browser pages
-  res.setHeader("Access-Control-Allow-Origin", "null");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  // DNS rebinding protection: reject requests from unknown hosts
+  const host = (req.headers.host || "").toLowerCase();
+  if (!ALLOWED_HOSTS.has(host)) {
+    res.writeHead(403, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify({ error: "Forbidden: invalid Host header" }));
+  }
 
+  // Token auth: if CDP_BRIDGE_TOKEN is set, require it
+  if (CDP_BRIDGE_TOKEN) {
+    const auth = req.headers.authorization || "";
+    if (auth !== `Bearer ${CDP_BRIDGE_TOKEN}`) {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ error: "Unauthorized: missing or invalid token" }));
+    }
+  }
+
+  // No CORS — only localhost CLI/agent access, never browser pages
   if (req.method === "OPTIONS") {
     res.writeHead(204);
     return res.end();
@@ -404,7 +422,16 @@ function textResponse(res, status, text) {
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on("data", (chunk) => chunks.push(chunk));
+    let totalSize = 0;
+    req.on("data", (chunk) => {
+      totalSize += chunk.length;
+      if (totalSize > MAX_HTTP_BODY_SIZE) {
+        req.destroy();
+        reject(new Error("Request body too large"));
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });

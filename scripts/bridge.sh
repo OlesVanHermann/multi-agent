@@ -28,6 +28,14 @@ log_ok()   { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_err()  { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 
+validate_agent_id() {
+    local id="$1"
+    if [[ ! "$id" =~ ^[0-9]{3}(-[0-9]{3})?$ ]]; then
+        log_err "Invalid agent ID format: $id"
+        return 1
+    fi
+}
+
 # Resolve x45 directory
 find_x45_dir() {
     local id="$1"
@@ -53,6 +61,7 @@ get_triangle_ids() {
 
 restart_bridge() {
     local agent_id="$1"
+    validate_agent_id "$agent_id" || return 1
     local SESSION="${MA_PREFIX}-agent-$agent_id"
 
     if ! tmux has-session -t "$SESSION" 2>/dev/null; then
@@ -73,7 +82,7 @@ restart_bridge() {
     # Restart bridge with new code
     mkdir -p "$LOG_DIR/$agent_id"
     tmux send-keys -t "$SESSION:bridge" \
-        "cd '$BASE_DIR' && MA_PREFIX=$MA_PREFIX python3 '$BRIDGE_SCRIPT' $agent_id 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
+        "cd '$BASE_DIR' && MA_PREFIX='$MA_PREFIX' python3 '$BRIDGE_SCRIPT' '$agent_id' 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
 
     log_ok "$agent_id bridge restarted"
 }

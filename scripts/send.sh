@@ -25,6 +25,16 @@ if [ -z "$TO_AGENT" ]; then
     exit 1
 fi
 
+if [[ ! "$TO_AGENT" =~ ^[0-9]{3}(-[0-9]{3})?$ ]] && [ "$TO_AGENT" != "all" ]; then
+    echo "Error: Invalid agent ID format: $TO_AGENT (expected NNN or NNN-NNN)" >&2
+    exit 1
+fi
+
+if [[ ! "$MA_PREFIX" =~ ^[A-Za-z0-9]+$ ]]; then
+    echo "Error: Invalid MA_PREFIX: $MA_PREFIX" >&2
+    exit 1
+fi
+
 # Message from args or stdin
 if [ $# -gt 0 ]; then
     MESSAGE="$*"
@@ -64,11 +74,13 @@ TIMESTAMP=$(date +%s)
 # ── Triangle auto-resolve ──
 # If sender is in a triangle (NNN-XXX) and target is a bare suffix (YYY),
 # resolve target to NNN-YYY (same triangle as sender).
-if [[ "$FROM_AGENT" =~ ^([0-9]+)-[0-9]+$ ]] && [[ "$TO_AGENT" =~ ^[0-9]+$ ]] && [[ ! "$TO_AGENT" =~ - ]]; then
+if [[ "$FROM_AGENT" =~ ^([0-9]+)-[0-9]+$ ]]; then
     TRIANGLE="${BASH_REMATCH[1]}"
-    RESOLVED="${TRIANGLE}-${TO_AGENT}"
-    echo "[send.sh] WARNING: auto-resolved $TO_AGENT -> $RESOLVED (sender $FROM_AGENT is in triangle $TRIANGLE)" >&2
-    TO_AGENT="$RESOLVED"
+    if [[ "$TO_AGENT" =~ ^[0-9]+$ ]] && [[ ! "$TO_AGENT" =~ - ]]; then
+        RESOLVED="${TRIANGLE}-${TO_AGENT}"
+        echo "[send.sh] WARNING: auto-resolved $TO_AGENT -> $RESOLVED (sender $FROM_AGENT is in triangle $TRIANGLE)" >&2
+        TO_AGENT="$RESOLVED"
+    fi
 fi
 
 # Envoyer via Redis Streams (nouveau format)

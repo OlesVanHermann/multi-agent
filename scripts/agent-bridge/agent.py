@@ -589,13 +589,15 @@ class TmuxAgent:
                         msg_type = data.get('type', 'prompt')
 
                         if msg_type == 'prompt' or 'prompt' in data:
+                            raw_from = data.get('from_agent', 'unknown')
+                            safe_from = raw_from if re.fullmatch(r'[0-9]{3}(-[0-9]{3})?|cli|manual|legacy|unknown|auto_init|compaction_reload|compaction_resume|response_[0-9]{3}(-[0-9]{3})?', str(raw_from)) else 'unknown'
                             self.prompt_queue.put({
                                 'prompt': data.get('prompt', ''),
-                                'from_agent': data.get('from_agent', 'unknown'),
+                                'from_agent': safe_from,
                                 'msg_id': msg_id,
                                 'source': 'redis'
                             })
-                            self._log(f"<- Queued from {data.get('from_agent', '?')}: {data.get('prompt', '')[:50]}...")
+                            self._log(f"<- Queued from {safe_from}: {data.get('prompt', '')[:50]}...")
                         elif msg_type == 'reload_prompt':
                             self._log("Received reload_prompt — reloading agent personality")
                             self._reload_prompt()
@@ -655,7 +657,9 @@ class TmuxAgent:
                     if message.startswith('FROM:'):
                         parts = message.split('|', 1)
                         if len(parts) == 2:
-                            from_agent = parts[0][5:]
+                            raw_from = parts[0][5:]
+                            if re.fullmatch(r'[0-9]{3}(-[0-9]{3})?|cli|manual', str(raw_from)):
+                                from_agent = raw_from
                             prompt = parts[1]
 
                     self.prompt_queue.put({
