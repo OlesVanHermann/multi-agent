@@ -245,15 +245,23 @@ async def _refresh_cache_once():
     now = int(time.time())
 
     # --- Health ---
-    redis_ok = False
+    # redis state: "ok" | "noauth" | "down"
+    # JWT is determined client-side (response status), not here.
+    redis_state = "down"
     if redis_pool:
         try:
             await redis_pool.ping()
-            redis_ok = True
-        except Exception:
-            pass
+            redis_state = "ok"
+        except redis.exceptions.AuthenticationError:
+            redis_state = "noauth"
+        except Exception as e:
+            msg = str(e).lower()
+            if "auth" in msg or "noauth" in msg or "wrongpass" in msg:
+                redis_state = "noauth"
+            else:
+                redis_state = "down"
 
-    health = {"status": "ok" if redis_ok else "degraded", "redis": redis_ok, "timestamp": now}
+    health = {"status": "ok" if redis_state == "ok" else "degraded", "redis": redis_state, "timestamp": now}
 
     # --- Agent tmux states (sequential for loop, single capture per agent) ---
     agent_states = {}
@@ -2681,10 +2689,19 @@ _WS_AGENT_MAX = 100
 
 @app.websocket("/ws/agent/{agent_id}")
 async def websocket_agent_output(websocket: WebSocket, agent_id: str):
-    """WebSocket endpoint for real-time agent tmux output with input sync"""
+    """WebSocket endpoint for real-time agent tmux output with input sync.
+
+    Custom close codes (4xxx range reserved for user-defined) so the frontend
+    can show the cause of disconnection:
+      4001 = JWT invalid/missing
+      4002 = rate limit exceeded
+      4005 = agent 000 forbidden
+      1008 = other policy violation (origin, bad agent_id format)
+      1013 = server overloaded (max connections)
+    """
     client_ip = websocket.headers.get("x-real-ip") or (websocket.client.host if websocket.client else "unknown")
     if not _check_rate_limit(client_ip):
-        await websocket.close(code=1008)
+        await websocket.close(code=4002)
         return
     if not _ws_origin_ok(websocket):
         await websocket.close(code=1008)
@@ -2695,11 +2712,11 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
     token = websocket.query_params.get("token", "")
     if not token or not _verify_jwt_minimal(token):
         print(f"[ws] REJECTED agent={agent_id} from={websocket.client}")
-        await websocket.close(code=1008)
+        await websocket.close(code=4001)
         return
     base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
     if base_id == "000":
-        await websocket.close(code=1008)
+        await websocket.close(code=4005)
         return
     if len(_ws_agent_connections) >= _WS_AGENT_MAX:
         await websocket.close(code=1013)

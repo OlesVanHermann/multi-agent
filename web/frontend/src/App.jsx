@@ -64,7 +64,8 @@ function App() {
   const [activePanel, setActivePanel] = useState('control') // 'control' or 'agent'
   const [panelConfig, setPanelConfig] = useState({})
   const [lastUpdate, setLastUpdate] = useState(null)
-  const [redisOk, setRedisOk] = useState(false)
+  // redisStatus: 'unknown' | 'ok' | 'noauth' | 'jwt' | 'down'
+  const [redisStatus, setRedisStatus] = useState('unknown')
   const wsRef = useRef(null)
 
   const [agentPoll, setAgentPoll] = usePollSetting('agent', 1)
@@ -99,11 +100,16 @@ function App() {
     const checkHealth = async () => {
       try {
         const res = await fetch(api('api/health'))
-        if (!res.ok) return
+        if (res.status === 401 || res.status === 403) { setRedisStatus('jwt'); return }
+        if (!res.ok)                                  { setRedisStatus('down'); return }
         const data = await res.json()
-        if (typeof data.redis === 'boolean') setRedisOk(data.redis)
+        if (typeof data.redis === 'string') {
+          setRedisStatus(data.redis)                  // "ok" | "noauth" | "down"
+        } else if (typeof data.redis === 'boolean') {
+          setRedisStatus(data.redis ? 'ok' : 'down')  // backward-compat
+        }
       } catch (err) {
-        // Network/backend unreachable — keep last known Redis state
+        setRedisStatus('down')                        // network / backend unreachable
       }
     }
 
@@ -830,7 +836,7 @@ function App() {
         activeCount={activeCount}
         warningCount={warningCount}
         compactedCount={compactedCount}
-        redisOk={redisOk}
+        redisStatus={redisStatus}
         lastUpdate={lastUpdate}
         reconnecting={reconnecting}
       />

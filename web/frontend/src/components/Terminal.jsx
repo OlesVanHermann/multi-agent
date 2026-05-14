@@ -27,7 +27,9 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   const [output, setOutput] = useState('')
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
-  const [connected, setConnected] = useState(false)
+  // wsState: 'live' | 'jwt' | 'rate' | 'forbidden' | 'overloaded' | 'disconnected'
+  const [wsState, setWsState] = useState('disconnected')
+  const connected = wsState === 'live'  // alias kept for existing internal usages
   const [syncing, setSyncing] = useState(false)
   const [paused, setPaused] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
@@ -127,7 +129,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
     if (!agentId) return
 
     setOutput('Loading...')
-    setConnected(false)
+    setWsState('disconnected')
     setPaused(false)
     setInput('')
     inputValueRef.current = ''
@@ -209,7 +211,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
           ws.close()
           return
         }
-        setConnected(true)
+        setWsState('live')
         log.ws('open', { agentId })
         startHeartbeat(ws)
       }
@@ -257,17 +259,24 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
         }, 2000)
       }
 
-      ws.onclose = () => {
-        setConnected(false)
-        log.ws('close', { agentId })
+      ws.onclose = (event) => {
+        // Map close codes set by backend (server.py /ws/agent handler)
+        const codeToState = {
+          4001: 'jwt',        // JWT invalid/missing
+          4002: 'rate',       // Rate limit exceeded
+          4005: 'forbidden',  // Agent 000 forbidden
+          1013: 'overloaded', // Server overloaded (max connections)
+        }
+        const newState = codeToState[event.code] || 'disconnected'
+        setWsState(newState)
+        log.ws('close', { agentId, code: event.code, state: newState })
         if (wsRef.current === ws) wsRef.current = null  // clear stale ref so handleVisibility can reconnect
         scheduleReconnect()
       }
 
       ws.onerror = () => {
-        setConnected(false)
+        // Don't set 'disconnected' here — onclose fires next with the real code
         log.ws('error', { agentId })
-        // onclose always fires after onerror — reconnect handled there
       }
     }
 
@@ -280,7 +289,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       clearHeartbeat()
       const ws = wsRef.current
       wsRef.current = null
-      setConnected(false)
+      setWsState('disconnected')
       if (ws) {
         intentionalClose = true
         try { ws.close() } catch {}
@@ -303,7 +312,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
           wsRef.current.close()
           wsRef.current = null
         }
-        setConnected(false)
+        setWsState('disconnected')
       } else {
         intentionalClose = false
         if (!isLive(wsRef.current) && !reconnectTimeoutRef.current) forceReconnect()
@@ -607,8 +616,23 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   return (
     <div className="terminal" onClick={handleTerminalClick}>
       <div className="terminal-header">
-        <span className={`status-dot ${connected ? 'green' : 'red'}`}></span>
-        Agent {agentId} {connected ? '(live)' : '(disconnected)'}
+        {(() => {
+          const WS_LABELS = {
+            live:         { text: 'live',         dot: 'green', title: 'WebSocket connecté, messages reçus' },
+            jwt:          { text: 'JWT',          dot: 'red',   title: 'Token Keycloak invalide ou expiré — re-login requis' },
+            rate:         { text: 'RATE',         dot: 'red',   title: 'Rate limit dépassé (300 req/min/IP) — attends 60s' },
+            forbidden:    { text: 'FORBIDDEN',    dot: 'red',   title: 'Agent 000 (Architect) ne peut pas être contrôlé via le dashboard' },
+            overloaded:   { text: 'OVERLOADED',   dot: 'red',   title: 'Backend a atteint le max de connexions WS' },
+            disconnected: { text: 'disconnected', dot: 'red',   title: 'Connexion fermée (réseau, backend down, ou close normal)' },
+          }
+          const w = WS_LABELS[wsState] || WS_LABELS.disconnected
+          return (
+            <>
+              <span className={`status-dot ${w.dot}`}></span>
+              Agent {agentId} <span title={w.title}>({w.text})</span>
+            </>
+          )
+        })()}
         {syncing && <span className="sync-indicator"> ⟳</span>}
         {paused && <span className="pause-indicator"> ⏸</span>}
         <UsageBars usage={planUsage} />
