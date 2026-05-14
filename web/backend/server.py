@@ -1658,27 +1658,44 @@ async def update_login_model(data: LoginModelUpdate):
 
 @app.post("/api/config/effort")
 async def update_effort(data: EffortUpdate):
-    """Create, update, or remove an effort override for an agent."""
+    """Create, update, or remove an effort override for an agent.
+
+    Compound x45 IDs (e.g. 011-911) write to the x45 subdir when present,
+    mirroring /api/config/logins-models. Remove cleans both locations so
+    no ghost file ever shadows the GET lookup.
+    """
     prompts_dir = BASE_DIR / "prompts"
 
     # Validate agent_id format
     if data.agent_id != "default" and not re.match(r'^\d{3}(-\d{3})?$', data.agent_id):
         raise HTTPException(status_code=400, detail="invalid agent_id")
 
+    # Resolve write path: x45 subdir for compounds when it exists, else root
+    root_path = prompts_dir / f"{data.agent_id}.effort"
+    if data.agent_id != "default" and "-" in data.agent_id:
+        base_id = data.agent_id.split("-")[0]
+        x45_dir = _resolve_prompts_dir(prompts_dir, base_id)
+        effort_path = (x45_dir / f"{data.agent_id}.effort") if x45_dir else root_path
+    else:
+        effort_path = root_path
+
     if data.level == "":
-        # Remove override (only for non-default)
+        # Remove override (only for non-default) — clean BOTH locations
         if data.agent_id == "default":
             raise HTTPException(status_code=400, detail="cannot remove default effort")
-        effort_path = prompts_dir / f"{data.agent_id}.effort"
-        if effort_path.exists():
-            effort_path.unlink()
+        for p in {effort_path, root_path}:
+            if p.exists() or p.is_symlink():
+                p.unlink()
         return {"status": "removed", "agent_id": data.agent_id}
 
     if data.level not in ("L", "M", "H"):
         raise HTTPException(status_code=400, detail="level must be L, M, or H")
 
-    effort_path = prompts_dir / f"{data.agent_id}.effort"
+    # Write to canonical location, and remove any ghost in the other to keep GET deterministic
+    effort_path.parent.mkdir(parents=True, exist_ok=True)
     effort_path.write_text(data.level + "\n")
+    if effort_path != root_path and (root_path.exists() or root_path.is_symlink()):
+        root_path.unlink()
     return {"status": "updated", "agent_id": data.agent_id, "level": data.level}
 
 
