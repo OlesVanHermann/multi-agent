@@ -54,7 +54,6 @@ do_start() {
     # Asyncio TCP proxy: single-threaded, non-blocking, handles thousands of connections
     # Supports HTTP, WebSocket, and any protocol transparently
     PROXY_PY=$(mktemp "$LOG_DIR/.proxy.XXXXXX.py")
-    chmod 0400 "$PROXY_PY"
     cat > "$PROXY_PY" << 'PYEOF'
 import asyncio, sys, signal, traceback
 from datetime import datetime
@@ -157,6 +156,7 @@ finally:
     loop.close()
     log("Proxy stopped")
 PYEOF
+    chmod 0400 "$PROXY_PY"
 
     if [ "$LISTEN_PORT" -lt 1024 ] && [ "$(uname)" = "Linux" ]; then
         sudo nohup python3 "$PROXY_PY" "$BACKEND_HOST" "$BACKEND_PORT" "$LISTEN_HOST" "$LISTEN_PORT" \

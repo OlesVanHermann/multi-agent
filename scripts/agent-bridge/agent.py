@@ -604,7 +604,8 @@ class TmuxAgent:
                         elif msg_type == 'response':
                             from_id = data.get('from_agent', '?')
                             response_text = data.get('response', '')
-                            chunk_info = data.get('chunk', '')
+                            raw_chunk = data.get('chunk', '')
+                            chunk_info = raw_chunk if re.fullmatch(r'[\w\-/. ]{0,30}', str(raw_chunk)) else ''
                             is_complete = data.get('complete', 'true')
 
                             self._log(f"<- Response from {from_id} ({len(response_text)} chars){' ['+chunk_info+']' if chunk_info else ''}")
@@ -957,11 +958,11 @@ class TmuxAgent:
     def send_to_agent(self, to_agent, prompt):
         """Send message to another agent. Returns 'ok' or 'ko'."""
         if to_agent == 'all':
-            agent_keys = self.redis.keys(f'{MA_PREFIX}:agent:*')
+            import re as _re
             sent_count = 0
-            for key in agent_keys:
+            for key in self.redis.scan_iter(f'{MA_PREFIX}:agent:*', count=200):
                 parts = key.split(':')
-                if len(parts) == 3 and parts[2].isdigit():
+                if len(parts) == 3 and _re.fullmatch(r'[0-9]{3}(-[0-9]{3})?', parts[2]):
                     target_id = parts[2]
                     if target_id != self.agent_id:
                         self.redis.xadd(f"{MA_PREFIX}:agent:{target_id}:inbox", {

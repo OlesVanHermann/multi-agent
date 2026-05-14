@@ -178,8 +178,8 @@ class TestSendToAgent:
     def test_broadcast_excludes_self(self):
         """Broadcast exclut l'agent émetteur (EF-001)"""
         agent = _make_agent("300")
-        # Mock keys to return agent 300 (self) and 301
-        agent.redis.keys.return_value = ["A:agent:300", "A:agent:301"]
+        # Mock scan_iter to return agent 300 (self) and 301
+        agent.redis.scan_iter.return_value = iter(["A:agent:300", "A:agent:301"])
 
         agent.send_to_agent("all", "broadcast msg")
 
@@ -192,11 +192,11 @@ class TestSendToAgent:
     def test_broadcast_filters_non_digit_keys(self):
         """Broadcast ignore les clés non-numériques (EF-001)"""
         agent = _make_agent("100")
-        agent.redis.keys.return_value = [
+        agent.redis.scan_iter.return_value = iter([
             "A:agent:200",
             "A:agent:abc",         # non-digit → skip
             "A:agent:300:inbox",   # 4 parts → skip (len != 3)
-        ]
+        ])
 
         agent.send_to_agent("all", "test")
 

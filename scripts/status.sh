@@ -284,6 +284,12 @@ do_full() {
     # Get first agent ID
     FIRST_AGENT=$(tmux ls 2>/dev/null | grep "^${MA_PREFIX}-agent-" | head -1 | sed "s/${MA_PREFIX}-agent-//" | cut -d: -f1)
 
+    # Validate agent ID format before use in python/curl
+    if [[ -n "$FIRST_AGENT" && ! "$FIRST_AGENT" =~ ^[0-9]{3}(-[0-9]{3})?$ ]]; then
+        warn "WS agent" "Invalid agent ID from tmux: $FIRST_AGENT"
+        FIRST_AGENT=""
+    fi
+
     if [ -n "$FIRST_AGENT" ]; then
         # Test WebSocket with python3
         WS_RESULT=$(python3 -c "

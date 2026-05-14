@@ -10,6 +10,11 @@ ulimit -n 10240 2>/dev/null || true
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [ -f "$BASE_DIR/setup/secrets.cfg" ]; then
+    set -a
+    eval "$(grep -E '^[A-Z_]+=' "$BASE_DIR/setup/secrets.cfg" | grep -v '^#')"
+    set +a
+fi
 source "$SCRIPT_DIR/redis.sh"
 BRIDGE_SCRIPT="$BASE_DIR/scripts/agent-bridge/agent.py"
 LOG_DIR="$BASE_DIR/logs"
@@ -204,7 +209,16 @@ start_single() {
 
     local CLAUDE_CMD="claude"
     if [ -n "$LOGIN_PROFILE" ]; then
+        if [[ ! "$LOGIN_PROFILE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            log_error "Invalid LOGIN_PROFILE: $LOGIN_PROFILE"
+            return 1
+        fi
         CLAUDE_CMD="CLAUDE_CONFIG_DIR=$PROFILES_DIR/$LOGIN_PROFILE claude"
+    fi
+
+    if [ -n "$MODEL" ] && [[ ! "$MODEL" =~ ^[a-zA-Z0-9_.:-]+$ ]]; then
+        log_error "Invalid MODEL: $MODEL"
+        return 1
     fi
 
     tmux new-session -d -s "$SESSION_NAME" -x "${TMUX_COLS:-80}" -y 24
@@ -222,7 +236,7 @@ start_single() {
     # Prompt injection is handled by the bridge (agent.py auto-init)
 
     tmux new-window -t "$SESSION_NAME" -n bridge
-    tmux send-keys -t "$SESSION_NAME:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX='$MA_PREFIX' python3 '$BRIDGE_SCRIPT' '$agent_id' 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
+    tmux send-keys -t "$SESSION_NAME:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX='$MA_PREFIX' REDIS_PASSWORD='${REDIS_PASSWORD:-}' REDIS_PORT='${REDIS_PORT:-6379}' HEALTH_TOKEN='${HEALTH_TOKEN:-}' python3 '$BRIDGE_SCRIPT' '$agent_id' 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
     tmux select-window -t "$SESSION_NAME:0"
 
     log_ok "Agent $agent_id started: $SESSION_NAME"
@@ -360,7 +374,7 @@ start_all() {
 
                 # Start bridge in second window
                 tmux new-window -t "$SESSION" -n bridge
-                tmux send-keys -t "$SESSION:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX='$MA_PREFIX' python3 '$BRIDGE_SCRIPT' '$agent_id' 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
+                tmux send-keys -t "$SESSION:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX='$MA_PREFIX' REDIS_PASSWORD='${REDIS_PASSWORD:-}' REDIS_PORT='${REDIS_PORT:-6379}' HEALTH_TOKEN='${HEALTH_TOKEN:-}' python3 '$BRIDGE_SCRIPT' '$agent_id' 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
                 tmux select-window -t "$SESSION:0"
 
                 log_ok "  Agent $agent_id ready"

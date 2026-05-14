@@ -26,7 +26,7 @@ else
     if ! docker info &>/dev/null 2>&1 && sudo docker info &>/dev/null 2>&1; then
         _DOCKER="sudo docker"
     fi
-    REDIS_CLI="$_DOCKER exec -e REDISCLI_AUTH=$REDIS_PASSWORD ma-redis redis-cli"
+    REDIS_CLI="$_DOCKER exec -e REDISCLI_AUTH='$REDIS_PASSWORD' ma-redis redis-cli"
 fi
 export REDIS_CLI
 
@@ -41,7 +41,7 @@ if ! _redis_validate; then
     if ! docker info &>/dev/null 2>&1 && sudo docker info &>/dev/null 2>&1; then
         _DOCKER="sudo docker"
     fi
-    REDIS_CLI="$_DOCKER exec -e REDISCLI_AUTH=$REDIS_PASSWORD ma-redis redis-cli"
+    REDIS_CLI="$_DOCKER exec -e REDISCLI_AUTH='$REDIS_PASSWORD' ma-redis redis-cli"
     export REDIS_CLI
 
     if ! _redis_validate; then

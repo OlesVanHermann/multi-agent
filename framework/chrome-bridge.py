@@ -42,6 +42,36 @@ import os
 import base64
 from pathlib import Path
 
+def _safe_output_path(filepath: str) -> str:
+    """Validate output path: reject absolute paths and traversal."""
+    p = Path(filepath)
+    if p.is_absolute():
+        raise SystemExit(f"Error: absolute output path not allowed: {filepath}")
+    resolved = Path.cwd().joinpath(p).resolve()
+    if not str(resolved).startswith(str(Path.cwd().resolve())):
+        raise SystemExit(f"Error: path traversal detected: {filepath}")
+    return str(resolved)
+
+def _is_safe_url(url: str) -> bool:
+    """Block internal/private IPs and dangerous schemes."""
+    import ipaddress
+    import socket
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ('http', 'https'):
+        return False
+    host = (parsed.hostname or '').lower()
+    if not host:
+        return False
+    try:
+        resolved = socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        for _fam, _type, _proto, _canon, sockaddr in resolved:
+            ip = ipaddress.ip_address(sockaddr[0])
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                return False
+    except (socket.gaierror, ValueError):
+        return False
+    return True
+
 # --- Optional: Redis ---
 try:
     import redis
@@ -761,35 +791,38 @@ def main():
         if not args:
             print("Usage: read <fichier>", file=sys.stderr)
             sys.exit(1)
+        out = _safe_output_path(args[0])
         cdp, _ = get_cdp()
         html = cdp.get_html()
         cdp.close()
-        with open(args[0], 'w', encoding='utf-8') as f:
+        with open(out, 'w', encoding='utf-8') as f:
             f.write(html or "")
-        print(f"✓ HTML → {args[0]}")
+        print(f"✓ HTML → {out}")
 
     elif cmd == "read-text":
         if not args:
             print("Usage: read-text <fichier>", file=sys.stderr)
             sys.exit(1)
+        out = _safe_output_path(args[0])
         cdp, _ = get_cdp()
         text = cdp.get_text()
         cdp.close()
-        with open(args[0], 'w', encoding='utf-8') as f:
+        with open(out, 'w', encoding='utf-8') as f:
             f.write(text or "")
-        print(f"✓ Text → {args[0]}")
+        print(f"✓ Text → {out}")
 
     elif cmd == "read-element":
         if len(args) < 2:
             print("Usage: read-element <selector> <fichier>", file=sys.stderr)
             sys.exit(1)
+        out = _safe_output_path(args[1])
         cdp, _ = get_cdp()
         html = cdp.get_element_html(args[0])
         cdp.close()
         if html:
-            with open(args[1], 'w', encoding='utf-8') as f:
+            with open(out, 'w', encoding='utf-8') as f:
                 f.write(html)
-            print(f"✓ Element → {args[1]}")
+            print(f"✓ Element → {out}")
         else:
             print(f"✗ Element non trouvé: {args[0]}", file=sys.stderr)
             sys.exit(1)
@@ -1003,34 +1036,37 @@ def main():
         if not args:
             print("Usage: screenshot <fichier.png>", file=sys.stderr)
             sys.exit(1)
+        out = _safe_output_path(args[0])
         cdp, _ = get_cdp()
         data = cdp.screenshot(full_page=False)
         cdp.close()
-        with open(args[0], 'wb') as f:
+        with open(out, 'wb') as f:
             f.write(data)
-        print(f"✓ Screenshot → {args[0]}")
+        print(f"✓ Screenshot → {out}")
 
     elif cmd == "screenshot-full":
         if not args:
             print("Usage: screenshot-full <fichier.png>", file=sys.stderr)
             sys.exit(1)
+        out = _safe_output_path(args[0])
         cdp, _ = get_cdp()
         data = cdp.screenshot(full_page=True)
         cdp.close()
-        with open(args[0], 'wb') as f:
+        with open(out, 'wb') as f:
             f.write(data)
-        print(f"✓ Screenshot full → {args[0]}")
+        print(f"✓ Screenshot full → {out}")
 
     elif cmd == "pdf":
         if not args:
             print("Usage: pdf <fichier.pdf>", file=sys.stderr)
             sys.exit(1)
+        out = _safe_output_path(args[0])
         cdp, _ = get_cdp()
         data = cdp.pdf()
         cdp.close()
-        with open(args[0], 'wb') as f:
+        with open(out, 'wb') as f:
             f.write(data)
-        print(f"✓ PDF → {args[0]}")
+        print(f"✓ PDF → {out}")
 
     # =====================================================================
     # IMAGES
@@ -1041,9 +1077,10 @@ def main():
         images = cdp.get_images()
         cdp.close()
         if args:
-            with open(args[0], 'w') as f:
+            out = _safe_output_path(args[0])
+            with open(out, 'w') as f:
                 json.dump(images, f, indent=2, ensure_ascii=False)
-            print(f"✓ {len(images)} images → {args[0]}")
+            print(f"✓ {len(images)} images → {out}")
         else:
             print(json.dumps(images, indent=2, ensure_ascii=False))
 
@@ -1052,12 +1089,13 @@ def main():
             print("Usage: capture-element <selector> <fichier.png>", file=sys.stderr)
             sys.exit(1)
         cdp, _ = get_cdp()
+        out = _safe_output_path(args[1])
         data = cdp.get_element_as_image(args[0])
         cdp.close()
         if data:
-            with open(args[1], 'wb') as f:
+            with open(out, 'wb') as f:
                 f.write(data)
-            print(f"✓ Element {args[0]} → {args[1]}")
+            print(f"✓ Element {args[0]} → {out}")
         else:
             print(f"✗ Element non trouvé: {args[0]}", file=sys.stderr)
             sys.exit(1)
@@ -1066,7 +1104,7 @@ def main():
         if not args:
             print("Usage: download-images <dossier>", file=sys.stderr)
             sys.exit(1)
-        dossier = args[0]
+        dossier = _safe_output_path(args[0])
         os.makedirs(dossier, exist_ok=True)
         cdp, _ = get_cdp()
         images = cdp.get_images()
@@ -1086,6 +1124,9 @@ def main():
                         f.write(data)
                     downloaded += 1
                 elif src.startswith('http'):
+                    if not _is_safe_url(src):
+                        print(f"  ⚠ Skip (blocked URL): {src[:50]}...", file=sys.stderr)
+                        continue
                     ext = src.split('.')[-1].split('?')[0][:4]
                     if ext not in ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp']:
                         ext = 'png'

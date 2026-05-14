@@ -109,9 +109,10 @@ async def _capture_agent_pane(agent_id: str, lines: int = 500, ansi: bool = Fals
             inner = f"tmux capture-pane -t {target} -p -e -S -20"
         else:
             inner = f"tmux capture-pane -t {target} -p -J -S -{lines}"
-        full = f"{ssh_cmd} -o ConnectTimeout=5 {inner!r}"
-        # shell=True so ssh_cmd string is parsed by the shell
-        return await _run_subprocess(full, shell=True, text=True)
+        import shlex
+        ssh_args = shlex.split(ssh_cmd)
+        args = ssh_args + ["-o", "ConnectTimeout=5", inner]
+        return await _run_subprocess(args, text=True)
     else:
         target = f"{MA_PREFIX}-agent-{agent_id}:0.0"
         if ansi:
@@ -126,8 +127,10 @@ async def _agent_session_exists(agent_id: str) -> bool:
     remote = _get_remote_info(agent_id)
     if remote:
         ssh_cmd, remote_session = remote
-        full = f"{ssh_cmd} -o ConnectTimeout=5 'tmux has-session -t {remote_session} 2>/dev/null'"
-        result = await _run_subprocess(full, shell=True)
+        import shlex
+        ssh_args = shlex.split(ssh_cmd)
+        args = ssh_args + ["-o", "ConnectTimeout=5", f"tmux has-session -t {remote_session}"]
+        result = await _run_subprocess(args)
         return result.returncode == 0
     else:
         session_name = f"{MA_PREFIX}-agent-{agent_id}"
@@ -502,7 +505,9 @@ async def _cache_loop():
         try:
             if redis_pool:
                 # Scan for any reload_sent timestamps where elapsed >= COMPACTING_WAIT_SECS
-                keys = await redis_pool.keys(f"{MA_PREFIX}:agent:*:reload_sent")
+                keys = []
+                async for key in redis_pool.scan_iter(match=f"{MA_PREFIX}:agent:*:reload_sent", count=100):
+                    keys.append(key)
                 for key in keys:
                     ts = await redis_pool.get(key)
                     if ts:
@@ -587,10 +592,16 @@ async def lifespan(app: FastAPI):
         if check.returncode != 0 and _crontab_script.exists():
             os.makedirs(BASE_DIR / "logs", exist_ok=True)
             _env_file = BASE_DIR / "setup" / "secrets.cfg"
-            _source_env = f"set -a; source {_env_file} 2>/dev/null; set +a; " if _env_file.exists() else ""
+            import shlex
+            _base = shlex.quote(str(BASE_DIR))
+            _script = shlex.quote(str(_crontab_script))
+            _log = shlex.quote(str(_crontab_log))
+            _envf = shlex.quote(str(_env_file))
+            _source_env = f"set -a; source {_envf} 2>/dev/null; set +a; " if _env_file.exists() else ""
+            _prefix = shlex.quote(MA_PREFIX)
             subprocess.run([
                 "tmux", "new-session", "-d", "-s", _crontab_session,
-                f"cd {BASE_DIR} && {_source_env}MA_PREFIX={MA_PREFIX} python3 -u {_crontab_script} 2>&1 | tee -a {_crontab_log}"
+                f"cd {_base} && {_source_env}MA_PREFIX={_prefix} python3 -u {_script} 2>&1 | tee -a {_log}"
             ], timeout=5)
             print(f"Crontab scheduler started: {_crontab_session}")
         else:
@@ -615,22 +626,47 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Multi-Agent Dashboard API",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
-# CORS for local dev
+_ALLOWED_ORIGINS_ENV = os.environ.get("ALLOWED_ORIGINS", "")
+_ALLOWED_ORIGINS = [o.strip() for o in _ALLOWED_ORIGINS_ENV.split(",") if o.strip()] if _ALLOWED_ORIGINS_ENV else ["*"]
+_ALLOWED_ORIGINS_LOCAL_DEV = ["http://localhost:5173", "http://localhost:8050"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://your-domain.example.com",
-        "https://other-subdomain.example.com",
-        "http://localhost:5173",
-        "http://localhost:8050",
-    ],
+    allow_origins=_ALLOWED_ORIGINS + _ALLOWED_ORIGINS_LOCAL_DEV,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# === Rate Limiting ===
+
+import collections
+
+_rate_buckets: dict[str, collections.deque] = {}
+_RATE_LIMIT = 300
+_RATE_WINDOW = 60
+
+def _check_rate_limit(client_ip: str) -> bool:
+    now = time.time()
+    bucket = _rate_buckets.get(client_ip)
+    if bucket is None:
+        bucket = collections.deque()
+        _rate_buckets[client_ip] = bucket
+    while bucket and bucket[0] < now - _RATE_WINDOW:
+        bucket.popleft()
+    if len(bucket) >= _RATE_LIMIT:
+        return False
+    bucket.append(now)
+    if len(_rate_buckets) > 10000:
+        oldest_key = next(iter(_rate_buckets))
+        del _rate_buckets[oldest_key]
+    return True
 
 # === Security Headers Middleware ===
 
@@ -641,6 +677,7 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
     return response
 
 # === JWT Auth Middleware ===
@@ -665,27 +702,23 @@ async def _get_jwks():
         pass
     return _jwks_cache["keys"]  # return stale if fetch fails
 
+_EXPECTED_AUDIENCE = os.environ.get("KEYCLOAK_CLIENT_ID", "multi-agent-web")
+
 def _verify_jwt_minimal(token: str) -> bool:
-    """JWT verification with signature check via Keycloak JWKS.
-    Accepts tokens issued by both internal (localhost:8080) and external (public URL) issuers.
-    """
+    """JWT verification with signature check via Keycloak JWKS."""
     try:
         import jwt as pyjwt
         from jwt import PyJWKClient
         jwks_client = PyJWKClient(KEYCLOAK_JWKS_URL, cache_keys=True, lifespan=3600)
         signing_key = jwks_client.get_signing_key_from_jwt(token)
-        # Accept both internal and external issuer URLs
-        pyjwt.decode(
+        payload = pyjwt.decode(
             token,
             signing_key.key,
             algorithms=["RS256"],
             options={"verify_aud": False, "verify_iss": False, "verify_exp": True},
         )
-        # Manual issuer check: realm name must be in the issuer
-        import base64
-        payload_b64 = token.split(".")[1] + "=" * (4 - len(token.split(".")[1]) % 4)
-        payload = json.loads(base64.b64decode(payload_b64))
-        if f"/realms/{KEYCLOAK_REALM}" not in payload.get("iss", ""):
+        iss = payload.get("iss", "")
+        if not iss.endswith(f"/realms/{KEYCLOAK_REALM}"):
             return False
         return True
     except Exception as e:
@@ -693,12 +726,22 @@ def _verify_jwt_minimal(token: str) -> bool:
         return False
 
 # Public paths that don't require auth
-_PUBLIC_PATHS = {"/api/agent-chat/health", "/api/agent-chat/spec", "/api/agent-chat/events"}
+_PUBLIC_PATHS = {"/api/agent-chat/health", "/api/agent-chat/spec"}
 _PUBLIC_PREFIXES = ("/auth/", "/assets/", "/favicon")
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
+
+    # Rate limit all API requests
+    if path.startswith("/api/"):
+        client_ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "unknown")
+        if not _check_rate_limit(client_ip):
+            return Response(
+                content=json.dumps({"detail": "Rate limit exceeded"}),
+                status_code=429,
+                media_type="application/json",
+            )
 
     # Skip auth for public paths, static files, and WebSocket upgrades (handled separately)
     if path in _PUBLIC_PATHS or any(path.startswith(p) for p in _PUBLIC_PREFIXES):
@@ -1138,12 +1181,12 @@ async def read_prompt_file(path: str = "", reverse: bool = False):
         (BASE_DIR / "prompts").resolve(),
         (BASE_DIR / "logs").resolve(),
     ]
-    if not any(str(full).startswith(str(root)) for root in allowed_roots):
+    if not any(str(full) == str(root) or str(full).startswith(str(root) + os.sep) for root in allowed_roots):
         raise HTTPException(status_code=403, detail="forbidden")
     # Reject symlinks pointing outside allowed directories
     if full.is_symlink():
         target = full.resolve()
-        if not any(str(target).startswith(str(root)) for root in allowed_roots):
+        if not any(str(target) == str(root) or str(target).startswith(str(root) + os.sep) for root in allowed_roots):
             raise HTTPException(status_code=403, detail="forbidden")
     # If not found, try resolving named directory (345 → 345-develop-fonction-beta)
     if not full.exists():
@@ -1152,10 +1195,13 @@ async def read_prompt_file(path: str = "", reverse: bool = False):
             resolved_dir = _resolve_prompts_dir(BASE_DIR / "prompts", parts[1])
             if resolved_dir:
                 full = (resolved_dir / Path(*parts[2:])).resolve()
-                if not any(str(full).startswith(str(root)) for root in allowed_roots):
+                if not any(str(full) == str(root) or str(full).startswith(str(root) + os.sep) for root in allowed_roots):
                     raise HTTPException(status_code=403, detail="forbidden")
     if not full.exists() or not full.is_file():
         raise HTTPException(status_code=404, detail="not found")
+    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+    if full.stat().st_size > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="file too large")
     try:
         content = full.read_text(encoding="utf-8")
         if reverse:
@@ -1206,7 +1252,7 @@ async def get_z21_contexts(base_id: str):
     return {"base_id": base_id, "contexts": contexts}
 
 
-MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100 MB
+MAX_UPLOAD_SIZE = 5 * 1024 * 1024 * 1024  # 5 GB
 
 @app.post("/api/upload")
 async def upload_file(file: UploadFile):
@@ -1218,7 +1264,12 @@ async def upload_file(file: UploadFile):
     safe_name = re.sub(r'[^\w.\-]', '_', safe_name)
     if not safe_name or safe_name.startswith('.'):
         safe_name = f"upload_{int(time.time())}"
-    dest = Path("/tmp") / safe_name
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    dest = Path("/tmp") / f"{ts}_{safe_name}"
+    counter = 1
+    while dest.exists():
+        dest = Path("/tmp") / f"{ts}_{counter}_{safe_name}"
+        counter += 1
     size = 0
     try:
         with open(dest, "wb") as f:
@@ -1226,19 +1277,20 @@ async def upload_file(file: UploadFile):
                 size += len(chunk)
                 if size > MAX_UPLOAD_SIZE:
                     dest.unlink(missing_ok=True)
-                    raise HTTPException(status_code=413, detail="file too large (max 100MB)")
+                    raise HTTPException(status_code=413, detail="file too large (max 5GB)")
                 f.write(chunk)
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"upload failed: {e}")
+        logger.error("upload failed: %s", e)
+        raise HTTPException(status_code=500, detail="upload failed")
     return {"path": str(dest), "name": safe_name, "size": size}
 
 
 @app.get("/api/agents")
 async def list_agents():
     """List all agents — reads from background cache (instant)"""
-    agents = _cache["agents"]
+    agents = [a for a in _cache["agents"] if (a.get("id") or "").split("-")[0] != "000"]
     result = {
         "agents": agents,
         "count": len(agents),
@@ -1561,6 +1613,10 @@ async def update_login_model(data: LoginModelUpdate):
     if data.agent_id != "default" and not re.match(r'^\d{3}(-\d{3})?$', data.agent_id):
         raise HTTPException(status_code=400, detail="invalid agent_id")
 
+    # Validate data.value (prevent path traversal)
+    if data.value and not re.match(r'^[a-zA-Z0-9_.-]+$', data.value):
+        raise HTTPException(status_code=400, detail="invalid value")
+
     # For compound x45 IDs, resolve to x45 directory; otherwise prompts/
     if data.agent_id != "default" and "-" in data.agent_id:
         base_id = data.agent_id.split("-")[0]
@@ -1633,9 +1689,17 @@ def _favoris_file(user: str, project: str) -> Path:
     safe_proj = "".join(c for c in project if c.isalnum() or c in "-_ ")[:30].strip() or "default"
     return BASE_DIR / "prompts" / f"favoris-{safe_user}-{safe_proj}.json"
 
+def _get_jwt_username(request: Request) -> str:
+    auth_header = request.headers.get("authorization", "")
+    username = _extract_username_from_jwt(auth_header)
+    if not username:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return username
+
 @app.get("/api/config/favoris")
-async def get_favoris(user: str = "default", project: str = "default"):
-    """Get agent favoris config for a user+project."""
+async def get_favoris(request: Request, project: str = "default"):
+    """Get agent favoris config for the authenticated user+project."""
+    user = _get_jwt_username(request)
     f = _favoris_file(user, project)
     if f.exists():
         try:
@@ -1645,9 +1709,9 @@ async def get_favoris(user: str = "default", project: str = "default"):
     return {}
 
 @app.post("/api/config/favoris")
-async def set_favoris(data: dict):
-    """Save agent favoris config. Body: {user, project, favoris: {agent_id: position (1-6)}}."""
-    user = data.get("user", "default")
+async def set_favoris(request: Request, data: dict):
+    """Save agent favoris config. Body: {project, favoris: {agent_id: position (1-6)}}."""
+    user = _get_jwt_username(request)
     project = data.get("project", "default")
     favoris = data.get("favoris", {})
     clean = {}
@@ -1658,14 +1722,16 @@ async def set_favoris(data: dict):
     return {"status": "ok", "user": user, "project": project, "favoris": clean}
 
 @app.get("/api/config/favoris/projects")
-async def get_favoris_projects(user: str = "default"):
-    """List all projects for a user. Returns {projects: ["mail", "drive"]}."""
+async def get_favoris_projects(request: Request):
+    """List all projects for the authenticated user."""
+    user = _get_jwt_username(request)
     import glob as g
-    pattern = str(BASE_DIR / "prompts" / f"favoris-{user}-*.json")
-    prefix = f"favoris-{user}-"
+    safe_user = "".join(c for c in user if c.isalnum() or c in "-_")[:30].strip() or "default"
+    pattern = str(BASE_DIR / "prompts" / f"favoris-{safe_user}-*.json")
+    prefix = f"favoris-{safe_user}-"
     projects = []
     for path in sorted(g.glob(pattern)):
-        name = Path(path).stem  # e.g. favoris-admin-mail
+        name = Path(path).stem
         if name.startswith(prefix):
             proj = name[len(prefix):]
             if proj:
@@ -1673,17 +1739,15 @@ async def get_favoris_projects(user: str = "default"):
     return {"projects": projects}
 
 @app.post("/api/config/favoris/rename")
-async def rename_favoris_project(data: dict):
-    """Rename a favoris project. Body: {user, old_project, new_project}.
-    If new_project file already exists, returns its favoris (switch, no rename)."""
-    user = data.get("user", "default")
+async def rename_favoris_project(request: Request, data: dict):
+    """Rename a favoris project. Body: {old_project, new_project}."""
+    user = _get_jwt_username(request)
     old_project = data.get("old_project", "")
     new_project = data.get("new_project", "")
     if not old_project or not new_project:
         raise HTTPException(400, "old_project and new_project required")
     old_f = _favoris_file(user, old_project)
     new_f = _favoris_file(user, new_project)
-    # Sanitized names may match — no-op
     if old_f == new_f:
         favoris = {}
         if old_f.exists():
@@ -1692,14 +1756,12 @@ async def rename_favoris_project(data: dict):
             except Exception:
                 pass
         return {"status": "ok", "project": new_project, "favoris": favoris}
-    # If destination exists → switch (load it, don't rename)
     if new_f.exists():
         try:
             favoris = json.loads(new_f.read_text())
         except Exception:
             favoris = {}
         return {"status": "switched", "project": new_project, "favoris": favoris}
-    # Rename old → new
     favoris = {}
     if old_f.exists():
         old_f.rename(new_f)
@@ -1708,14 +1770,13 @@ async def rename_favoris_project(data: dict):
         except Exception:
             pass
     else:
-        # No old file — create empty new
         new_f.write_text("{}\n")
     return {"status": "renamed", "project": new_project, "favoris": favoris}
 
 @app.post("/api/config/favoris/delete")
-async def delete_favoris_project(data: dict):
-    """Delete a favoris project file. Body: {user, project}."""
-    user = data.get("user", "default")
+async def delete_favoris_project(request: Request, data: dict):
+    """Delete a favoris project file. Body: {project}."""
+    user = _get_jwt_username(request)
     project = data.get("project", "")
     if not project:
         raise HTTPException(400, "project required")
@@ -1773,7 +1834,8 @@ async def set_tmux_width(data: dict):
         (BASE_DIR / "prompts" / "tmux.width").write_text(str(width) + "\n")
         return {"status": "ok", "width": width, "sessions": resized}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("resize failed: %s", e)
+        raise HTTPException(status_code=500, detail="operation failed")
 
 
 @app.get("/api/config/panel")
@@ -1836,15 +1898,22 @@ async def get_crontab():
     return {"entries": entries}
 
 
+_CRONTAB_PROMPT_MAX = 2000
+
 @app.post("/api/config/crontab")
 async def create_crontab(data: CrontabCreate):
     """Create a new crontab entry."""
     if not re.match(r'^\d{3}(-\d{3})?$', data.agent_id):
         raise HTTPException(status_code=400, detail="invalid agent_id")
+    base_id = data.agent_id.split("-")[0] if "-" in data.agent_id else data.agent_id
+    if base_id == "000":
+        raise HTTPException(status_code=403, detail="Cannot schedule crontab for architect agent")
     if data.period not in VALID_CRONTAB_PERIODS:
         raise HTTPException(status_code=400, detail=f"period must be one of {sorted(VALID_CRONTAB_PERIODS)}")
     if not data.prompt.strip():
         raise HTTPException(status_code=400, detail="prompt cannot be empty")
+    if len(data.prompt) > _CRONTAB_PROMPT_MAX:
+        raise HTTPException(status_code=400, detail=f"prompt too long (max {_CRONTAB_PROMPT_MAX})")
 
     CRONTAB_DIR.mkdir(parents=True, exist_ok=True)
     filepath = CRONTAB_DIR / f"{data.agent_id}_{data.period}.prompt"
@@ -1859,8 +1928,13 @@ async def update_crontab(data: CrontabUpdate):
     """Update, suspend, or resume a crontab entry."""
     if not re.match(r'^\d{3}(-\d{3})?$', data.agent_id):
         raise HTTPException(status_code=400, detail="invalid agent_id")
+    base_id = data.agent_id.split("-")[0] if "-" in data.agent_id else data.agent_id
+    if base_id == "000":
+        raise HTTPException(status_code=403, detail="Cannot modify crontab for architect agent")
     if data.period not in VALID_CRONTAB_PERIODS:
         raise HTTPException(status_code=400, detail=f"period must be one of {sorted(VALID_CRONTAB_PERIODS)}")
+    if data.prompt is not None and len(data.prompt) > _CRONTAB_PROMPT_MAX:
+        raise HTTPException(status_code=400, detail=f"prompt too long (max {_CRONTAB_PROMPT_MAX})")
 
     base = f"{data.agent_id}_{data.period}.prompt"
     active = CRONTAB_DIR / base
@@ -2037,6 +2111,9 @@ async def _agent_lifecycle(agent_id: str, action: str):
     """Start, stop, or restart an agent via ./scripts/agent.sh."""
     if not re.match(r'^\d{3}(-\d{3})?$', agent_id):
         raise HTTPException(status_code=400, detail="invalid agent_id")
+    base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
+    if base_id == "000":
+        raise HTTPException(status_code=403, detail="Cannot control architect agent via API")
 
     script = BASE_DIR / "scripts" / "agent.sh"
     if not script.exists():
@@ -2056,7 +2133,8 @@ async def _agent_lifecycle(agent_id: str, action: str):
             "output": output,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"{action} failed: {e}")
+        logger.warning("%s failed for agent %s: %s", action, agent_id, e)
+        raise HTTPException(status_code=500, detail=f"{action} failed")
 
 
 @app.post("/api/agent/{agent_id}/start")
@@ -2077,6 +2155,9 @@ async def restart_agent(agent_id: str):
 @app.get("/api/agent/{agent_id}/events")
 async def get_agent_events(agent_id: str = Depends(lambda agent_id: _validated_agent_id(agent_id)), all: int = 0):
     """Get event log for an agent. ?all=1 includes archived (rotated) files."""
+    base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
+    if base_id == "000":
+        raise HTTPException(status_code=403, detail="Cannot read architect agent events")
     d = _events_dir(agent_id)
 
     def _read_jsonl(path: Path) -> list:
@@ -2114,11 +2195,11 @@ class SendKeys(BaseModel):
     keys: list[str]  # tmux key names: "Enter", "C-c", "Escape", etc.
 
 
-_ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
+_ANSI_RE = re.compile(r'\x1b(?:\[[0-9;]*[A-Za-z]|\].*?(?:\x07|\x1b\\)|\([A-Za-z0-9]|P.*?(?:\x1b\\))')
 
 
 def _strip_ansi(text: str) -> str:
-    """Remove ANSI escape codes from text."""
+    """Remove ANSI/terminal escape codes from text."""
     return _ANSI_RE.sub('', text)
 
 
@@ -2179,9 +2260,16 @@ def _extract_current_input(ansi_output: str) -> str:
     return ""
 
 
+_SEND_MAX_LENGTH = 5000
+
 @app.post("/api/agent/{agent_id}/send")
 async def send_to_agent(msg: SendMessage, agent_id: str = Depends(lambda agent_id: _validated_agent_id(agent_id))):
     """Send message to an agent via tmux send-keys (with Enter)"""
+    base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
+    if base_id == "000":
+        raise HTTPException(status_code=403, detail="Cannot send to architect agent")
+    if len(msg.message) > _SEND_MAX_LENGTH:
+        raise HTTPException(status_code=400, detail=f"Message too long (max {_SEND_MAX_LENGTH})")
     session_name = f"{MA_PREFIX}-agent-{agent_id}"
     target = f"{session_name}:0.0"
 
@@ -2206,17 +2294,21 @@ async def send_to_agent(msg: SendMessage, agent_id: str = Depends(lambda agent_i
             "timestamp": int(time.time())
         }
     except subprocess.CalledProcessError as e:
-        raise HTTPException(status_code=500, detail=f"Failed to send: {str(e)}")
+        logger.warning("Failed to send to agent %s: %s", agent_id, e)
+        raise HTTPException(status_code=500, detail="Failed to send")
 
 
 @app.post("/api/agent/{agent_id}/input")
 async def update_agent_input(agent_id: str, data: UpdateInput):
     """Update the current input line in tmux (co-editing)"""
-    # Validate agent_id format
     if not re.match(r'^\d{3}(-\d{3})?$', agent_id):
         raise HTTPException(status_code=400, detail="invalid agent_id")
-    # Filter non-printable characters (prevent tmux escape injection)
-    if data.text and any(ord(c) < 32 and c not in ('\n', '\r', '\t') for c in data.text):
+    base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
+    if base_id == "000":
+        raise HTTPException(status_code=403, detail="Cannot control architect agent")
+    if data.text and len(data.text) > 5000:
+        raise HTTPException(status_code=400, detail="input too long")
+    if data.text and any(ord(c) < 32 and c not in ('\t', '\n') for c in data.text):
         raise HTTPException(status_code=400, detail="invalid characters")
     session_name = f"{MA_PREFIX}-agent-{agent_id}"
     target = f"{session_name}:0.0"
@@ -2227,35 +2319,32 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
         if result.returncode != 0:
             raise HTTPException(status_code=404, detail=f"Agent {agent_id} session not found")
 
-        # Incremental diff: only send backspaces + new chars
-        prev = (data.previous or "").rstrip()
-        new = (data.text or "").rstrip()
-
-        # Find common prefix
-        i = 0
-        while i < len(prev) and i < len(new) and prev[i] == new[i]:
-            i += 1
-
-        # Backspace to remove divergent old chars
-        bs = len(prev) - i
-        if bs > 0:
-            await _run_subprocess(
-                ["tmux", "send-keys", "-t", target] + ["BSpace"] * bs, check=True
-            )
-
-        # Type new chars
-        new_chars = new[i:]
-        if new_chars:
-            await _run_subprocess(
-                ["tmux", "send-keys", "-t", target, "-l", new_chars], check=True
-            )
-
-        # Submit if requested
         if data.submit:
+            # On submit: just send Enter — the incremental sync already placed the text
             await _run_subprocess(
                 ["tmux", "send-keys", "-t", target, "Enter"], check=True
             )
             _log_prompt_history(agent_id, data.text)
+        else:
+            # Incremental diff: only send backspaces + new chars
+            prev = (data.previous or "").rstrip()
+            new = (data.text or "").rstrip().replace("\n", " ").replace("\r", "")
+
+            i = 0
+            while i < len(prev) and i < len(new) and prev[i] == new[i]:
+                i += 1
+
+            bs = len(prev) - i
+            if bs > 0:
+                await _run_subprocess(
+                    ["tmux", "send-keys", "-t", target] + ["BSpace"] * bs, check=True
+                )
+
+            new_chars = new[i:]
+            if new_chars:
+                await _run_subprocess(
+                    ["tmux", "send-keys", "-t", target, "-l", new_chars], check=True
+                )
 
         return {
             "status": "updated",
@@ -2265,12 +2354,16 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
             "timestamp": int(time.time())
         }
     except subprocess.CalledProcessError as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update input: {str(e)}")
+        logger.warning("Failed to update input for agent %s: %s", agent_id, e)
+        raise HTTPException(status_code=500, detail="Failed to update input")
 
 
 @app.get("/api/agent/{agent_id}/history")
 async def get_agent_history(agent_id: str = Depends(lambda agent_id: _validated_agent_id(agent_id))):
     """Read prompt history file for an agent."""
+    base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
+    if base_id == "000":
+        raise HTTPException(status_code=403, detail="Cannot read architect agent history")
     prompts_dir = BASE_DIR / "prompts"
     parent_id = agent_id.split('-')[0] if '-' in agent_id else agent_id
     parent_dir = _resolve_prompts_dir(prompts_dir, parent_id)
@@ -2279,10 +2372,10 @@ async def get_agent_history(agent_id: str = Depends(lambda agent_id: _validated_
     else:
         history_file = prompts_dir / f"{agent_id}.history"
     if not history_file.exists():
-        return {"lines": [], "file": str(history_file)}
+        return {"lines": []}
     text = history_file.read_text(errors="replace")
     lines = [l for l in text.splitlines() if l.strip()]
-    return {"lines": lines, "file": str(history_file)}
+    return {"lines": lines}
 
 
 @app.get("/api/agent/{agent_id}/notes")
@@ -2293,26 +2386,31 @@ async def get_agent_notes(agent_id: str = Depends(lambda agent_id: _validated_ag
     parent_dir = _resolve_prompts_dir(prompts_dir, parent_id)
     notes_file = (parent_dir / f"{agent_id}.notes") if parent_dir else (prompts_dir / f"{agent_id}.notes")
     if not notes_file.exists():
-        return {"content": "", "file": str(notes_file)}
-    return {"content": notes_file.read_text(errors="replace"), "file": str(notes_file)}
+        return {"content": ""}
+    return {"content": notes_file.read_text(errors="replace")}
 
+
+_NOTES_MAX_SIZE = 1_000_000
 
 @app.post("/api/agent/{agent_id}/notes")
 async def save_agent_notes(req: Request, agent_id: str = Depends(lambda agent_id: _validated_agent_id(agent_id))):
     """Save notes file for an agent."""
     body = await req.json()
     content = body.get("content", "")
+    if len(content) > _NOTES_MAX_SIZE:
+        raise HTTPException(status_code=400, detail=f"Content too large (max {_NOTES_MAX_SIZE} bytes)")
     prompts_dir = BASE_DIR / "prompts"
     parent_id = agent_id.split('-')[0] if '-' in agent_id else agent_id
     parent_dir = _resolve_prompts_dir(prompts_dir, parent_id)
     notes_file = (parent_dir / f"{agent_id}.notes") if parent_dir else (prompts_dir / f"{agent_id}.notes")
     notes_file.write_text(content)
-    return {"ok": True, "file": str(notes_file)}
+    return {"ok": True}
 
 
 @app.get("/api/history/recent")
 async def get_recent_history(n: int = 10):
     """Return last N prompts (all agents) from Redis stream."""
+    n = max(1, min(n, 100))
     if not redis_pool:
         return {"entries": []}
     try:
@@ -2336,10 +2434,13 @@ class ChatMessage(BaseModel):
     text: str
     user: str = "anon"
 
+_CHAT_MAX_LENGTH = 2000
+
 
 @app.get("/api/chat")
 async def get_chat(last: int = 50):
     """Read last N dev chat messages from Redis stream."""
+    last = max(1, min(last, 200))
     if not redis_pool:
         return {"lines": []}
     try:
@@ -2353,12 +2454,15 @@ async def get_chat(last: int = 50):
 
 
 @app.post("/api/chat")
-async def post_chat(msg: ChatMessage):
+async def post_chat(msg: ChatMessage, request: Request):
     """Post a dev chat message to Redis stream."""
     if not redis_pool:
         raise HTTPException(status_code=503, detail="Redis not available")
+    if len(msg.text) > _CHAT_MAX_LENGTH:
+        raise HTTPException(status_code=400, detail=f"Message too long (max {_CHAT_MAX_LENGTH})")
+    jwt_user = _get_jwt_username(request)
     ts = time.strftime("%H:%M")
-    line = f"{ts} {msg.user}: {msg.text.replace(chr(10), ' ').replace(chr(13), '')}"
+    line = f"{ts} {jwt_user}: {msg.text.replace(chr(10), ' ').replace(chr(13), '')}"
     await redis_pool.xadd(CHAT_STREAM, {"line": line}, maxlen=200)
     return {"status": "ok"}
 
@@ -2366,9 +2470,16 @@ async def post_chat(msg: ChatMessage):
 ALLOWED_KEYS = {"Enter", "C-c", "Escape", "C-u", "C-d", "C-l", "C-z", "Up", "Down", "Left", "Right", "Tab", "S-Tab", "Space", "y", "n"}
 
 
+_SEND_KEYS_MAX = 20
+
 @app.post("/api/agent/{agent_id}/keys")
 async def send_keys_to_agent(data: SendKeys, agent_id: str = Depends(lambda agent_id: _validated_agent_id(agent_id))):
     """Send raw tmux keys to an agent (Enter, Ctrl+C, Escape, etc.)"""
+    base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
+    if base_id == "000":
+        raise HTTPException(status_code=403, detail="Cannot send keys to architect agent")
+    if len(data.keys) > _SEND_KEYS_MAX:
+        raise HTTPException(status_code=400, detail=f"Too many keys (max {_SEND_KEYS_MAX})")
     session_name = f"{MA_PREFIX}-agent-{agent_id}"
     target = f"{session_name}:0.0"
 
@@ -2391,12 +2502,17 @@ async def send_keys_to_agent(data: SendKeys, agent_id: str = Depends(lambda agen
             "timestamp": int(time.time())
         }
     except subprocess.CalledProcessError as e:
-        raise HTTPException(status_code=500, detail=f"Failed to send keys: {str(e)}")
+        logger.warning("Failed to send keys to agent %s: %s", agent_id, e)
+        raise HTTPException(status_code=500, detail="Failed to send keys")
 
 
 @app.get("/api/agent/{agent_id}/output")
 async def get_agent_output(agent_id: str = Depends(lambda agent_id: _validated_agent_id(agent_id)), lines: int = 500):
     """Capture tmux pane output for an agent (remote-aware via SSH)."""
+    base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
+    if base_id == "000":
+        raise HTTPException(status_code=403, detail="Cannot read architect agent output")
+    lines = max(1, min(lines, 5000))
     try:
         # Check if session exists (remote via SSH if applicable)
         if not await _agent_session_exists(agent_id):
@@ -2418,7 +2534,8 @@ async def get_agent_output(agent_id: str = Depends(lambda agent_id: _validated_a
             "timestamp": int(time.time())
         }
     except subprocess.CalledProcessError as e:
-        raise HTTPException(status_code=500, detail=f"Failed to capture: {str(e)}")
+        logger.warning("Failed to capture output for agent %s: %s", agent_id, e)
+        raise HTTPException(status_code=500, detail="Failed to capture output")
 
 
 # === Frontend Logging ===
@@ -2437,14 +2554,18 @@ async def post_frontend_logs(request: Request):
     events = body.get("events", [])
     if not events:
         return {"ok": True, "written": 0}
+    if not isinstance(events, list) or len(events) > 20:
+        raise HTTPException(status_code=400, detail="events must be a list of max 20 items")
 
     FRONTEND_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-    # One JSONL file per calendar day (UTC)
     date_str = time.strftime("%Y-%m-%d", time.gmtime())
     log_path = FRONTEND_LOG_DIR / f"frontend-{date_str}.jsonl"
 
-    lines = "\n".join(json.dumps(e, separators=(",", ":")) for e in events) + "\n"
+    if log_path.exists() and log_path.stat().st_size > 50_000_000:
+        return {"ok": True, "written": 0, "capped": True}
+
+    lines = "\n".join(json.dumps(e, separators=(",", ":"))[:10000] for e in events) + "\n"
     with open(log_path, "a", encoding="utf-8") as f:
         f.write(lines)
 
@@ -2456,20 +2577,27 @@ async def post_frontend_logs(request: Request):
 _KEYCLOAK_ALLOWED_PREFIXES = (
     f"realms/{KEYCLOAK_REALM}/protocol/openid-connect/",
     f"realms/{KEYCLOAK_REALM}/.well-known/",
-    f"realms/{KEYCLOAK_REALM}/account",
 )
 
 @app.api_route("/auth/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 async def proxy_keycloak(request: Request, path: str):
     """Auth endpoint: proxy to Keycloak. Returns 503 if Keycloak is unavailable."""
 
-    if "/admin/" in path or not any(path.startswith(p) for p in _KEYCLOAK_ALLOWED_PREFIXES):
+    normalized_path = os.path.normpath(path)
+    if "/admin" in normalized_path or ".." in normalized_path or not any(path.startswith(p) for p in _KEYCLOAK_ALLOWED_PREFIXES):
         return Response(content=json.dumps({"error": "forbidden", "error_description": "Path not allowed"}),
                         status_code=403, headers={"Content-Type": "application/json"})
 
     url = f"{KEYCLOAK_URL}/{path}"
     body = await request.body()
-    headers = {k: v for k, v in request.headers.items() if k.lower() not in ["host"]}
+    if len(body) > 1_000_000:
+        return Response(content=json.dumps({"error": "request too large"}), status_code=413,
+                        media_type="application/json")
+    _PROXY_ALLOWED_REQ_HEADERS = {"content-type", "accept", "authorization", "accept-language"}
+    headers = {k: v for k, v in request.headers.items() if k.lower() in _PROXY_ALLOWED_REQ_HEADERS}
+
+    _HOP_BY_HOP = {"transfer-encoding", "connection", "keep-alive", "proxy-authenticate",
+                    "proxy-authorization", "te", "trailers", "upgrade", "content-length"}
 
     async with httpx.AsyncClient() as client:
         try:
@@ -2477,8 +2605,9 @@ async def proxy_keycloak(request: Request, path: str):
                 method=request.method, url=url, headers=headers, content=body,
                 params=request.query_params, timeout=30.0
             )
+            safe_headers = {k: v for k, v in response.headers.items() if k.lower() not in _HOP_BY_HOP}
             return Response(content=response.content, status_code=response.status_code,
-                            headers=dict(response.headers))
+                            headers=safe_headers)
         except Exception as e:
             return Response(
                 content=json.dumps({"error": "service_unavailable", "error_description": "Keycloak is not reachable. Start Keycloak first."}),
@@ -2489,15 +2618,31 @@ async def proxy_keycloak(request: Request, path: str):
 
 # === WebSocket ===
 
+_WS_ALLOWED_ORIGINS = set(_ALLOWED_ORIGINS + _ALLOWED_ORIGINS_LOCAL_DEV)
+
+def _ws_origin_ok(websocket: WebSocket) -> bool:
+    origin = websocket.headers.get("origin", "")
+    if not origin:
+        return True
+    if "*" in _WS_ALLOWED_ORIGINS:
+        return True
+    return origin in _WS_ALLOWED_ORIGINS
+
 class ConnectionManager:
     """Manage WebSocket connections"""
+
+    MAX_CONNECTIONS = 200
 
     def __init__(self):
         self.active_connections: list[WebSocket] = []
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket) -> bool:
+        if len(self.active_connections) >= self.MAX_CONNECTIONS:
+            await websocket.close(code=1013)
+            return False
         await websocket.accept()
         self.active_connections.append(websocket)
+        return True
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
@@ -2513,26 +2658,46 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+_ws_agent_connections: list[WebSocket] = []
+_WS_AGENT_MAX = 100
+
 
 @app.websocket("/ws/agent/{agent_id}")
 async def websocket_agent_output(websocket: WebSocket, agent_id: str):
     """WebSocket endpoint for real-time agent tmux output with input sync"""
+    client_ip = websocket.headers.get("x-real-ip") or (websocket.client.host if websocket.client else "unknown")
+    if not _check_rate_limit(client_ip):
+        await websocket.close(code=1008)
+        return
+    if not _ws_origin_ok(websocket):
+        await websocket.close(code=1008)
+        return
     if not _AGENT_ID_RE.match(agent_id):
         await websocket.close(code=1008)
         return
     token = websocket.query_params.get("token", "")
     if not token or not _verify_jwt_minimal(token):
-        print(f"[ws] REJECTED agent={agent_id} token_len={len(token)} from={websocket.client}")
+        print(f"[ws] REJECTED agent={agent_id} from={websocket.client}")
         await websocket.close(code=1008)
+        return
+    base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
+    if base_id == "000":
+        await websocket.close(code=1008)
+        return
+    if len(_ws_agent_connections) >= _WS_AGENT_MAX:
+        await websocket.close(code=1013)
         return
     print(f"[ws] ACCEPTED agent={agent_id} from={websocket.client}")
     await websocket.accept()
+    _ws_agent_connections.append(websocket)
     _ws_started_at = time.time()
     _ws_close_reason = "normal"
 
-    # Poll interval from query param (default 1.0s)
-    poll = float(websocket.query_params.get("poll", "2.0"))
-    poll = max(0.5, min(poll, 10.0))  # Clamp 0.5-10s
+    try:
+        poll = float(websocket.query_params.get("poll", "2.0"))
+    except (ValueError, TypeError):
+        poll = 2.0
+    poll = max(0.5, min(poll, 10.0))
 
     last_output = ""
     last_input = ""
@@ -2546,8 +2711,6 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
             await websocket.send_json(payload)
 
     async def heartbeat_reader():
-        # Receive client pings and reply pong. Any disconnect raises here,
-        # the main loop will detect it on its next send.
         try:
             while True:
                 msg = await websocket.receive_text()
@@ -2564,7 +2727,9 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
 
     try:
         while True:
-            # Capture pane content (plain for display, remote-aware via SSH)
+            if ping_task.done():
+                break
+
             result = await _capture_agent_pane(agent_id, lines=500, ansi=False)
 
             if result.returncode != 0:
@@ -2608,6 +2773,8 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
         # is normal — the client or proxy closed the connection.
         _ws_close_reason = f"{type(exc).__name__}: {getattr(exc, 'code', '') or str(exc)[:80]}"
     finally:
+        if websocket in _ws_agent_connections:
+            _ws_agent_connections.remove(websocket)
         ping_task.cancel()
         _ws_duration = time.time() - _ws_started_at
         print(f"[ws] CLOSED agent={agent_id} from={websocket.client} duration={_ws_duration:.1f}s reason={_ws_close_reason}")
@@ -2616,11 +2783,19 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
 @app.websocket("/ws/messages")
 async def websocket_messages(websocket: WebSocket):
     """WebSocket endpoint for real-time agent messages"""
+    client_ip = websocket.headers.get("x-real-ip") or (websocket.client.host if websocket.client else "unknown")
+    if not _check_rate_limit(client_ip):
+        await websocket.close(code=1008)
+        return
+    if not _ws_origin_ok(websocket):
+        await websocket.close(code=1008)
+        return
     token = websocket.query_params.get("token", "")
     if not token or not _verify_jwt_minimal(token):
         await websocket.close(code=1008)
         return
-    await manager.connect(websocket)
+    if not await manager.connect(websocket):
+        return
 
     try:
         # Track last seen message IDs per stream
@@ -2656,13 +2831,16 @@ async def websocket_messages(websocket: WebSocket):
 
                         # Extract agent ID from stream name
                         parts = stream_name.split(":")
-                        agent_id = parts[2] if len(parts) >= 3 else "unknown"
+                        raw_aid = parts[2] if len(parts) >= 3 else "unknown"
+                        agent_id = raw_aid if _AGENT_ID_RE.match(raw_aid) else "unknown"
 
+                        _WS_ALLOWED_KEYS = {"prompt", "response", "from_agent", "to_agent", "timestamp", "type", "status", "chunk", "text"}
+                        safe_data = {k: v for k, v in data.items() if isinstance(k, str) and k in _WS_ALLOWED_KEYS and len(str(v)) < 10000}
                         await manager.broadcast({
                             "type": "message",
                             "agent_id": agent_id,
                             "msg_id": msg_id,
-                            "data": data,
+                            "data": safe_data,
                             "timestamp": int(time.time())
                         })
             except Exception as e:
@@ -2676,6 +2854,13 @@ async def websocket_messages(websocket: WebSocket):
 @app.websocket("/ws/status")
 async def websocket_status(websocket: WebSocket):
     """WebSocket endpoint for agent status updates — reads from background cache"""
+    client_ip = websocket.headers.get("x-real-ip") or (websocket.client.host if websocket.client else "unknown")
+    if not _check_rate_limit(client_ip):
+        await websocket.close(code=1008)
+        return
+    if not _ws_origin_ok(websocket):
+        await websocket.close(code=1008)
+        return
     token = websocket.query_params.get("token", "")
     if not token or not _verify_jwt_minimal(token):
         await websocket.close(code=1008)
@@ -2685,8 +2870,11 @@ async def websocket_status(websocket: WebSocket):
     _ws_close_reason = "normal"
 
     # Poll interval from query param (default 5s, min = cache interval)
-    poll = float(websocket.query_params.get("poll", "5"))
-    poll = max(CACHE_REFRESH_INTERVAL, min(poll, 60))  # Clamp to cache interval minimum
+    try:
+        poll = float(websocket.query_params.get("poll", "5"))
+    except (ValueError, TypeError):
+        poll = 5.0
+    poll = max(CACHE_REFRESH_INTERVAL, min(poll, 60))
 
     last_sent = ""  # JSON string of last sent data to avoid sending duplicates
 
@@ -2713,6 +2901,9 @@ async def websocket_status(websocket: WebSocket):
 
     try:
         while True:
+            if ping_task.done():
+                break
+
             agents = _cache["agents"]
             payload = {
                 "type": "status_update",
@@ -2757,14 +2948,22 @@ _freemium_token_cache: dict[str, tuple[str, float]] = {}
 
 
 def _extract_username_from_jwt(auth_header: str) -> Optional[str]:
-    """Extract preferred_username from a dashboard JWT (base64 decode, no crypto validation)."""
+    """Extract preferred_username from a dashboard JWT with full signature verification."""
     try:
         token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else auth_header
-        payload_b64 = token.split(".")[1]
-        padding = 4 - len(payload_b64) % 4
-        if padding != 4:
-            payload_b64 += "=" * padding
-        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        import jwt as pyjwt
+        from jwt import PyJWKClient
+        jwks_client = PyJWKClient(KEYCLOAK_JWKS_URL, cache_keys=True, lifespan=3600)
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
+        payload = pyjwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            options={"verify_aud": False, "verify_iss": False, "verify_exp": True},
+        )
+        iss = payload.get("iss", "")
+        if not iss.endswith(f"/realms/{KEYCLOAK_REALM}"):
+            return None
         return payload.get("preferred_username")
     except Exception:
         return None
@@ -2847,12 +3046,15 @@ async def agent_chat_rpc(request: Request):
     freemium_token = await _get_freemium_token(username)
     if not freemium_token:
         return Response(
-            content=json.dumps({"error": "failed to obtain freemium token", "username": username}),
+            content=json.dumps({"error": "failed to obtain freemium token"}),
             status_code=502,
             media_type="application/json",
         )
 
     body = await request.body()
+    if len(body) > 1_000_000:
+        return Response(content=json.dumps({"error": "request too large"}), status_code=413,
+                        media_type="application/json")
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
@@ -2907,11 +3109,22 @@ async def agent_chat_facts(request: Request):
 
 
 @app.get("/api/agent-chat/events")
-async def agent_chat_events():
-    """SSE proxy to shim /events/progress — public (same as shim)."""
+async def agent_chat_events(request: Request):
+    """SSE proxy to shim /events/progress — requires auth with user isolation."""
+    auth_header = request.headers.get("authorization", "")
+    username = _extract_username_from_jwt(auth_header)
+    if not username:
+        return Response(content=json.dumps({"error": "unauthorized"}), status_code=401,
+                        media_type="application/json")
+    freemium_token = await _get_freemium_token(username)
+    if not freemium_token:
+        return Response(content=json.dumps({"error": "failed to obtain freemium token"}), status_code=502,
+                        media_type="application/json")
     async def stream():
         async with httpx.AsyncClient() as client:
-            async with client.stream("GET", f"{AGENT_SHIM_URL}/events/progress", timeout=None) as resp:
+            async with client.stream("GET", f"{AGENT_SHIM_URL}/events/progress",
+                                     headers={"Authorization": f"Bearer {freemium_token}"},
+                                     timeout=httpx.Timeout(connect=10, read=300, write=10, pool=10)) as resp:
                 async for chunk in resp.aiter_bytes():
                     yield chunk
     try:
@@ -3010,4 +3223,4 @@ if os.path.exists(frontend_path):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8050)
+    uvicorn.run(app, host="127.0.0.1", port=8050)

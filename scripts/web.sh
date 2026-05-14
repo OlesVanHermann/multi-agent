@@ -8,6 +8,11 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$SCRIPT_DIR/.."
+if [ -f "$BASE_DIR/setup/secrets.cfg" ]; then
+    set -a
+    eval "$(grep -E '^[A-Z_]+=' "$BASE_DIR/setup/secrets.cfg" | grep -v '^#')"
+    set +a
+fi
 WEB_DIR="$BASE_DIR/web"
 LOG_DIR="$BASE_DIR/logs/000"
 PID_FILE="$LOG_DIR/dashboard.pid"

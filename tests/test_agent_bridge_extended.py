@@ -446,7 +446,7 @@ class TestCommandErrors:
         agent = object.__new__(TmuxAgent)
         agent.agent_id = "100"
         agent.redis = MagicMock()
-        agent.redis.keys.return_value = ["A:agent:300", "A:agent:301", "A:agent:100"]
+        agent.redis.scan_iter.return_value = iter(["A:agent:300", "A:agent:301", "A:agent:100"])
         agent._log = MagicMock()
 
         agent.send_to_agent("all", "broadcast message")

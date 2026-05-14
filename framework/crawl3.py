@@ -291,7 +291,7 @@ class DomainCrawler:
         for match in re.finditer(href_pattern, html, re.IGNORECASE):
             try:
                 url = match.group(1).strip()
-                if url.startswith(('javascript:', 'mailto:', 'tel:', '#', 'data:')):
+                if url.startswith(('javascript:', 'mailto:', 'tel:', '#', 'data:', 'file:', 'chrome:', 'about:', 'blob:', 'ftp:')):
                     continue
                 if url.startswith('/'):
                     url = f"{parsed_base.scheme}://{parsed_base.netloc}{url}"

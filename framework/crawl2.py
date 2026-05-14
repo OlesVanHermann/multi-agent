@@ -179,7 +179,7 @@ def extract_urls_from_html(html: str, base_url: str, config: dict) -> set:
         try:
             url = match.group(1).strip()
 
-            if url.startswith(('javascript:', 'mailto:', 'tel:', '#', 'data:')):
+            if url.startswith(('javascript:', 'mailto:', 'tel:', '#', 'data:', 'file:', 'chrome:', 'about:', 'blob:', 'ftp:')):
                 continue
 
             # Resoudre les URLs relatives (garde le sous-domaine d'origine)

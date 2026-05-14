@@ -99,10 +99,11 @@ function App() {
     const checkHealth = async () => {
       try {
         const res = await fetch(api('api/health'))
+        if (!res.ok) return
         const data = await res.json()
-        setRedisOk(data.redis)
+        if (typeof data.redis === 'boolean') setRedisOk(data.redis)
       } catch (err) {
-        setRedisOk(false)
+        // Network/backend unreachable — keep last known Redis state
       }
     }
 

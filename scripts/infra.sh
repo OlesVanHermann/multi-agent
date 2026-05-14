@@ -11,10 +11,9 @@ ulimit -n 10240 2>/dev/null || true
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 if [ -f "$BASE_DIR/setup/secrets.cfg" ]; then
-    REDIS_PASSWORD=$(grep '^REDIS_PASSWORD=' "$BASE_DIR/setup/secrets.cfg" 2>/dev/null | cut -d= -f2-)
-    KEYCLOAK_ADMIN_PASSWORD=$(grep '^KEYCLOAK_ADMIN_PASSWORD=' "$BASE_DIR/setup/secrets.cfg" 2>/dev/null | cut -d= -f2-)
-    JWT_SECRET=$(grep '^JWT_SECRET=' "$BASE_DIR/setup/secrets.cfg" 2>/dev/null | cut -d= -f2-)
-    export REDIS_PASSWORD KEYCLOAK_ADMIN_PASSWORD JWT_SECRET
+    set -a
+    eval "$(grep -E '^[A-Z_]+=' "$BASE_DIR/setup/secrets.cfg" | grep -v '^#')"
+    set +a
 fi
 BRIDGE_SCRIPT="$BASE_DIR/scripts/agent-bridge/agent.py"
 LOG_DIR="$BASE_DIR/logs/000"
@@ -44,10 +43,11 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 # ── Redis CLI helper (native or docker exec fallback) ──
 
 redis_cli() {
+    local port="${REDIS_PORT:-6379}"
     if command -v redis-cli &>/dev/null; then
-        redis-cli "$@"
+        REDISCLI_AUTH="${REDIS_PASSWORD:-}" redis-cli -p "$port" "$@"
     else
-        ${DOCKER:-docker} exec ma-redis redis-cli "$@"
+        ${DOCKER:-docker} exec -e REDISCLI_AUTH="${REDIS_PASSWORD:-}" ma-redis redis-cli -p 6379 "$@"
     fi
 }
 
@@ -99,7 +99,7 @@ do_start() {
         REDIS_PASS="${REDIS_PASSWORD:-}"
         REDIS_EXTRA=""
         [ -n "$REDIS_PASS" ] && REDIS_EXTRA="--requirepass $REDIS_PASS"
-        $DOCKER run -d --name ma-redis -p 127.0.0.1:6379:6379 \
+        $DOCKER run -d --name ma-redis -p "127.0.0.1:${REDIS_PORT:-6379}:6379" \
             -v ma-redis-data:/data --restart unless-stopped \
             redis:7-alpine redis-server --appendonly yes $REDIS_EXTRA 2>/dev/null \
             || $DOCKER start ma-redis 2>/dev/null || true
@@ -205,7 +205,16 @@ do_start() {
 
         local CLAUDE_CMD="claude"
         if [ -n "$LOGIN_PROFILE" ]; then
+            if [[ ! "$LOGIN_PROFILE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+                log_error "Invalid LOGIN_PROFILE: $LOGIN_PROFILE"
+                exit 1
+            fi
             CLAUDE_CMD="CLAUDE_CONFIG_DIR=$PROFILES_DIR/$LOGIN_PROFILE claude"
+        fi
+
+        if [ -n "$MODEL" ] && [[ ! "$MODEL" =~ ^[a-zA-Z0-9_.:-]+$ ]]; then
+            log_error "Invalid MODEL: $MODEL"
+            exit 1
         fi
 
         tmux new-session -d -s "$SESSION_NAME"
@@ -223,7 +232,7 @@ do_start() {
         # Prompt injection is handled by the bridge (agent.py auto-init)
 
         tmux new-window -t "$SESSION_NAME" -n bridge
-        tmux send-keys -t "$SESSION_NAME:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX=$MA_PREFIX python3 '$BRIDGE_SCRIPT' 000 2>&1 | tee -a '$LOG_DIR/bridge.log'" Enter
+        tmux send-keys -t "$SESSION_NAME:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX=$MA_PREFIX REDIS_PASSWORD='${REDIS_PASSWORD:-}' REDIS_PORT='${REDIS_PORT:-6379}' HEALTH_TOKEN='${HEALTH_TOKEN:-}' python3 '$BRIDGE_SCRIPT' 000 2>&1 | tee -a '$LOG_DIR/bridge.log'" Enter
         tmux select-window -t "$SESSION_NAME:0"
         log_ok "Agent 000 started in tmux session: $SESSION_NAME"
     fi
