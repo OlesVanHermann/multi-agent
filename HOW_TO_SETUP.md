@@ -1,0 +1,1 @@
+setup/HOW_TO_SETUP.md
