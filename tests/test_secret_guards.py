@@ -43,7 +43,7 @@ class TestCheckSecretsScript:
     def test_default_values_blocked(self, tmp_path):
         repo = _make_repo(tmp_path)
         (repo / "setup" / "secrets.cfg").write_text(
-            "KEYCLOAK_ADMIN_PASSWORD=changeme\nHEALTH_TOKEN=abc123strong\n")
+            "KEYCLOAK_ADMIN_PASSWORD=changeme\nHEALTH_TOKEN=abc123strong\n")  # gitleaks:allow
         r = _run(repo)
         assert r.returncode == 1
         assert "Valeurs par défaut" in r.stdout
