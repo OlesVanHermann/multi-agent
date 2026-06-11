@@ -33,8 +33,11 @@ from pathlib import Path
 try:
     import redis
 except ImportError:
-    subprocess.run([sys.executable, "-m", "pip", "install", "redis", "-q"])
-    import redis
+    sys.stderr.write(
+        "[agent-bridge] Dépendance manquante : le module Python 'redis' n'est pas installé.\n"
+        "[agent-bridge] Installer les dépendances : pip install -r requirements.txt\n"
+    )
+    sys.exit(1)
 
 # psutil conditionnel (CT-011: autorisé pour EF-003)
 _PSUTIL_AVAILABLE = False
