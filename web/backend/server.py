@@ -660,7 +660,9 @@ _rate_buckets: dict[str, collections.deque] = {}
 _RATE_LIMIT = 300
 _RATE_WINDOW = 60
 
-def _check_rate_limit(client_ip: str) -> bool:
+
+def _check_rate_limit_local(client_ip: str) -> bool:
+    """In-process fallback when Redis is unavailable (per-worker counter)."""
     now = time.time()
     bucket = _rate_buckets.get(client_ip)
     if bucket is None:
@@ -675,6 +677,25 @@ def _check_rate_limit(client_ip: str) -> bool:
         oldest_key = next(iter(_rate_buckets))
         del _rate_buckets[oldest_key]
     return True
+
+
+async def _check_rate_limit(client_ip: str) -> bool:
+    """B5: shared counter in Redis — the limit holds across uvicorn workers.
+
+    Fixed window: INCR + EXPIRE NX (atomic pipeline). Falls back to the
+    per-process counter if Redis is down (never blocks all traffic).
+    """
+    if redis_pool is not None:
+        try:
+            key = f"{MA_PREFIX}:ratelimit:{client_ip}"
+            pipe = redis_pool.pipeline()
+            pipe.incr(key)
+            pipe.expire(key, _RATE_WINDOW, nx=True)
+            count, _ = await pipe.execute()
+            return int(count) <= _RATE_LIMIT
+        except Exception as e:
+            logger.warning("Rate limit via Redis failed, local fallback: %s", e)
+    return _check_rate_limit_local(client_ip)
 
 # === Security Headers Middleware ===
 
@@ -751,7 +772,7 @@ async def auth_middleware(request: Request, call_next):
     # Rate limit all API requests
     if path.startswith("/api/"):
         client_ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "unknown")
-        if not _check_rate_limit(client_ip):
+        if not await _check_rate_limit(client_ip):
             return Response(
                 content=json.dumps({"detail": "Rate limit exceeded"}),
                 status_code=429,
@@ -2707,7 +2728,7 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
       1013 = server overloaded (max connections)
     """
     client_ip = websocket.headers.get("x-real-ip") or (websocket.client.host if websocket.client else "unknown")
-    if not _check_rate_limit(client_ip):
+    if not await _check_rate_limit(client_ip):
         await websocket.close(code=4002)
         return
     if not _ws_origin_ok(websocket):
@@ -2825,7 +2846,7 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
 async def websocket_messages(websocket: WebSocket):
     """WebSocket endpoint for real-time agent messages"""
     client_ip = websocket.headers.get("x-real-ip") or (websocket.client.host if websocket.client else "unknown")
-    if not _check_rate_limit(client_ip):
+    if not await _check_rate_limit(client_ip):
         await websocket.close(code=1008)
         return
     if not _ws_origin_ok(websocket):
@@ -2896,7 +2917,7 @@ async def websocket_messages(websocket: WebSocket):
 async def websocket_status(websocket: WebSocket):
     """WebSocket endpoint for agent status updates — reads from background cache"""
     client_ip = websocket.headers.get("x-real-ip") or (websocket.client.host if websocket.client else "unknown")
-    if not _check_rate_limit(client_ip):
+    if not await _check_rate_limit(client_ip):
         await websocket.close(code=1008)
         return
     if not _ws_origin_ok(websocket):
