@@ -74,6 +74,9 @@ PROMPT_MARKERS = ['❯', '>', '$', '%']
 # CT-009 : borne streams monitoring
 STREAM_MAXLEN = 1000
 
+# A3 : borne streams métier (inbox/outbox) — évite la dérive mémoire Redis sur runs longs
+IO_STREAM_MAXLEN = int(os.environ.get("IO_STREAM_MAXLEN", 10000))
+
 
 class _HealthHandler(http.server.BaseHTTPRequestHandler):
     """Health endpoint HTTP — EF-001, CT-001 (http.server stdlib).
@@ -838,7 +841,7 @@ class TmuxAgent:
                 'timestamp': int(time.time()),
                 'chars': len(response)
             }
-            self.redis.xadd(self.outbox, msg_data)
+            self.redis.xadd(self.outbox, msg_data, maxlen=IO_STREAM_MAXLEN, approximate=True)
 
             # R-INTEGRATE: record outbound message
             if self.metrics:
@@ -868,7 +871,7 @@ class TmuxAgent:
                         'from_agent': self.agent_id,
                         'type': 'prompt',
                         'timestamp': int(time.time())
-                    })
+                    }, maxlen=IO_STREAM_MAXLEN, approximate=True)
                     self._log(f"RELAY: {signal} -> agent {target_agent}")
                     self._log_event("done_relay", f"{signal} -> {target_agent}")
             except Exception as e:
@@ -891,7 +894,7 @@ class TmuxAgent:
                                 'type': 'response',
                                 'timestamp': int(time.time()),
                                 'complete': 'true'
-                            })
+                            }, maxlen=IO_STREAM_MAXLEN, approximate=True)
                         else:
                             chunks = [response[i:i+MAX_CHUNK] for i in range(0, len(response), MAX_CHUNK)]
                             for i, chunk in enumerate(chunks):
@@ -902,7 +905,7 @@ class TmuxAgent:
                                     'timestamp': int(time.time()),
                                     'chunk': f"{i+1}/{len(chunks)}",
                                     'complete': 'true' if i == len(chunks)-1 else 'false'
-                                })
+                                }, maxlen=IO_STREAM_MAXLEN, approximate=True)
 
                         self._log(f"ok -> response sent to {from_agent} ({len(response)} chars)")
                     except Exception as e:
@@ -972,7 +975,7 @@ class TmuxAgent:
                             'prompt': prompt,
                             'from_agent': self.agent_id,
                             'timestamp': int(time.time())
-                        })
+                        }, maxlen=IO_STREAM_MAXLEN, approximate=True)
                         sent_count += 1
             self._log(f"ok -> broadcast to {sent_count} agents: {prompt[:60]}...")
             return 'ok'
@@ -983,7 +986,7 @@ class TmuxAgent:
                     'prompt': prompt,
                     'from_agent': self.agent_id,
                     'timestamp': int(time.time())
-                })
+                }, maxlen=IO_STREAM_MAXLEN, approximate=True)
             except Exception as e:
                 self._log(f"ko send_to_agent {to_agent}: {e}")
                 return 'ko'

@@ -15,6 +15,7 @@ import json
 import os
 
 DEFAULT_PREFIX = os.environ.get("MA_PREFIX", "ma")
+STREAM_MAXLEN = int(os.environ.get("STREAM_MAXLEN", 1000))
 
 # Seuils configurables (R-TIMING: pas de valeurs hardcodées)
 DEFAULT_STALE_THRESHOLD = 120      # 2 minutes sans heartbeat → stale
@@ -276,7 +277,7 @@ class AlertManager:
             "type": f"alert:{level}",
             "payload": json.dumps(alert),
             "timestamp": str(int(now))
-        })
+        }, maxlen=STREAM_MAXLEN, approximate=True)
 
         return alert
 

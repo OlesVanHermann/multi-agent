@@ -18,6 +18,7 @@ REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
 MA_PREFIX = os.environ.get("MA_PREFIX", "A")
+IO_STREAM_MAXLEN = int(os.environ.get("IO_STREAM_MAXLEN", 10000))
 
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD or None, decode_responses=True)
 
@@ -34,7 +35,7 @@ def send_and_wait(to_agent, prompt, from_agent=0, timeout=120):
         'prompt': prompt,
         'from_agent': from_agent,
         'timestamp': int(time.time())
-    })
+    }, maxlen=IO_STREAM_MAXLEN, approximate=True)
     print(f"[{from_agent}] -> [{to_agent}]: {prompt[:60]}...")
 
     # Attendre la réponse
@@ -61,7 +62,7 @@ def broadcast(agents, prompt, from_agent=0):
             'prompt': prompt,
             'from_agent': from_agent,
             'timestamp': int(time.time())
-        })
+        }, maxlen=IO_STREAM_MAXLEN, approximate=True)
     print(f"Broadcasted to {agents}: {prompt[:50]}...")
 
 
@@ -127,7 +128,7 @@ def workflow_parallel():
             'prompt': task,
             'from_agent': 100,
             'timestamp': int(time.time())
-        })
+        }, maxlen=IO_STREAM_MAXLEN, approximate=True)
         print(f"Assigned to {worker}: {task[:40]}...")
 
     # Collecter les résultats

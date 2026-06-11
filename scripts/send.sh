@@ -84,7 +84,7 @@ if [[ "$FROM_AGENT" =~ ^([0-9]+)-[0-9]+$ ]]; then
 fi
 
 # Envoyer via Redis Streams (nouveau format)
-MSG_ID=$($REDIS_CLI XADD "${MA_PREFIX}:agent:${TO_AGENT}:inbox" '*' \
+MSG_ID=$($REDIS_CLI XADD "${MA_PREFIX}:agent:${TO_AGENT}:inbox" MAXLEN '~' "${IO_STREAM_MAXLEN:-10000}" '*' \
     prompt "$MESSAGE" \
     from_agent "$FROM_AGENT" \
     timestamp "$TIMESTAMP" 2>/dev/null)
