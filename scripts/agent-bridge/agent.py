@@ -62,6 +62,28 @@ MAX_HISTORY = 50
 RESPONSE_TIMEOUT = int(os.environ.get("RESPONSE_TIMEOUT", 300))
 POLL_INTERVAL = 1.0
 
+# A2 : scrutation adaptative — intervalle court tant que le pane change,
+# allongement progressif (×1.5) jusqu'au plafond dès stabilité.
+POLL_MIN = float(os.environ.get("POLL_MIN", 0.2))
+POLL_MAX = float(os.environ.get("POLL_MAX", 2.0))
+
+# Durées de stabilité requises (en secondes) avant de conclure une réponse.
+# Équivalentes aux anciens compteurs d'itérations à POLL_INTERVAL=1s.
+STABLE_READY_SECS = 5.0
+STABLE_FALLBACK_SECS = 10.0
+STABLE_PLAN_SECS = 15.0
+
+
+# Budget total de vérification de soumission d'Entrée dans _send_keys (s)
+SEND_KEYS_BUDGET = 15.0
+
+
+def _next_poll_interval(current, changed):
+    """A2: prochain délai de poll — POLL_MIN si le pane a changé, sinon ×1.5 plafonné."""
+    if changed:
+        return POLL_MIN
+    return min(current * 1.5, POLL_MAX)
+
 # EF-003 : intervalle heartbeat enrichi (CA-004: toutes les 10s ± 2s)
 HEARTBEAT_INTERVAL = 10
 
@@ -361,10 +383,16 @@ class TmuxAgent:
         # Verify Enter was submitted by checking the CURSOR LINE only.
         # The previous version checked "any line in last 3 lines", which matched
         # scrollback echo (false positive) and missed busy/streaming states.
+        # A2: adaptive loop — exit as soon as the input line is clear,
+        # resend Enter on an escalating cadence (1/2/4/8s), same ~15s budget.
         target_pane = f"{self.session_name}:0"
         check_snippet = text[:40] if len(text) > 40 else text
-        for delay in (1, 2, 4, 8):  # 15s total budget
-            time.sleep(delay)
+        deadline = time.time() + SEND_KEYS_BUDGET
+        resend_delay = 1.0
+        next_resend = time.time() + resend_delay
+        poll = POLL_MIN
+        while time.time() < deadline:
+            time.sleep(poll)
             try:
                 cy = subprocess.run(
                     ["tmux", "display-message", "-t", target_pane, "-p", "#{cursor_y}"],
@@ -376,11 +404,15 @@ class TmuxAgent:
                 cursor_line = ''
             if check_snippet not in cursor_line:
                 break  # submitted (text no longer on the input line)
-            self._log(f"Enter not received after {delay}s — resending")
-            subprocess.run(
-                ["tmux", "send-keys", "-t", target, "Enter"],
-                capture_output=True
-            )
+            if time.time() >= next_resend:
+                self._log(f"Enter not received after {resend_delay:.0f}s — resending")
+                subprocess.run(
+                    ["tmux", "send-keys", "-t", target, "Enter"],
+                    capture_output=True
+                )
+                resend_delay = min(resend_delay * 2, 8.0)
+                next_resend = time.time() + resend_delay
+            poll = _next_poll_interval(poll, False)
 
     # Sentinel returned by _wait_for_response when compaction is detected
     _COMPACTION_SENTINEL = "__COMPACTION_DETECTED__"
@@ -393,14 +425,17 @@ class TmuxAgent:
         baseline_compaction_count = baseline.count("Conversation compacted")
 
         last_content = ""
-        stable_count = 0
+        tail3_stable_since = time.time()
         response_started = False
         last_printed = 0
+        poll = POLL_MIN
 
         while time.time() - start_time < timeout:
-            time.sleep(POLL_INTERVAL)
+            time.sleep(poll)
 
             current = self._capture_pane(200)
+            # A2: poll court tant que le pane change, allongé dès stabilité
+            poll = _next_poll_interval(poll, current != last_content)
 
             # Detect queued message (Claude busy with bashes, prompt not processed)
             if "Press up to edit queued messages" in current:
@@ -423,8 +458,9 @@ class TmuxAgent:
                 self._send_keys("0")
                 time.sleep(2)
                 last_content = ""
-                stable_count = 0
+                tail3_stable_since = time.time()
                 last_printed = 0
+                poll = POLL_MIN
                 continue
 
             # Detect context compaction — only if NEW (more occurrences than baseline)
@@ -462,14 +498,14 @@ class TmuxAgent:
 
             # Stability based on prompt area only (last 3 non-empty lines)
             # Background bashes and spinners change upper content but prompt area stays stable
+            # A2: stabilité mesurée en secondes (équivalent des anciens compteurs à 1s/poll)
             tail3_key = tail3
             if tail3_key != getattr(self, '_last_tail3_key', ''):
                 self._last_tail3_key = tail3_key
-                stable_count = 0
-            else:
-                stable_count += 1
+                tail3_stable_since = time.time()
+            stable_secs = time.time() - tail3_stable_since
 
-            at_normal_prompt = "bypass permissions" in tail3 or ("plan mode on" in tail3 and stable_count >= 15)
+            at_normal_prompt = "bypass permissions" in tail3 or ("plan mode on" in tail3 and stable_secs >= STABLE_PLAN_SECS)
 
             current_lines = current.strip().split('\n')
             last_line = current_lines[-1].strip() if current_lines else ""
@@ -492,11 +528,11 @@ class TmuxAgent:
                         if has_marker:
                             break
 
-                if has_marker and response_started and stable_count >= 5:
+                if has_marker and response_started and stable_secs >= STABLE_READY_SECS:
                     response = '\n'.join(current_lines[:-1]).strip()
                     return response
 
-                if stable_count > 10 and response_started:
+                if stable_secs > STABLE_FALLBACK_SECS and response_started:
                     response = '\n'.join(current_lines).strip()
                     for marker in PROMPT_MARKERS:
                         if response.endswith(marker):
