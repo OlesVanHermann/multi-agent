@@ -39,6 +39,15 @@ except ImportError:
     )
     sys.exit(1)
 
+try:
+    import yaml
+except ImportError:
+    sys.stderr.write(
+        "[agent-bridge] Dépendance manquante : le module Python 'yaml' (PyYAML) n'est pas installé.\n"
+        "[agent-bridge] Installer les dépendances : pip install -r requirements.txt\n"
+    )
+    sys.exit(1)
+
 # psutil conditionnel (CT-011: autorisé pour EF-003)
 _PSUTIL_AVAILABLE = False
 try:
@@ -90,8 +99,29 @@ HEARTBEAT_INTERVAL = 10
 # EF-001 : port de base pour health endpoint (port = base + agent_id numérique)
 HEALTH_PORT_BASE = int(os.environ.get("AGENT_HEALTH_PORT_BASE", 9100))
 
-# Claude prompt markers (to detect end of response)
-PROMPT_MARKERS = ['❯', '>', '$', '%']
+# A1 : marqueurs UI du CLI Claude externalisés dans markers.yaml.
+# Aucune chaîne de rendu CLI ne doit être codée en dur dans ce fichier.
+_MARKERS_PATH = Path(__file__).resolve().parent / "markers.yaml"
+with open(_MARKERS_PATH, encoding="utf-8") as _f:
+    MARKERS = yaml.safe_load(_f)
+
+PROMPT_MARKERS = MARKERS['prompt_markers']
+STATUS_LINE = MARKERS['status_line']
+BUSY_MARKERS = MARKERS['busy_markers']
+PLAN_MODE = MARKERS['plan_mode']
+COMPACTION_IN_PROGRESS = MARKERS['compaction']['in_progress']
+COMPACTION_DONE = MARKERS['compaction']['done']
+APPROVAL_PROMPT = MARKERS['approval']
+SURVEY_PROMPT = MARKERS['survey']
+QUEUED_MSG = MARKERS['queued']
+WAITING_SELECT = MARKERS['waiting_select']
+CONTEXT_LIMIT = MARKERS['context_limit']
+MODEL_CHANGE = MARKERS['model_change']
+API_ERROR_MARKER = MARKERS['api_error']
+SCROLL_INDICATOR = MARKERS['scroll_indicator']
+BASHES_PATTERN = MARKERS['bashes_pattern']
+CONTEXT_PCT_PATTERNS = MARKERS['context_pct_patterns']
+API_ERROR_PATTERNS = MARKERS['api_error_patterns']
 
 # CT-009 : borne streams monitoring
 STREAM_MAXLEN = 1000
@@ -111,27 +141,27 @@ def _parse_pane_state(out, pane_cmd, agent_id):
 
     bp_line = ""
     for line in lines:
-        if "bypass permissions" in line:
+        if STATUS_LINE in line:
             bp_line = line
 
-    has_bashes = bool(re.search(r'bashes|shell', bp_line))
+    has_bashes = bool(re.search(BASHES_PATTERN, bp_line))
     if not claude_alive:
         busy = False
-    elif "esc to interrupt" in bp_line:
+    elif any(m in bp_line for m in BUSY_MARKERS):
         busy = True
-    elif any('❯' in l for l in lines[-10:]):
+    elif any(PROMPT_MARKERS[0] in l for l in lines[-10:]):
         busy = False
     else:
         busy = True
 
-    done_compacting = bool(re.search(r'conversation compacted', out, re.IGNORECASE))
+    done_compacting = bool(re.search(re.escape(COMPACTION_DONE), out, re.IGNORECASE))
     pid = str(agent_id).split('-')[0]
     prompt_loaded = bool(done_compacting and re.search(
         r'prompts/' + re.escape(pid) + r'[^ ]*/' + re.escape(str(agent_id)) + r'[.-]'
         r'|prompts/' + re.escape(str(agent_id)) + r'-', out))
 
     ctx = -1
-    ctx_matches = re.findall(r'[0-9]+% until auto-compact|auto-compact: [0-9]+%', out)
+    ctx_matches = re.findall('|'.join(CONTEXT_PCT_PATTERNS), out)
     if ctx_matches:
         nums = re.findall(r'[0-9]+', ctx_matches[-1])
         if nums:
@@ -140,16 +170,16 @@ def _parse_pane_state(out, pane_cmd, agent_id):
     return {
         'busy': busy,
         'has_bashes': has_bashes,
-        'has_down': '↓' in bp_line,
-        'plan_mode': 'plan mode on' in out,
-        'waiting_approval': 'Enter to select' in out,
-        'compacted': bool(re.search(r'compacting conversation', out, re.IGNORECASE)),
+        'has_down': SCROLL_INDICATOR in bp_line,
+        'plan_mode': PLAN_MODE in out,
+        'waiting_approval': WAITING_SELECT in out,
+        'compacted': bool(re.search(re.escape(COMPACTION_IN_PROGRESS), out, re.IGNORECASE)),
         'context_pct': ctx,
         'done_compacting': done_compacting,
         'prompt_loaded': prompt_loaded,
-        'context_limit': 'Context limit reached' in out,
-        'api_error': out.count('API Error:') >= 3 or (claude_alive and not bp_line),
-        'model_change': '/model ' in out,
+        'context_limit': CONTEXT_LIMIT in out,
+        'api_error': out.count(API_ERROR_MARKER) >= 3 or (claude_alive and not bp_line),
+        'model_change': MODEL_CHANGE in out,
         'claude_alive': claude_alive,
     }
 
@@ -422,7 +452,7 @@ class TmuxAgent:
         start_time = time.time()
         baseline = self._capture_pane(200)
         baseline_hash = hash(baseline)
-        baseline_compaction_count = baseline.count("Conversation compacted")
+        baseline_compaction_count = baseline.count(COMPACTION_DONE)
 
         last_content = ""
         tail3_stable_since = time.time()
@@ -438,12 +468,12 @@ class TmuxAgent:
             poll = _next_poll_interval(poll, current != last_content)
 
             # Detect queued message (Claude busy with bashes, prompt not processed)
-            if "Press up to edit queued messages" in current:
+            if QUEUED_MSG in current:
                 self._log("QUEUED MESSAGE detected — prompt not processed, returning")
                 return current
 
             # Detect plan mode approval prompt — signal blue, wait for user
-            if "Would you like to proceed" in current:
+            if APPROVAL_PROMPT in current:
                 if not getattr(self, '_plan_approval_logged', False):
                     self._log("PLAN APPROVAL DETECTED — waiting for user")
                     self._plan_approval_logged = True
@@ -453,7 +483,7 @@ class TmuxAgent:
                     pass
 
             # Detect and dismiss Claude session survey
-            if "How is Claude doing" in current:
+            if SURVEY_PROMPT in current:
                 self._log("SURVEY DETECTED — auto-dismissing (0)")
                 self._send_keys("0")
                 time.sleep(2)
@@ -464,7 +494,7 @@ class TmuxAgent:
                 continue
 
             # Detect context compaction — only if NEW (more occurrences than baseline)
-            if current.count("Conversation compacted") > baseline_compaction_count:
+            if current.count(COMPACTION_DONE) > baseline_compaction_count:
                 self._log("COMPACTION DETECTED in tmux output")
                 # Wait for Claude to finish compacting and show prompt
                 for _ in range(30):
@@ -491,8 +521,8 @@ class TmuxAgent:
                     last_printed = len(current_lines)
 
             # Check if Claude is at a ready prompt (last non-empty lines show known status)
-            # "bypass permissions" = normal mode → ready
-            # "plan mode on" = plan mode → ready only after extended stability
+            # status_line = normal mode → ready
+            # plan_mode = plan mode → ready only after extended stability
             non_empty = [l for l in current.split('\n') if l.strip()]
             tail3 = ' '.join(non_empty[-3:])
 
@@ -505,14 +535,14 @@ class TmuxAgent:
                 tail3_stable_since = time.time()
             stable_secs = time.time() - tail3_stable_since
 
-            at_normal_prompt = "bypass permissions" in tail3 or ("plan mode on" in tail3 and stable_secs >= STABLE_PLAN_SECS)
+            at_normal_prompt = STATUS_LINE in tail3 or (PLAN_MODE in tail3 and stable_secs >= STABLE_PLAN_SECS)
 
             current_lines = current.strip().split('\n')
             last_line = current_lines[-1].strip() if current_lines else ""
 
             if at_normal_prompt:
                 # Check prompt marker on last line OR last few non-empty lines
-                # (status bar like "bypass permissions · 2 bashes" may be below ❯)
+                # (status bar with bashes count may be below the prompt marker)
                 has_marker = False
                 for marker in PROMPT_MARKERS:
                     if last_line.endswith(marker) or last_line == marker:
@@ -898,10 +928,7 @@ class TmuxAgent:
                 response = f"[ERROR] {e}"
 
             # API error detection — retry with backoff (max 2 retries)
-            API_ERROR_PATTERNS = [
-                'API Error: 401', 'authentication_error', 'API error',
-                'APIError', 'rate_limit', 'overloaded_error',
-            ]
+            # A1: motifs externalisés dans markers.yaml (API_ERROR_PATTERNS)
             retry_count = task.get('_retry_count', 0)
             is_api_error = any(pat in response for pat in API_ERROR_PATTERNS)
 
