@@ -1,19 +1,26 @@
 #!/usr/bin/env python3
 """
 orchestrator.py - Orchestre des workflows multi-agents via Redis Streams
-Usage: python orchestrator.py <workflow>
+Usage: python orchestrator.py <workflow|fichier.yaml> [--state FICHIER]
 
-Workflows:
-  seq     - Séquentiel: Explorer -> Developer -> Tester
-  par     - Parallèle: plusieurs workers simultanément
-  review  - Code review: Developer -> Reviewer -> Developer
+F1 : les workflows sont déclaratifs (workflows/*.yaml) et exécutés par le
+moteur générique workflow_engine.py (DAG, parallélisme, on_failure, reprise).
+Un nom court (seq, par, review, pipeline) charge workflows/<nom>.yaml ;
+un chemin .yaml charge ce fichier. --state FICHIER persiste l'état après
+chaque étape et permet la reprise (les étapes 'done' ne sont pas rejouées).
 """
 
+import argparse
+import glob
 import redis
 import time
 import sys
 import os
 import uuid
+
+import yaml
+
+import workflow_engine
 
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
@@ -94,131 +101,47 @@ def collect_responses(agents, timeout=60):
     return responses
 
 
-# === Workflows ===
+# === Workflows déclaratifs (F1) ===
 
-def workflow_sequential():
-    """Workflow séquentiel: Explorer -> Developer -> Tester"""
-    print("\n=== Workflow Sequentiel ===\n")
-
-    # 1. Explorer analyse
-    analysis = send_and_wait(200,
-        "Liste tous les fichiers .py dans le dossier courant",
-        from_agent=100)
-
-    # 2. Developer code
-    code = send_and_wait(300,
-        f"Base sur cette liste:\n{analysis[:500]}\n\nCree un fichier index.py qui importe tous ces modules",
-        from_agent=100)
-
-    # 3. Tester valide
-    result = send_and_wait(500,
-        f"Verifie ce code:\n{code[:500]}\n\nY a-t-il des erreurs?",
-        from_agent=100)
-
-    print("\n=== Resultat final ===")
-    print(result[:500])
+WORKFLOWS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'workflows')
 
 
-def workflow_parallel():
-    """Workflow parallèle: plusieurs workers en même temps"""
-    print("\n=== Workflow Parallele ===\n")
-
-    workers = [300, 301, 302]
-    tasks = [
-        "Cree une fonction add(a, b) qui additionne deux nombres",
-        "Cree une fonction multiply(a, b) qui multiplie deux nombres",
-        "Cree une fonction divide(a, b) qui divise deux nombres avec gestion d'erreur",
-    ]
-
-    # Envoyer toutes les tâches
-    for worker, task in zip(workers, tasks):
-        r.xadd(f"{MA_PREFIX}:agent:{worker}:inbox", {
-            'prompt': task,
-            'from_agent': 100,
-            'timestamp': int(time.time())
-        }, maxlen=IO_STREAM_MAXLEN, approximate=True)
-        print(f"Assigned to {worker}: {task[:40]}...")
-
-    # Collecter les résultats
-    responses = collect_responses(workers, timeout=120)
-
-    print("\n=== Resultats ===")
-    for agent, response in responses.items():
-        print(f"\nAgent {agent}:")
-        print(response[:300])
+def list_workflows():
+    """Noms courts disponibles dans workflows/*.yaml"""
+    return sorted(os.path.splitext(os.path.basename(p))[0]
+                  for p in glob.glob(os.path.join(WORKFLOWS_DIR, '*.yaml')))
 
 
-def workflow_review():
-    """Workflow review: Developer code, Reviewer review"""
-    print("\n=== Workflow Code Review ===\n")
-
-    # Developer écrit du code
-    code = send_and_wait(300,
-        "Ecris une fonction Python fibonacci(n) recursive",
-        from_agent=100)
-
-    # Reviewer analyse
-    review = send_and_wait(301,
-        f"Review ce code et suggere des ameliorations:\n```python\n{code}\n```",
-        from_agent=100)
-
-    # Developer améliore
-    improved = send_and_wait(300,
-        f"Ameliore ton code base sur ce review:\n{review}",
-        from_agent=100)
-
-    print("\n=== Code ameliore ===")
-    print(improved[:500])
-
-
-def workflow_pipeline():
-    """Workflow pipeline complet: Explorer -> Master -> Devs -> Merge -> Test"""
-    print("\n=== Workflow Pipeline Complet ===\n")
-
-    # 1. Explorer crée une spec
-    print("1. Explorer analyse...")
-    spec = send_and_wait(200,
-        "Analyse le dossier project/ et cree une spec pour ajouter une fonction de validation d'email",
-        from_agent=100, timeout=180)
-
-    # 2. Master dispatch aux devs
-    print("\n2. Master dispatch...")
-    send_and_wait(100,
-        f"Dispatch cette spec aux developers:\n{spec[:1000]}",
-        from_agent=0, timeout=60)
-
-    # 3. Attendre que les devs finissent
-    print("\n3. Attente des developers...")
-    time.sleep(30)  # Simplification - en vrai on attendrait les réponses
-
-    # 4. Merge
-    print("\n4. Merge...")
-    merge_result = send_and_wait(400,
-        "Cherry-pick toutes les branches dev-* vers la branche dev",
-        from_agent=100, timeout=120)
-
-    # 5. Test
-    print("\n5. Test...")
-    test_result = send_and_wait(500,
-        "Execute tous les tests et rapport le resultat",
-        from_agent=100, timeout=180)
-
-    print("\n=== Pipeline termine ===")
-    print(f"Merge: {merge_result[:200]}")
-    print(f"Tests: {test_result[:200]}")
+def load_workflow(spec):
+    """Charge un workflow par nom court (workflows/<nom>.yaml) ou chemin .yaml"""
+    if spec.endswith(('.yaml', '.yml')):
+        path = spec
+    else:
+        path = os.path.join(WORKFLOWS_DIR, f"{spec}.yaml")
+    if not os.path.exists(path):
+        raise FileNotFoundError(path)
+    with open(path) as f:
+        return yaml.safe_load(f)
 
 
 if __name__ == "__main__":
-    workflows = {
-        'seq': workflow_sequential,
-        'par': workflow_parallel,
-        'review': workflow_review,
-        'pipeline': workflow_pipeline,
-    }
+    parser = argparse.ArgumentParser(
+        description="Exécute un workflow déclaratif YAML via Redis Streams")
+    parser.add_argument('workflow',
+                        help=f"nom court ({', '.join(list_workflows())}) ou chemin .yaml")
+    parser.add_argument('--state', metavar='FICHIER',
+                        help="fichier d'état JSON (persistance + reprise)")
+    args = parser.parse_args()
 
-    if len(sys.argv) < 2 or sys.argv[1] not in workflows:
-        print(f"Usage: python {sys.argv[0]} <workflow>")
-        print(f"Workflows: {list(workflows.keys())}")
+    try:
+        wf = load_workflow(args.workflow)
+        workflow_engine.validate_workflow(wf)
+    except FileNotFoundError as exc:
+        print(f"Error: workflow introuvable: {exc}")
+        print(f"Workflows: {list_workflows()}")
+        sys.exit(1)
+    except workflow_engine.WorkflowError as exc:
+        print(f"Error: workflow invalide: {exc}")
         sys.exit(1)
 
     try:
@@ -227,4 +150,17 @@ if __name__ == "__main__":
         print(f"Error: Cannot connect to Redis at {REDIS_HOST}:{REDIS_PORT}")
         sys.exit(1)
 
-    workflows[sys.argv[1]]()
+    print(f"\n=== Workflow {wf['name']} ===\n")
+    results = workflow_engine.run_workflow(wf, send=send_and_wait, state_file=args.state)
+
+    print(f"\n=== Resultats ({wf['name']}) ===")
+    failed = False
+    for name, entry in results.items():
+        status = entry['status']
+        if status in ('failed', 'aborted', 'skipped'):
+            failed = True
+        detail = entry.get('response', entry.get('error', ''))
+        print(f"\n[{status}] {name}")
+        if detail:
+            print(str(detail)[:300])
+    sys.exit(1 if failed else 0)
