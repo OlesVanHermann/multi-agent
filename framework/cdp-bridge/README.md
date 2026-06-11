@@ -29,7 +29,7 @@ Chrome NORMAL + Extension CDP Bridge
 │   chrome-shared.py) │ :9222    │  cdp-bridge-host.js│ stdin/   │                      │
 │                     │          │                    │ stdout   │  chrome.debugger     │
 │  Même CLI:          │          │  Endpoints:        │          │  chrome.tabs         │
-│  tab, goto, click,  │          │  /json             │          │  chrome.pageCapture  │
+│  tab, goto, click,  │          │  /json             │          │  chrome.alarms       │
 │  screenshot, etc.   │          │  /command           │          │                      │
 └─────────────────────┘          └────────────────────┘          └──────────────────────┘
 ```
@@ -149,6 +149,42 @@ POST /eval              # {"tabId": 42, "expression": "document.title"}
 # Monitoring
 GET  /health            # État du bridge
 ```
+
+## Périmètre et permissions (D2)
+
+L'extension est volontairement réduite au strict nécessaire :
+
+| Permission | Pourquoi |
+|------------|----------|
+| `debugger` | Cœur du bridge : `chrome.debugger.attach` + `sendCommand` (CDP) |
+| `tabs` | Créer/fermer/lister les onglets, lire url/titre (`chrome.tabs.*`) |
+| `nativeMessaging` | Connexion au native host (`chrome.runtime.connectNative`) |
+| `alarms` | Keepalive du service worker (reconnexion toutes les ~25 s) |
+
+**Pas de `host_permissions`** (ni `<all_urls>`, ni liste de domaines) :
+`chrome.debugger` n'en a pas besoin pour s'attacher à un onglet web, et
+l'extension n'injecte aucun content script (`scripting` retiré). Retirés
+également car non utilisés dans le code : `activeTab`, `downloads`,
+`pageCapture`, `storage`.
+
+### Risque résiduel
+
+`chrome.debugger` reste une permission puissante : une fois attachée à un
+onglet, l'extension peut lire et injecter sur la page de cet onglet (c'est
+sa fonction). Mitigations en place :
+
+- Les commandes ne viennent que du native host, dont le manifest
+  (`allowed_origins`) est épinglé à l'ID exact de cette extension —
+  aucune autre extension ni page web ne peut lui parler.
+- Le native host écoute uniquement sur `127.0.0.1:9222`, vérifie l'en-tête
+  `Host` et n'émet aucun en-tête CORS : injoignable depuis le réseau ou
+  depuis une page web.
+- Chemin du host documenté : `native-host/cdp-bridge-launcher.sh`
+  (généré par `install.sh`) → `node native-host/cdp-bridge-host.js`.
+- L'attache debugger est visible (barre jaune, voir ci-dessous) et
+  détachable par onglet (`detach`).
+
+Chrome bloque par construction l'attache sur `chrome://*` et le Web Store.
 
 ## La barre jaune
 

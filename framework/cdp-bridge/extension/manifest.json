@@ -1,21 +1,13 @@
 {
   "manifest_version": 3,
   "name": "CDP Bridge",
-  "version": "1.0.0",
-  "description": "Bridge CDP commands through Chrome Extension — bypass automation detection for Google login.",
+  "version": "1.1.0",
+  "description": "Pilote Chrome via chrome.debugger pour les agents multi-agent (remplace --remote-debugging-port). Périmètre documenté dans README.md.",
   "permissions": [
     "debugger",
     "tabs",
-    "activeTab",
-    "downloads",
-    "scripting",
     "nativeMessaging",
-    "pageCapture",
-    "storage",
     "alarms"
-  ],
-  "host_permissions": [
-    "<all_urls>"
   ],
   "background": {
     "service_worker": "background.js"

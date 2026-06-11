@@ -9,7 +9,10 @@
  * 
  *   - chrome.debugger  → CDP commands (navigate, screenshot, click, type, etc.)
  *   - chrome.tabs      → tab management (create, close, list, query)
- *   - chrome.pageCapture → MHTML export
+ *
+ * PERMISSIONS (D2): debugger, tabs, nativeMessaging, alarms — rien d'autre.
+ * Pas de host_permissions : chrome.debugger n'en a pas besoin et l'extension
+ * n'injecte aucun content script. Périmètre détaillé dans ../README.md.
  * 
  * ARCHITECTURE:
  *   Python (HTTP) → Native Host (stdin/stdout) → This Service Worker → Chrome
@@ -428,7 +431,7 @@ async function handleCommand(msg) {
     // ─── Ping (health check) ──────────────────────────────────────────
 
     case "ping":
-      return { pong: true, timestamp: Date.now(), version: "1.0.0" };
+      return { pong: true, timestamp: Date.now(), version: "1.1.0" };
 
     default:
       // Try as raw CDP method name (e.g. "Page.navigate")
@@ -455,7 +458,7 @@ async function cmdStatus() {
     tabCount: tabs.length,
     attachedTabs: [...attachedTabs],
     nativeHostConnected: !!nativePort,
-    version: "1.0.0"
+    version: "1.1.0"
   };
 }
 

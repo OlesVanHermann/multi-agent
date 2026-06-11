@@ -32,7 +32,7 @@ APRES (chrome-bridge.py + extension)
 │ chrome-       │ :9222 │ cdp-bridge-      │stdin/ │                    │
 │ bridge.py     │◄──────│ host.js          │stdout │ chrome.debugger    │
 │               │       │                  │◄──────│ chrome.tabs        │
-│ AGENT_ID=200  │       │ HTTP server +    │       │ chrome.pageCapture │
+│ AGENT_ID=200  │       │ HTTP server +    │       │ chrome.alarms      │
 │               │       │ native messaging │       │                    │
 └───────────────┘       └──────────────────┘       └────────────────────┘
 ```
