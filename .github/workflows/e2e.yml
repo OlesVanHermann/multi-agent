@@ -1,0 +1,49 @@
+# G1 — Tests E2E du bridge (faux Claude dans tmux + Redis privé).
+#
+# Job séparé du reste : seuls les tests E2E (tests/test_e2e_bridge.py) sont
+# exécutés ici, car la suite complète porte des échecs préexistants et ne
+# peut pas servir de gate CI. Les tests démarrent leur propre redis-server
+# sur un port libre ; tmux et redis-server sont installés via apt.
+name: e2e
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/agent-bridge/**'
+      - 'tests/test_e2e_bridge.py'
+      - 'tests/fixtures/**'
+      - '.github/workflows/e2e.yml'
+  pull_request:
+    paths:
+      - 'scripts/agent-bridge/**'
+      - 'tests/test_e2e_bridge.py'
+      - 'tests/fixtures/**'
+      - '.github/workflows/e2e.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  e2e-bridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install system dependencies (tmux, redis-server)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tmux redis-server
+          sudo systemctl stop redis-server || true
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run E2E bridge tests
+        run: python -m pytest tests/test_e2e_bridge.py -v

@@ -81,9 +81,13 @@ POLL_MAX = float(os.environ.get("POLL_MAX", 2.0))
 
 # Durées de stabilité requises (en secondes) avant de conclure une réponse.
 # Équivalentes aux anciens compteurs d'itérations à POLL_INTERVAL=1s.
-STABLE_READY_SECS = 5.0
-STABLE_FALLBACK_SECS = 10.0
-STABLE_PLAN_SECS = 15.0
+# Surchargables par env (G1 : les tests E2E les raccourcissent).
+STABLE_READY_SECS = float(os.environ.get("STABLE_READY_SECS", 5.0))
+STABLE_FALLBACK_SECS = float(os.environ.get("STABLE_FALLBACK_SECS", 10.0))
+STABLE_PLAN_SECS = float(os.environ.get("STABLE_PLAN_SECS", 15.0))
+
+# Backoff entre deux tentatives après erreur API (G1 : raccourci en test)
+RETRY_BACKOFF_SECS = float(os.environ.get("RETRY_BACKOFF_SECS", 10))
 
 
 # Budget total de vérification de soumission d'Entrée dans _send_keys (s)
@@ -958,7 +962,7 @@ class TmuxAgent:
                     self.current_task = None
                     self.state = State.IDLE
                 self._set_redis_status()
-                time.sleep(10)
+                time.sleep(RETRY_BACKOFF_SECS)
                 continue
 
             # Compaction detected — re-queue with identity + context reminder
