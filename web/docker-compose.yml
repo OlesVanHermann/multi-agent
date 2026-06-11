@@ -20,6 +20,7 @@ services:
     environment:
       - REDIS_HOST=host.docker.internal
       - REDIS_PORT=6379
+      - KEYCLOAK_URL=http://keycloak:8080
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -28,10 +29,13 @@ services:
   keycloak:
     image: quay.io/keycloak/keycloak:23.0
     environment:
-      - KEYCLOAK_ADMIN=admin
-      - KEYCLOAK_ADMIN_PASSWORD=admin
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD requis (pas de valeur par defaut) - voir setup/secrets.cfg}
       - KC_HEALTH_ENABLED=true
-    command: start-dev --import-realm
+      - KC_HTTP_ENABLED=true
+      # Issuer epingle : doit etre egal au KEYCLOAK_URL du backend (verification stricte)
+      - KC_HOSTNAME_URL=http://keycloak:8080
+    command: start --import-realm
     volumes:
       - ./keycloak/realm-multi-agent.json:/opt/keycloak/data/import/realm-multi-agent.json:ro
       - keycloak_data:/opt/keycloak/data

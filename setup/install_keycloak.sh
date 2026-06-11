@@ -11,6 +11,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REALM_FILE="$BASE_DIR/web/keycloak/realm-multi-agent.json"
 
+# Load secrets (KEYCLOAK_ADMIN, KEYCLOAK_ADMIN_PASSWORD, KEYCLOAK_URL)
+if [ -f "$BASE_DIR/setup/secrets.cfg" ]; then
+    set -a
+    eval "$(grep -E '^[A-Z_]+=' "$BASE_DIR/setup/secrets.cfg" | grep -v '^#')"
+    set +a
+fi
+
 # Colors
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; NC='\033[0m'
@@ -106,6 +113,15 @@ log_ok "Docker is running"
 if $DOCKER ps --format '{{.Names}}' 2>/dev/null | grep -q '^ma-keycloak$'; then
     log_ok "Keycloak container already running"
 else
+    # Refuse default/empty admin credentials
+    case "${KEYCLOAK_ADMIN_PASSWORD:-}" in
+        ""|admin|changeme)
+            log_error "KEYCLOAK_ADMIN_PASSWORD absent ou valeur par défaut (admin/changeme)."
+            log_error "Copier setup/secrets.cfg.template vers setup/secrets.cfg et définir un mot de passe fort."
+            exit 1
+            ;;
+    esac
+
     # Stop and remove old container if exists (stopped)
     $DOCKER rm -f ma-keycloak 2>/dev/null || true
 
@@ -117,16 +133,20 @@ else
         log_warn "No realm file at $REALM_FILE — Keycloak will start without auto-import"
     fi
 
-    log_info "Starting Keycloak container..."
+    log_info "Starting Keycloak container (production mode)..."
+    # HTTP allowed because bound to 127.0.0.1 only; KC_HOSTNAME_URL pins the
+    # token issuer to KEYCLOAK_URL (strict issuer check in the backend).
     $DOCKER run -d --name ma-keycloak \
         -p 127.0.0.1:8080:8080 \
-        -e KEYCLOAK_ADMIN=admin \
-        -e KEYCLOAK_ADMIN_PASSWORD=admin \
+        -e KEYCLOAK_ADMIN="${KEYCLOAK_ADMIN:-admin}" \
+        -e KEYCLOAK_ADMIN_PASSWORD="$KEYCLOAK_ADMIN_PASSWORD" \
         -e KC_HEALTH_ENABLED=true \
+        -e KC_HTTP_ENABLED=true \
+        -e KC_HOSTNAME_URL="${KEYCLOAK_URL:-http://localhost:8080}" \
         $REALM_MOUNT \
         -v ma-keycloak-data:/opt/keycloak/data \
         --restart unless-stopped \
-        quay.io/keycloak/keycloak:23.0 start-dev --import-realm
+        quay.io/keycloak/keycloak:23.0 start --import-realm
 
     log_ok "Keycloak container started"
 fi
@@ -164,7 +184,7 @@ echo -e "${GREEN}   KEYCLOAK INSTALLED AND READY${NC}"
 echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
 echo ""
 echo "  Admin console: http://localhost:8080/admin"
-echo "  Admin user:    admin / admin"
+echo "  Admin user:    ${KEYCLOAK_ADMIN:-admin} (password: setup/secrets.cfg)"
 echo "  Health check:  http://localhost:8080/health/ready"
 echo ""
 echo "  Change password:"

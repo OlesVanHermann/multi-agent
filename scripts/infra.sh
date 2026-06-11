@@ -11,6 +11,7 @@ ulimit -n 10240 2>/dev/null || true
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 if [ -f "$BASE_DIR/setup/secrets.cfg" ]; then
+    chmod 600 "$BASE_DIR/setup/secrets.cfg" 2>/dev/null || true
     set -a
     eval "$(grep -E '^[A-Z_]+=' "$BASE_DIR/setup/secrets.cfg" | grep -v '^#')"
     set +a
@@ -120,20 +121,31 @@ do_start() {
     if $DOCKER ps --format '{{.Names}}' | grep -q ma-keycloak; then
         log_ok "Keycloak already running"
     else
+        case "${KEYCLOAK_ADMIN_PASSWORD:-}" in
+            ""|admin|changeme)
+                log_error "KEYCLOAK_ADMIN_PASSWORD absent ou valeur par défaut (admin/changeme)."
+                log_error "Définir un mot de passe fort dans setup/secrets.cfg avant de démarrer Keycloak."
+                exit 1
+                ;;
+        esac
         REALM_FILE="$WEB_DIR/keycloak/realm-multi-agent.json"
         REALM_MOUNT=""
         if [ -f "$REALM_FILE" ]; then
             REALM_MOUNT="-v $REALM_FILE:/opt/keycloak/data/import/realm-multi-agent.json:ro"
         fi
+        # Production mode (start): HTTP allowed because bound to 127.0.0.1 only;
+        # KC_HOSTNAME_URL pins the token issuer to KEYCLOAK_URL (strict check in backend).
         $DOCKER run -d --name ma-keycloak -p 127.0.0.1:8080:8080 \
-            -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD:-admin}" \
+            -e KEYCLOAK_ADMIN="${KEYCLOAK_ADMIN:-admin}" -e KEYCLOAK_ADMIN_PASSWORD="$KEYCLOAK_ADMIN_PASSWORD" \
             -e KC_HEALTH_ENABLED=true \
+            -e KC_HTTP_ENABLED=true \
+            -e KC_HOSTNAME_URL="${KEYCLOAK_URL:-http://localhost:8080}" \
             $REALM_MOUNT \
             -v ma-keycloak-data:/opt/keycloak/data \
             --restart unless-stopped \
-            quay.io/keycloak/keycloak:23.0 start-dev --import-realm 2>/dev/null \
+            quay.io/keycloak/keycloak:23.0 start --import-realm 2>/dev/null \
             || $DOCKER start ma-keycloak 2>/dev/null || true
-        log_ok "Keycloak starting on http://localhost:8080"
+        log_ok "Keycloak starting on ${KEYCLOAK_URL:-http://localhost:8080} (production mode)"
     fi
 
     # CDP Bridge (Chrome Extension + Native Host)
