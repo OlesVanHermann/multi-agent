@@ -619,6 +619,7 @@ class TmuxAgent:
                 'from_agent': safe_from,
                 'msg_id': msg_id,
                 'ack_id': msg_id,
+                'correlation_id': data.get('correlation_id', ''),
                 'source': 'redis'
             })
             self._log(f"<- Queued from {safe_from}: {data.get('prompt', '')[:50]}...")
@@ -799,6 +800,7 @@ class TmuxAgent:
                     'from_agent': task.get('from_agent', 'unknown'),
                     'msg_id': task.get('msg_id', ''),
                     'ack_id': task.get('ack_id'),
+                    'correlation_id': task.get('correlation_id', ''),
                     '_retry_count': retry_count + 1,
                     'source': task.get('source', 'retry')
                 })
@@ -875,6 +877,7 @@ class TmuxAgent:
                     'from_agent': 'compaction_resume',
                     'msg_id': f"resume2_{int(time.time())}",
                     'ack_id': task.get('ack_id'),
+                    'correlation_id': task.get('correlation_id', ''),
                 })
 
                 with self.state_lock:
@@ -903,6 +906,9 @@ class TmuxAgent:
                 'timestamp': int(time.time()),
                 'chars': len(response)
             }
+            # F2: echo correlation_id so readers match response to request
+            if task.get('correlation_id'):
+                msg_data['correlation_id'] = task['correlation_id']
             self.redis.xadd(self.outbox, msg_data, maxlen=IO_STREAM_MAXLEN, approximate=True)
 
             # A4: ack only after the response is published to the outbox
@@ -929,26 +935,35 @@ class TmuxAgent:
                 else:
                     try:
                         MAX_CHUNK = 15000
+                        corr = task.get('correlation_id', '')
 
                         if len(response) <= MAX_CHUNK:
-                            self.redis.xadd(f"{MA_PREFIX}:agent:{from_agent}:inbox", {
+                            reply = {
                                 'response': response,
                                 'from_agent': self.agent_id,
                                 'type': 'response',
                                 'timestamp': int(time.time()),
                                 'complete': 'true'
-                            }, maxlen=IO_STREAM_MAXLEN, approximate=True)
+                            }
+                            if corr:
+                                reply['correlation_id'] = corr
+                            self.redis.xadd(f"{MA_PREFIX}:agent:{from_agent}:inbox", reply,
+                                            maxlen=IO_STREAM_MAXLEN, approximate=True)
                         else:
                             chunks = [response[i:i+MAX_CHUNK] for i in range(0, len(response), MAX_CHUNK)]
                             for i, chunk in enumerate(chunks):
-                                self.redis.xadd(f"{MA_PREFIX}:agent:{from_agent}:inbox", {
+                                reply = {
                                     'response': chunk,
                                     'from_agent': self.agent_id,
                                     'type': 'response',
                                     'timestamp': int(time.time()),
                                     'chunk': f"{i+1}/{len(chunks)}",
                                     'complete': 'true' if i == len(chunks)-1 else 'false'
-                                }, maxlen=IO_STREAM_MAXLEN, approximate=True)
+                                }
+                                if corr:
+                                    reply['correlation_id'] = corr
+                                self.redis.xadd(f"{MA_PREFIX}:agent:{from_agent}:inbox", reply,
+                                                maxlen=IO_STREAM_MAXLEN, approximate=True)
 
                         self._log(f"ok -> response sent to {from_agent} ({len(response)} chars)")
                     except Exception as e:

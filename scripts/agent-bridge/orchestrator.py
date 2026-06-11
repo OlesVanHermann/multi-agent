@@ -13,6 +13,7 @@ import redis
 import time
 import sys
 import os
+import uuid
 
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
@@ -24,16 +25,18 @@ r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD or Non
 
 
 def send_and_wait(to_agent, prompt, from_agent=0, timeout=120):
-    """Envoie un prompt et attend la réponse"""
+    """Envoie un prompt et attend SA réponse (corrélée par correlation_id, F2)"""
 
     # Marquer le dernier message avant d'envoyer
     outbox = f"{MA_PREFIX}:agent:{to_agent}:outbox"
     last_id = '$'
+    correlation_id = str(uuid.uuid4())
 
     # Envoyer
     r.xadd(f"{MA_PREFIX}:agent:{to_agent}:inbox", {
         'prompt': prompt,
         'from_agent': from_agent,
+        'correlation_id': correlation_id,
         'timestamp': int(time.time())
     }, maxlen=IO_STREAM_MAXLEN, approximate=True)
     print(f"[{from_agent}] -> [{to_agent}]: {prompt[:60]}...")
@@ -46,11 +49,16 @@ def send_and_wait(to_agent, prompt, from_agent=0, timeout=120):
             _, messages = result[0]
             for msg_id, data in messages:
                 last_id = msg_id
-                # Vérifier que c'est une réponse à notre requête
-                if 'response' in data:
-                    response = data['response']
-                    print(f"[{to_agent}] -> [{from_agent}]: {response[:80]}...")
-                    return response
+                if 'response' not in data:
+                    continue
+                # F2: ne retenir que la réponse à NOTRE requête.
+                # Compat : un bridge ancien n'écho pas correlation_id → accepter.
+                resp_corr = data.get('correlation_id', '')
+                if resp_corr and resp_corr != correlation_id:
+                    continue
+                response = data['response']
+                print(f"[{to_agent}] -> [{from_agent}]: {response[:80]}...")
+                return response
 
     raise TimeoutError(f"No response from agent {to_agent} after {timeout}s")
 
