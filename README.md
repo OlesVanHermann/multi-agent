@@ -5,6 +5,15 @@
 
 Système d'orchestration multi-agents pour projets de développement complexes avec Claude Code.
 
+> ## ⚠ Exigence d'isolation
+>
+> Les agents tournent en mode **bypass-permissions** (`--dangerously-skip-permissions`) : chaque agent exécute des commandes shell **sans confirmation humaine**.
+>
+> - Déployer **uniquement** sur une machine ou un compte Unix **dédié**, sans données sensibles ni accès production. Pas d'usage multi-tenant non maîtrisé.
+> - Les profils `login/claude*/settings.json` embarquent des règles `permissions.deny` (lecture/écriture de `setup/secrets.cfg`, écriture de `login/`) — défense en profondeur, **pas** un bac à sable.
+> - Pour un confinement OS par agent (utilisateur dédié, conteneur, firejail…), définir `CLAUDE_WRAPPER` avant `./scripts/agent.sh start` ; le préfixe est appliqué à la commande `claude` (ex. `CLAUDE_WRAPPER="sudo -u agent-worker"`).
+> - Protéger les secrets : `chmod 600 setup/secrets.cfg` (appliqué par `infra.sh` au démarrage).
+
 ## Caractéristiques
 
 - **Jusqu'à 1000 agents** en parallèle

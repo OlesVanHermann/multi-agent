@@ -222,7 +222,8 @@ start_single() {
     fi
 
     tmux new-session -d -s "$SESSION_NAME" -x "${TMUX_COLS:-80}" -y 24
-    tmux send-keys -t "$SESSION_NAME" "cd '$BASE_DIR' && unset CLAUDECODE && $CLAUDE_CMD --dangerously-skip-permissions" Enter
+    # CLAUDE_WRAPPER (optional): isolation prefix, e.g. "sudo -u agent-worker" or "firejail --profile=..."
+    tmux send-keys -t "$SESSION_NAME" "cd '$BASE_DIR' && unset CLAUDECODE && ${CLAUDE_WRAPPER:-} $CLAUDE_CMD --dangerously-skip-permissions" Enter
     sleep 4
 
     # Select model (Enter to type, sleep, Enter to confirm menu)
@@ -355,9 +356,9 @@ start_all() {
                 CLAUDE_CMD="CLAUDE_CONFIG_DIR=$PROFILES_DIR/$LOGIN_PROFILE claude"
             fi
 
-            # Launch Claude
+            # Launch Claude (CLAUDE_WRAPPER: optional isolation prefix, cf. README Sécurité)
             tmux new-session -d -s "$SESSION" -x "${TMUX_COLS:-80}" -y 24
-            tmux send-keys -t "$SESSION" "cd '$BASE_DIR' && unset CLAUDECODE && $CLAUDE_CMD --dangerously-skip-permissions" Enter
+            tmux send-keys -t "$SESSION" "cd '$BASE_DIR' && unset CLAUDECODE && ${CLAUDE_WRAPPER:-} $CLAUDE_CMD --dangerously-skip-permissions" Enter
 
             # Wait for Claude to be ready
             if wait_claude_ready "$SESSION" 30; then
