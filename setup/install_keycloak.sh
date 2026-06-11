@@ -11,6 +11,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REALM_FILE="$BASE_DIR/web/keycloak/realm-multi-agent.json"
 
+# C2 : version Keycloak épinglée (tag complet + digest) — garder identique
+# à scripts/infra.sh et web/docker-compose.yml.
+KEYCLOAK_IMAGE="${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:23.0.7@sha256:14e99d6f5dd0516a5bdc82537b732cb85469ecdb15ad7fe5f11ff67521544db8}"
+
 # Load secrets (KEYCLOAK_ADMIN, KEYCLOAK_ADMIN_PASSWORD, KEYCLOAK_URL)
 if [ -f "$BASE_DIR/setup/secrets.cfg" ]; then
     set -a
@@ -146,7 +150,7 @@ else
         $REALM_MOUNT \
         -v ma-keycloak-data:/opt/keycloak/data \
         --restart unless-stopped \
-        quay.io/keycloak/keycloak:23.0 start --import-realm
+        "$KEYCLOAK_IMAGE" start --import-realm
 
     log_ok "Keycloak container started"
 fi

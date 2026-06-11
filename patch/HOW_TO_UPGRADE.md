@@ -147,6 +147,37 @@ echo "Consultez patch/ pour les scripts de gestion des patches"
 
 ---
 
+## Mise à jour de Keycloak (cadence)
+
+L'image Keycloak est **épinglée par tag complet + digest** (C2) dans trois
+fichiers qui doivent rester identiques :
+
+- `scripts/infra.sh` (variable `KEYCLOAK_IMAGE`)
+- `web/docker-compose.yml` (clé `image:`)
+- `setup/install_keycloak.sh` (variable `KEYCLOAK_IMAGE`)
+
+Cadence recommandée :
+
+1. **Mensuel** : vérifier les annonces de sécurité Keycloak
+   (https://www.keycloak.org/security) et les nouveaux tags sur
+   https://quay.io/repository/keycloak/keycloak?tab=tags.
+2. **Patch de la même ligne majeure** (ex. 23.0.x → 23.0.y) : mettre à jour
+   le tag + digest dans les trois fichiers, puis `docker rm -f ma-keycloak`
+   suivi de `./scripts/infra.sh start` ; vérifier `GET /health/ready` et un
+   login sur le dashboard.
+3. **Montée majeure** (ex. 23 → 26) : traiter comme une migration dédiée —
+   les variables d'admin et le mode de démarrage changent entre lignes
+   majeures ; tester l'import du realm sur une machine de test d'abord.
+
+Pour récupérer le digest d'un tag :
+
+```bash
+docker pull quay.io/keycloak/keycloak:<TAG>
+docker inspect quay.io/keycloak/keycloak:<TAG> --format '{{index .RepoDigests 0}}'
+```
+
+---
+
 ## Historique des versions
 
 | Version | Date | Changements majeurs |

@@ -21,6 +21,11 @@ LOG_DIR="$BASE_DIR/logs/000"
 WEB_DIR="$BASE_DIR/web"
 PROFILES_DIR="$BASE_DIR/login"
 
+# C2 : version Keycloak épinglée (tag complet + digest) — garder identique
+# à web/docker-compose.yml et setup/install_keycloak.sh.
+# Cadence de mise à jour : voir patch/HOW_TO_UPGRADE.md.
+KEYCLOAK_IMAGE="${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:23.0.7@sha256:14e99d6f5dd0516a5bdc82537b732cb85469ecdb15ad7fe5f11ff67521544db8}"
+
 # Auto-detect MA_PREFIX from project-config.md if not set
 if [ -z "${MA_PREFIX:-}" ] && [ -f "$BASE_DIR/project-config.md" ]; then
     MA_PREFIX=$(grep '^MA_PREFIX=' "$BASE_DIR/project-config.md" 2>/dev/null | cut -d= -f2 | tr -d ' ' || true)
@@ -143,7 +148,7 @@ do_start() {
             $REALM_MOUNT \
             -v ma-keycloak-data:/opt/keycloak/data \
             --restart unless-stopped \
-            quay.io/keycloak/keycloak:23.0 start --import-realm 2>/dev/null \
+            "$KEYCLOAK_IMAGE" start --import-realm 2>/dev/null \
             || $DOCKER start ma-keycloak 2>/dev/null || true
         log_ok "Keycloak starting on ${KEYCLOAK_URL:-http://localhost:8080} (production mode)"
     fi

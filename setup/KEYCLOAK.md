@@ -147,12 +147,13 @@ Géré automatiquement par `AuthProvider.jsx` :
 
 ```yaml
 keycloak:
-  image: quay.io/keycloak/keycloak:23.0
+  # Version épinglée (C2) — voir web/docker-compose.yml pour le digest exact
+  image: quay.io/keycloak/keycloak:23.0.7
   environment:
-    - KEYCLOAK_ADMIN=admin
-    - KEYCLOAK_ADMIN_PASSWORD=admin
+    - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
+    - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:?défini dans setup/secrets.cfg}
     - KC_HEALTH_ENABLED=true
-  command: start-dev --import-realm
+  command: start --import-realm
   volumes:
     - ./keycloak/realm-multi-agent.json:/opt/keycloak/data/import/realm-multi-agent.json:ro
     - keycloak_data:/opt/keycloak/data
@@ -289,12 +290,12 @@ docker volume rm ma-keycloak-data
 
 | Paramètre | Valeur |
 |-----------|--------|
-| Image | `quay.io/keycloak/keycloak:23.0` |
+| Image | `quay.io/keycloak/keycloak:23.0.7` (épinglée par digest, voir infra.sh) |
 | Port | `127.0.0.1:8080` |
-| Admin | `admin` / `admin` |
+| Admin | `admin` / mot de passe fort dans `setup/secrets.cfg` |
 | Realm | `multi-agent` |
 | Client ID | `multi-agent-web` |
-| Mode | `start-dev` (développement) |
+| Mode | `start` (production) |
 | Health | `GET /health/ready` |
 | Volume | `ma-keycloak-data` ou `keycloak_data` |
 | Proxy timeout | 30s (backend FastAPI) |
