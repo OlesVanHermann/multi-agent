@@ -8,8 +8,10 @@ const log = createLogger('App')
 
 // WebSocket temps réel ws/status : heartbeat, reconnexion, watchdog 30s,
 // détection de réveil machine. Alimente l'état agents via applyUpdate
-// (partagé avec useAgentsData).
-export function useStatusWebSocket({ statusPoll, ensureFreshToken, applyUpdate, setReconnecting, refetchAgentsRef }) {
+// (partagé avec useAgentsData). setWsLive signale l'état OPEN du WS pour
+// que useAgentsData désactive le polling HTTP tant que le WS est la
+// source temps réel (E2).
+export function useStatusWebSocket({ statusPoll, ensureFreshToken, applyUpdate, setReconnecting, setWsLive, refetchAgentsRef }) {
   const wsRef = useRef(null)
   const reconnectTimer = useRef(null)
   const wakeReconnectRef = useRef(null)
@@ -68,6 +70,7 @@ export function useStatusWebSocket({ statusPoll, ensureFreshToken, applyUpdate, 
 
       ws.onopen = () => {
         log.ws('open', { endpoint: 'ws/status' })
+        setWsLive(true)
         startHeartbeat(ws)
       }
 
@@ -84,6 +87,7 @@ export function useStatusWebSocket({ statusPoll, ensureFreshToken, applyUpdate, 
       ws.onclose = () => {
         log.ws('close', { endpoint: 'ws/status' })
         if (wsRef.current === ws) wsRef.current = null
+        setWsLive(false)
         scheduleReconnect()
       }
 
@@ -101,6 +105,7 @@ export function useStatusWebSocket({ statusPoll, ensureFreshToken, applyUpdate, 
     const forceReconnect = async () => {
       log.ws('force-reconnect', { endpoint: 'ws/status' })
       setReconnecting(true)
+      setWsLive(false)
       if (reconnectTimer.current) { clearTimeout(reconnectTimer.current); reconnectTimer.current = null }
       clearHeartbeat()
       const ws = wsRef.current
@@ -123,6 +128,7 @@ export function useStatusWebSocket({ statusPoll, ensureFreshToken, applyUpdate, 
         intentionalClose = true
         clearHeartbeat()
         if (wsRef.current) { try { wsRef.current.close() } catch {}; wsRef.current = null }
+        setWsLive(false)
       } else {
         if (!isLive(wsRef.current)) forceReconnect()
       }
@@ -145,8 +151,9 @@ export function useStatusWebSocket({ statusPoll, ensureFreshToken, applyUpdate, 
       if (reconnectTimer.current) { clearTimeout(reconnectTimer.current); reconnectTimer.current = null }
       if (wsRef.current) { try { wsRef.current.close() } catch {} ; wsRef.current = null }
       wakeReconnectRef.current = null
+      setWsLive(false)
     }
-  }, [statusPoll, ensureFreshToken, applyUpdate, setReconnecting])
+  }, [statusPoll, ensureFreshToken, applyUpdate, setReconnecting, setWsLive])
 
   // Wake detection → force reconnect WS + immediate HTTP refetch
   useWakeDetector((info) => {

@@ -4,10 +4,12 @@ import { createLogger } from '../lib/logger'
 
 const log = createLogger('App')
 
-// Source unique des données agents : fetch HTTP périodique + health check.
-// applyUpdate est partagé avec le WS status (useStatusWebSocket) pour que
-// les deux canaux alimentent le même état.
-export function useAgentsData(fetchSec) {
+// E2 : le WS status est la source temps réel ; le polling HTTP (agents +
+// health) n'est actif qu'en fallback quand le WS n'est pas live, avec
+// back-off exponentiel sur erreurs (plafond 60s). À chaque bascule de
+// wsLive, un fetch unique de réconciliation récupère les champs complets
+// (ctx, etc.) que le WS ne transporte pas.
+export function useAgentsData(fetchSec, wsLive) {
   const [agents, setAgents] = useState([])
   const [mode, setMode] = useState('pipeline')
   const [triangles, setTriangles] = useState({})
@@ -21,7 +23,15 @@ export function useAgentsData(fetchSec) {
   const applyUpdate = useCallback((data) => {
     // Only update if we got valid agent data
     if (data.agents && Array.isArray(data.agents) && data.agents.length > 0) {
-      setAgents(data.agents)
+      // Le WS n'envoie qu'une projection {id, status, last_seen} et inclut 000 ;
+      // on fusionne avec l'état connu pour préserver les champs complets (ctx…)
+      // et on applique le même filtre 000 que /api/agents.
+      const incoming = data.agents.filter(a => (a.id || '').split('-')[0] !== '000')
+      setAgents(prev => {
+        const prevById = {}
+        for (const a of prev) prevById[a.id] = a
+        return incoming.map(a => ({ ...prevById[a.id], ...a }))
+      })
       setLastUpdate(new Date())
       if (data.mode) setMode(data.mode)
       if (data.triangles) setTriangles(data.triangles)
@@ -30,16 +40,23 @@ export function useAgentsData(fetchSec) {
     }
   }, [])
 
-  // Fetch agents on mount and periodically
+  // Fetch de réconciliation à chaque (re)montage / bascule wsLive,
+  // puis polling de fallback uniquement quand le WS n'est pas live.
   useEffect(() => {
+    let cancelled = false
+    let timer = null
+    let failures = 0
+
     const fetchAgents = async () => {
       try {
         const res = await fetch(api('api/agents'))
         const data = await res.json()
         applyUpdate(data)
+        return true
       } catch (err) {
         log.error('fetchAgents failed', { error: err.message })
         // Don't clear agents on error - keep showing last known state
+        return false
       }
     }
 
@@ -60,19 +77,30 @@ export function useAgentsData(fetchSec) {
     }
 
     refetchAgentsRef.current = () => { fetchAgents(); checkHealth() }
-    fetchAgents()
-    checkHealth()
 
-    const interval = setInterval(() => {
+    const tick = async () => {
+      const ok = await fetchAgents()
+      await checkHealth()
+      if (cancelled) return
+      failures = ok ? 0 : failures + 1
+      const delaySec = Math.min(fetchSec * 2 ** Math.min(failures, 5), 60)
+      timer = setTimeout(tick, delaySec * 1000)
+    }
+
+    if (wsLive) {
+      // WS source unique : un seul fetch de réconciliation, pas de polling
       fetchAgents()
       checkHealth()
-    }, fetchSec * 1000)
+    } else {
+      tick()
+    }
 
     return () => {
-      clearInterval(interval)
+      cancelled = true
+      if (timer) clearTimeout(timer)
       refetchAgentsRef.current = null
     }
-  }, [fetchSec, applyUpdate])
+  }, [fetchSec, applyUpdate, wsLive])
 
   return {
     agents, mode, triangles, agentNames, lastUpdate, redisStatus,

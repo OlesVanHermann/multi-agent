@@ -38,12 +38,16 @@ function App() {
   const [statusPoll, setStatusPoll] = usePollSetting('status', 10)
   const [fetchSec, setFetchSec] = usePollSetting('fetch', 15)
 
+  // E2 : wsLive vit dans App pour casser la dépendance circulaire entre les
+  // deux hooks — le WS le pilote, useAgentsData s'en sert pour couper le polling.
+  const [wsLive, setWsLive] = useState(false)
+
   const {
     agents, mode, triangles, agentNames, lastUpdate, redisStatus,
     reconnecting, setReconnecting, applyUpdate, refetchAgentsRef,
-  } = useAgentsData(fetchSec)
+  } = useAgentsData(fetchSec, wsLive)
 
-  useStatusWebSocket({ statusPoll, ensureFreshToken, applyUpdate, setReconnecting, refetchAgentsRef })
+  useStatusWebSocket({ statusPoll, ensureFreshToken, applyUpdate, setReconnecting, setWsLive, refetchAgentsRef })
 
   const [panelConfig, handlePanelChange] = usePanelConfig()
   const crontab = useCrontab(configPanel === 'crontab', agents)
