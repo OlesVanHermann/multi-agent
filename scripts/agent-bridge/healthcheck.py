@@ -24,6 +24,9 @@ import logging
 from urllib.request import urlopen
 from urllib.error import URLError
 
+# A6 : source unique du format d'ID agent
+from ids import is_valid_agent_id
+
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
@@ -176,7 +179,7 @@ class AgentWatchdog:
                 parts = key.split(':')
                 if len(parts) == 4:
                     candidate = parts[2]
-                    if re.fullmatch(r'[0-9]{3}(-[0-9]{3})?', candidate):
+                    if is_valid_agent_id(candidate):
                         agents.add(candidate)
         except Exception:
             agents = self._discover_tmux_fallback()
@@ -200,7 +203,7 @@ class AgentWatchdog:
 
     def check_health(self, agent_id):
         """Interroge /health d'un agent — EF-002, CA-002 (timeout 2s)."""
-        if not re.fullmatch(r'[0-9]{3}(-[0-9]{3})?', str(agent_id)):
+        if not is_valid_agent_id(agent_id):
             return None
         try:
             numeric_id = int(agent_id.split('-')[0])
@@ -219,7 +222,7 @@ class AgentWatchdog:
 
     def restart_agent(self, agent_id):
         """Redémarre un agent via tmux — EF-002, CA-002."""
-        if not re.fullmatch(r'[0-9]{3}(-[0-9]{3})?', str(agent_id)):
+        if not is_valid_agent_id(agent_id):
             logger.warning("restart_agent: invalid agent_id format: %s", agent_id)
             return False
         session_name = f"{MA_PREFIX}-agent-{agent_id}"

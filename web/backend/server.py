@@ -6,6 +6,7 @@ FastAPI server exposing agent status and WebSocket streams
 
 import os
 import re
+import sys
 import asyncio
 import base64
 import time
@@ -37,7 +38,9 @@ _tmux_executor = concurrent.futures.ThreadPoolExecutor(
 )
 
 
-_AGENT_ID_RE = re.compile(r'^\d{3}(-\d{3})?$')
+# A6 : source unique du format d'ID agent (scripts/agent-bridge/ids.py)
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "agent-bridge"))
+from ids import AGENT_ID_PATTERN, AGENT_ID_RE as _AGENT_ID_RE, is_valid_agent_id
 
 def _validated_agent_id(agent_id: str) -> str:
     """Validate agent_id format. Reject path traversal and injection attempts."""
@@ -299,7 +302,7 @@ async def _refresh_cache_once():
                 if line.startswith(f"{MA_PREFIX}-agent-"):
                     agent_id = line.replace(f"{MA_PREFIX}-agent-", "")
                     # Accept numeric IDs (345) and compound IDs (345-500)
-                    if re.match(r'^\d{3}(-\d{3})?$', agent_id):
+                    if is_valid_agent_id(agent_id):
                         agent_ids.append(agent_id)
     except Exception as e:
         print(f"[cache] agent list error: {e}")
@@ -1674,7 +1677,7 @@ async def update_login_model(data: LoginModelUpdate):
         raise HTTPException(status_code=400, detail="type must be 'login' or 'model'")
 
     # Validate agent_id format
-    if data.agent_id != "default" and not re.match(r'^\d{3}(-\d{3})?$', data.agent_id):
+    if data.agent_id != "default" and not is_valid_agent_id(data.agent_id):
         raise HTTPException(status_code=400, detail="invalid agent_id")
 
     # Validate data.value (prevent path traversal)
@@ -1731,7 +1734,7 @@ async def update_effort(data: EffortUpdate):
     prompts_dir = BASE_DIR / "prompts"
 
     # Validate agent_id format
-    if data.agent_id != "default" and not re.match(r'^\d{3}(-\d{3})?$', data.agent_id):
+    if data.agent_id != "default" and not is_valid_agent_id(data.agent_id):
         raise HTTPException(status_code=400, detail="invalid agent_id")
 
     # Resolve write path: x45 subdir for compounds when it exists, else root
@@ -1929,7 +1932,7 @@ async def get_panel_config():
 @app.post("/api/config/panel")
 async def update_panel_config(data: PanelConfigUpdate):
     """Set or remove a panel override for an agent."""
-    if not re.match(r'^\d{3}(-\d{3})?$', data.agent_id):
+    if not is_valid_agent_id(data.agent_id):
         raise HTTPException(status_code=400, detail="invalid agent_id")
     if data.panel not in ("control", "agent", ""):
         raise HTTPException(status_code=400, detail="panel must be 'control', 'agent', or ''")
@@ -1963,7 +1966,7 @@ async def get_crontab():
             continue
         # Parse: {agent}-{period}.prompt[.suspended]
         base = name.replace(".suspended", "")
-        m = re.match(r'^(\d{3}(?:-\d{3})?)_(\d+)\.prompt$', base)
+        m = re.match(rf'^({AGENT_ID_PATTERN})_(\d+)\.prompt$', base)
         if not m:
             continue
         try:
@@ -1984,7 +1987,7 @@ _CRONTAB_PROMPT_MAX = 2000
 @app.post("/api/config/crontab")
 async def create_crontab(data: CrontabCreate):
     """Create a new crontab entry."""
-    if not re.match(r'^\d{3}(-\d{3})?$', data.agent_id):
+    if not is_valid_agent_id(data.agent_id):
         raise HTTPException(status_code=400, detail="invalid agent_id")
     base_id = data.agent_id.split("-")[0] if "-" in data.agent_id else data.agent_id
     if base_id == "000":
@@ -2007,7 +2010,7 @@ async def create_crontab(data: CrontabCreate):
 @app.put("/api/config/crontab")
 async def update_crontab(data: CrontabUpdate):
     """Update, suspend, or resume a crontab entry."""
-    if not re.match(r'^\d{3}(-\d{3})?$', data.agent_id):
+    if not is_valid_agent_id(data.agent_id):
         raise HTTPException(status_code=400, detail="invalid agent_id")
     base_id = data.agent_id.split("-")[0] if "-" in data.agent_id else data.agent_id
     if base_id == "000":
@@ -2046,7 +2049,7 @@ async def update_crontab(data: CrontabUpdate):
 @app.delete("/api/config/crontab")
 async def delete_crontab(data: CrontabDelete):
     """Delete a crontab entry (moves to removed/)."""
-    if not re.match(r'^\d{3}(-\d{3})?$', data.agent_id):
+    if not is_valid_agent_id(data.agent_id):
         raise HTTPException(status_code=400, detail="invalid agent_id")
 
     base = f"{data.agent_id}_{data.period}.prompt"
@@ -2190,7 +2193,7 @@ async def probe_keepalive(data: dict):
 
 async def _agent_lifecycle(agent_id: str, action: str):
     """Start, stop, or restart an agent via ./scripts/agent.sh."""
-    if not re.match(r'^\d{3}(-\d{3})?$', agent_id):
+    if not is_valid_agent_id(agent_id):
         raise HTTPException(status_code=400, detail="invalid agent_id")
     base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
     if base_id == "000":
@@ -2382,7 +2385,7 @@ async def send_to_agent(msg: SendMessage, agent_id: str = Depends(lambda agent_i
 @app.post("/api/agent/{agent_id}/input")
 async def update_agent_input(agent_id: str, data: UpdateInput):
     """Update the current input line in tmux (co-editing)"""
-    if not re.match(r'^\d{3}(-\d{3})?$', agent_id):
+    if not is_valid_agent_id(agent_id):
         raise HTTPException(status_code=400, detail="invalid agent_id")
     base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
     if base_id == "000":

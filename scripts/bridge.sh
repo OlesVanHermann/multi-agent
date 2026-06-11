@@ -10,6 +10,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/lib.sh"
 BRIDGE_SCRIPT="$BASE_DIR/scripts/agent-bridge/agent.py"
 LOG_DIR="$BASE_DIR/logs"
 PROMPTS_DIR="$BASE_DIR/prompts"
@@ -30,7 +31,7 @@ log_err()  { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 
 validate_agent_id() {
     local id="$1"
-    if [[ ! "$id" =~ ^[0-9]{3}(-[0-9]{3})?$ ]]; then
+    if ! is_valid_agent_id "$id"; then
         log_err "Invalid agent ID format: $id"
         return 1
     fi

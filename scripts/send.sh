@@ -10,6 +10,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$SCRIPT_DIR/.."
 source "$SCRIPT_DIR/redis.sh"
+source "$SCRIPT_DIR/lib.sh"
 # Auto-detect MA_PREFIX from project-config.md if not set
 if [ -z "${MA_PREFIX:-}" ] && [ -f "$BASE_DIR/project-config.md" ]; then
     MA_PREFIX=$(grep '^MA_PREFIX=' "$BASE_DIR/project-config.md" 2>/dev/null | cut -d= -f2 | tr -d ' ' || true)
@@ -25,7 +26,7 @@ if [ -z "$TO_AGENT" ]; then
     exit 1
 fi
 
-if [[ ! "$TO_AGENT" =~ ^[0-9]{3}(-[0-9]{3})?$ ]] && [ "$TO_AGENT" != "all" ]; then
+if ! is_valid_agent_id "$TO_AGENT" && [ "$TO_AGENT" != "all" ]; then
     echo "Error: Invalid agent ID format: $TO_AGENT (expected NNN or NNN-NNN)" >&2
     exit 1
 fi

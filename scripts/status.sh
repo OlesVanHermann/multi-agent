@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$SCRIPT_DIR/.."
 LOG_DIR="$BASE_DIR/logs"
 source "$SCRIPT_DIR/redis.sh"
+source "$SCRIPT_DIR/lib.sh"
 
 # Auto-detect MA_PREFIX from project-config.md if not set
 if [ -z "${MA_PREFIX:-}" ] && [ -f "$BASE_DIR/project-config.md" ]; then
@@ -285,7 +286,7 @@ do_full() {
     FIRST_AGENT=$(tmux ls 2>/dev/null | grep "^${MA_PREFIX}-agent-" | head -1 | sed "s/${MA_PREFIX}-agent-//" | cut -d: -f1)
 
     # Validate agent ID format before use in python/curl
-    if [[ -n "$FIRST_AGENT" && ! "$FIRST_AGENT" =~ ^[0-9]{3}(-[0-9]{3})?$ ]]; then
+    if [[ -n "$FIRST_AGENT" ]] && ! is_valid_agent_id "$FIRST_AGENT"; then
         warn "WS agent" "Invalid agent ID from tmux: $FIRST_AGENT"
         FIRST_AGENT=""
     fi

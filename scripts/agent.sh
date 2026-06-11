@@ -16,6 +16,7 @@ if [ -f "$BASE_DIR/setup/secrets.cfg" ]; then
     set +a
 fi
 source "$SCRIPT_DIR/redis.sh"
+source "$SCRIPT_DIR/lib.sh"
 BRIDGE_SCRIPT="$BASE_DIR/scripts/agent-bridge/agent.py"
 LOG_DIR="$BASE_DIR/logs"
 PROMPTS_DIR="$BASE_DIR/prompts"
@@ -43,7 +44,7 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 validate_agent_id() {
     local id="$1"
-    if [[ ! "$id" =~ ^[0-9]{3}(-[0-9]{3})?$ ]]; then
+    if ! is_valid_agent_id "$id"; then
         log_error "Invalid agent ID format: $id"
         return 1
     fi

@@ -39,6 +39,9 @@ except ImportError:
     )
     sys.exit(1)
 
+# A6 : source unique du format d'ID agent
+from ids import AGENT_ID_PATTERN, is_valid_agent_id
+
 try:
     import yaml
 except ImportError:
@@ -760,7 +763,10 @@ class TmuxAgent:
 
         if msg_type == 'prompt' or 'prompt' in data:
             raw_from = data.get('from_agent', 'unknown')
-            safe_from = raw_from if re.fullmatch(r'[0-9]{3}(-[0-9]{3})?|cli|manual|legacy|unknown|auto_init|compaction_reload|compaction_resume|response_[0-9]{3}(-[0-9]{3})?', str(raw_from)) else 'unknown'
+            safe_from = raw_from if re.fullmatch(
+                rf'{AGENT_ID_PATTERN}|cli|manual|legacy|unknown|auto_init'
+                rf'|compaction_reload|compaction_resume|response_{AGENT_ID_PATTERN}',
+                str(raw_from)) else 'unknown'
             self.prompt_queue.put({
                 'prompt': data.get('prompt', ''),
                 'from_agent': safe_from,
@@ -873,7 +879,7 @@ class TmuxAgent:
                         parts = message.split('|', 1)
                         if len(parts) == 2:
                             raw_from = parts[0][5:]
-                            if re.fullmatch(r'[0-9]{3}(-[0-9]{3})?|cli|manual', str(raw_from)):
+                            if re.fullmatch(rf'{AGENT_ID_PATTERN}|cli|manual', str(raw_from)):
                                 from_agent = raw_from
                             prompt = parts[1]
 
@@ -1151,8 +1157,7 @@ class TmuxAgent:
 
     def _agent_alive(self, agent_id: str) -> bool:
         """Return True if agent_id is valid format and has a running tmux session."""
-        import re
-        if not re.fullmatch(r'[0-9]{3}(-[0-9]{3})?', str(agent_id)):
+        if not is_valid_agent_id(agent_id):
             return False
         try:
             result = subprocess.run(
@@ -1166,11 +1171,10 @@ class TmuxAgent:
     def send_to_agent(self, to_agent, prompt):
         """Send message to another agent. Returns 'ok' or 'ko'."""
         if to_agent == 'all':
-            import re as _re
             sent_count = 0
             for key in self.redis.scan_iter(f'{MA_PREFIX}:agent:*', count=200):
                 parts = key.split(':')
-                if len(parts) == 3 and _re.fullmatch(r'[0-9]{3}(-[0-9]{3})?', parts[2]):
+                if len(parts) == 3 and is_valid_agent_id(parts[2]):
                     target_id = parts[2]
                     if target_id != self.agent_id:
                         self.redis.xadd(f"{MA_PREFIX}:agent:{target_id}:inbox", {
