@@ -143,11 +143,11 @@ multi-agent/
 │
 ├── framework/                   # Outils Chrome/CDP
 │   ├── cdp-bridge/              # Extension Chrome (remplace port 9222)
-│   ├── chrome-cdp/              # Client Python CDP
 │   ├── chrome-bridge.py         # Bridge WebSocket
 │   ├── chrome.sh                # Lancement Chrome headless
 │   ├── crawl2.py / crawl3.py    # Crawleurs
-│   └── cdp-extract.py / cdp-read.py
+│   ├── mov_compress.py          # Compression vidéo
+│   └── CHROME-BRIDGE.md         # Doc du bridge Chrome
 │
 ├── scripts/                     # Scripts d'orchestration
 │   ├── agent-bridge/            # Bridge Python (agent.py, orchestrator.py)
@@ -511,8 +511,8 @@ python -m pytest tests/ --cov=scripts --cov-report=term-missing
 Ou manuellement :
 
 ```bash
-git add -A && git commit -m "release: v2.5.X - Description"
-git tag -a v2.5.X -m "v2.5.X - Description"
+git add -A && git commit -m "release: v2.12.X - Description"
+git tag -a v2.12.X -m "v2.12.X - Description"
 git push origin main --tags
 ```
 

@@ -56,7 +56,7 @@ project-config.md
 # Config panel locale (overrides agent panel types)
 web/panel-config.json
 
-# Checksum local (généré par patch/sync-to-git.sh)
+# Checksum local (généré à la main — voir patch/README.md / SETUP-CLIENT.md)
 file.md5
 
 # Pipeline output (project-specific)

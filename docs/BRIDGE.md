@@ -1,307 +1,203 @@
-# Multi-Agent Bridge
+# Bridge Agent — Documentation technique
 
-Documentation technique du bridge de communication entre Redis Streams et Claude Code.
-
-## Vue d'ensemble
-
-Le bridge remplace l'ancien `agent_runner.py` avec une architecture améliorée :
-
-| Aspect | Ancien (agent_runner) | Nouveau (bridge) |
-|--------|----------------------|------------------|
-| Exécution Claude | `subprocess.run()` | `pexpect` PTY |
-| Communication | Redis Lists | Redis Streams |
-| Streaming | Non | Oui (temps réel) |
-| Intervention manuelle | Non | Oui |
-| Queuing | Basique | Automatique FIFO |
-| Sessions Claude | Oui | Oui (préservé) |
-
-## Architecture
+`scripts/agent-bridge/agent.py` est le pont entre Redis et un Claude Code
+**interactif tournant dans tmux**. Il n'exécute pas `claude` lui-même : il
+suppose qu'une session tmux nommée `{MA_PREFIX}-agent-{id}` existe déjà
+(créée par `./scripts/agent.sh start <id>`) et dialogue avec elle via
+`tmux send-keys` / `tmux capture-pane`.
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     AGENT BRIDGE                                 │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│   ┌──────────────┐    ┌──────────────┐    ┌──────────────┐     │
-│   │ Redis        │    │ Queue        │    │ Claude       │     │
-│   │ Listener     │───>│ Processor    │───>│ PTY          │     │
-│   │ (XREAD)      │    │              │    │ (pexpect)    │     │
-│   └──────────────┘    └──────────────┘    └──────┬───────┘     │
-│                                                   │              │
-│   ┌──────────────┐                         ┌─────┴────────┐    │
-│   │ Heartbeat    │                         │ Output       │    │
-│   │ (10s)        │                         │ Reader       │    │
-│   └──────────────┘                         └──────────────┘    │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
+Redis Streams                    tmux session "{MA_PREFIX}-agent-{id}"
+{MA_PREFIX}:agent:{id}:inbox ──► agent.py ──send-keys──► Claude Code (CLI)
+{MA_PREFIX}:agent:{id}:outbox ◄─ agent.py ◄─capture-pane─┘
 ```
-
-### 5 Threads
-
-| Thread | Rôle |
-|--------|------|
-| `claude_reader` | Lit stdout de Claude en continu |
-| `redis_listener` | Écoute inbox via XREAD bloquant |
-| `queue_processor` | Exécute les prompts quand IDLE |
-| `heartbeat` | Publie status toutes les 10s |
-| `main` | Gère stdin (mode interactif) |
-
-### Machine à états
-
-```
-IDLE ←─── (timeout 5s sans output) ───→ BUSY
- ↑                                        ↓
- └──────────── (process queue) ──────────┘
-```
-
-## Installation
 
 ```bash
-# Installer les dépendances
-pip install -r requirements.txt
-
-# Ou manuellement
-pip install redis>=4.0.0 pexpect>=4.8.0
-```
-
-## Utilisation
-
-### Mode interactif (un agent)
-
-```bash
-python scripts/agent-bridge/agent.py 300
-```
-
-Commandes disponibles :
-- `/status` - État actuel (IDLE/BUSY, queue, tasks)
-- `/queue` - Taille de la queue
-- `/flush` - Vider la queue
-- `/session` - Info session Claude
-- `/newsession` - Forcer nouvelle session
-- `/history` - Derniers 5 échanges
-- `/send <id> <msg>` - Envoyer à un autre agent
-- `/help` - Aide
-
-### Mode headless (daemon)
-
-```bash
-python scripts/agent-bridge/agent.py 300 --headless
-```
-
-### Lancer plusieurs agents
-
-```bash
-# Agents spécifiques
-./scripts/agent.sh start 300 310
-
-# Tous les agents configurés
-./scripts/agent.sh start all
-
-# Arrêter
-./scripts/agent.sh stop all
-```
-
-## Communication Redis
-
-### Structure des clés
-
-```
-ma:agent:{id}          # Hash - métadonnées agent
-ma:agent:{id}:inbox    # Stream - messages entrants
-ma:agent:{id}:outbox   # Stream - réponses sortantes
-```
-
-### Format des messages
-
-**Inbox (requête):**
-```json
-{
-    "prompt": "Analyse ce fichier",
-    "from_agent": "100",
-    "timestamp": "1706547600",
-    "type": "prompt"
-}
-```
-
-**Outbox (réponse):**
-```json
-{
-    "response": "Voici mon analyse...",
-    "from_agent": "300",
-    "to_agent": "100",
-    "in_reply_to": "1706547600-0",
-    "timestamp": "1706547610",
-    "chars": "1234"
-}
-```
-
-### Envoyer un message
-
-```bash
-# Via script
-./scripts/send.sh 300 "Analyse le README.md"
-
-# Via Redis directement
-redis-cli XADD "ma:agent:300:inbox" '*' \
-    prompt "Analyse le README.md" \
-    from_agent "cli" \
-    timestamp "$(date +%s)"
-```
-
-### Lire les réponses
-
-```bash
-# Temps réel
-./scripts/watch.sh 300
-
-# Historique
-./scripts/watch.sh 300
-```
-
-## Sessions Claude
-
-Le bridge préserve le système de sessions pour le prompt caching :
-
-1. **Première tâche** : `claude --session-id {uuid}` + prompt système complet
-2. **Tâches suivantes** : `claude --resume {uuid}` + prompt minimal
-3. **Reset** : Nouvelle session après 50 tâches (configurable)
-
-### Économie de tokens
-
-- ~90% d'économie grâce au prompt caching
-- Le prompt système n'est envoyé qu'une fois par session
-
-## Monitoring
-
-### Healthcheck
-
-```bash
-# Status unique
-python scripts/agent-bridge/healthcheck.py
-
-# Mode watch (refresh 2s)
-python scripts/agent-bridge/healthcheck.py --watch
-
-# Avec stats streams
-python scripts/agent-bridge/healthcheck.py --streams
-```
-
-### Monitor temps réel
-
-```bash
-python3 scripts/monitor.py
-```
-
-## Orchestration
-
-### Workflows prédéfinis
-
-```bash
-# Séquentiel: Explorer → Developer → Tester
-python scripts/agent-bridge/orchestrator.py seq
-
-# Parallèle: plusieurs workers
-python scripts/agent-bridge/orchestrator.py par
-
-# Code review: Developer → Reviewer → Developer
-python scripts/agent-bridge/orchestrator.py review
-
-# Pipeline complet
-python scripts/agent-bridge/orchestrator.py pipeline
-```
-
-### API Python
-
-```python
-from scripts.agent_bridge.orchestrator import send_and_wait, broadcast, collect_responses
-
-# Envoyer et attendre réponse
-response = send_and_wait(300, "Analyse ce fichier", from_agent=100, timeout=120)
-
-# Broadcast à plusieurs agents
-broadcast([300, 301, 302], "Commencez l'analyse")
-
-# Collecter les réponses
-responses = collect_responses([300, 301, 302], timeout=60)
-```
-
-## Configuration
-
-### Variables d'environnement
-
-| Variable | Défaut | Description |
-|----------|--------|-------------|
-| `REDIS_HOST` | localhost | Hôte Redis |
-| `REDIS_PORT` | 6379 | Port Redis |
-| `LOG_DIR` | ./logs | Dossier des logs |
-
-### Constantes (dans agent.py)
-
-| Constante | Défaut | Description |
-|-----------|--------|-------------|
-| `RESPONSE_TIMEOUT` | 5 | Secondes sans output = réponse finie |
-| `HEARTBEAT_INTERVAL` | 10 | Intervalle heartbeat (secondes) |
-| `MAX_HISTORY` | 50 | Échanges gardés en mémoire |
-| `SESSION_TASK_LIMIT` | 50 | Reset session après N tâches |
-
-## Migration depuis agent_runner
-
-### Différences de clés Redis
-
-| Ancien | Nouveau |
-|--------|---------|
-| `ma:inject:{id}` | `ma:agent:{id}:inbox` |
-| `ma:processing:{id}` | (géré par state machine) |
-| `ma:agents` (hash global) | `ma:agent:{id}` (hash par agent) |
-
-### Cohabitation
-
-Les deux systèmes peuvent cohabiter :
-- Agents `agent_runner.py` utilisent les anciennes clés
-- Agents `agent.py` (bridge) utilisent les nouvelles clés
-
-Pour migrer progressivement :
-1. Démarrer nouveaux agents avec le bridge
-2. Tester le fonctionnement
-3. Migrer les anciens agents un par un
-
-## Limitations connues
-
-| Limitation | Impact | Contournement |
-|-----------|--------|---------------|
-| Timeout fixe 5s | Faux positif si Claude pause | Augmenter `RESPONSE_TIMEOUT` |
-| Un prompt à la fois | Pas de batching | Utiliser plusieurs agents |
-| Pas d'annulation | Impossible de stopper un prompt | Redémarrer l'agent |
-
-## Troubleshooting
-
-### Agent ne répond pas
-
-1. Vérifier Redis : `redis-cli ping`
-2. Vérifier le process : `tmux ls | grep agent-`
-3. Vérifier les logs : `tail -F logs/{id}/bridge.log`
-4. Vérifier le status : `python3 scripts/monitor.py`
-
-### Messages perdus
-
-Les messages ne sont jamais perdus grâce aux Redis Streams :
-```bash
-# Voir tous les messages de l'inbox
-redis-cli XRANGE "ma:agent:300:inbox" - +
-```
-
-### Session corrompue
-
-Forcer une nouvelle session :
-```bash
-# En mode interactif
-/newsession
-
-# Ou redémarrer l'agent
-./scripts/agent.sh stop 300
-./scripts/agent.sh start 300
+python3 scripts/agent-bridge/agent.py 300
+# Prérequis : session tmux "{MA_PREFIX}-agent-300" avec Claude lancé
+# (sinon le bridge sort immédiatement avec une erreur)
 ```
 
 ---
 
-*Multi-Agent Bridge v1.0 - Janvier 2026*
+## Architecture interne
+
+Quatre threads démons + un serveur health HTTP :
+
+| Thread | Rôle |
+|--------|------|
+| `redis_listener` | Lit l'inbox Streams via consumer group (XREADGROUP) et alimente la queue |
+| `legacy_listener` | Lit l'inbox legacy (List `{MA_PREFIX}:inject:{id}`, BLPOP) — best-effort, sans ack |
+| `queue_processor` | Dépile la queue, envoie à Claude (tmux), publie la réponse, XACK |
+| `heartbeat` | Publie toutes les 10 s sur `mi:agent:{id}:heartbeat` + `pane_state` (B6) |
+| `health_server` | HTTP `GET /health` sur `127.0.0.1:{AGENT_HEALTH_PORT_BASE + id}` (token `HEALTH_TOKEN` requis) |
+
+Le thread principal (`run()`) lit stdin : lignes normales = prompts locaux,
+lignes `/commande` = commandes interactives. **EOF sur stdin arrête le bridge.**
+
+### Consumer groups (A4)
+
+L'inbox est consommée via le groupe `bridge` (consumer `agent-{id}`), créé
+de façon idempotente avec `id='$'` et `mkstream=True` :
+
+- Au démarrage, les messages **lus mais non acquittés** lors d'un run
+  précédent (crash) sont rejoués d'abord (lecture avec id `'0'`), puis les
+  nouveaux messages sont consommés (id `'>'`).
+- Un prompt n'est **XACK qu'après publication de la réponse** dans l'outbox :
+  un crash en cours de traitement ⇒ rejeu au redémarrage, pas de perte.
+- Les messages de type `response` / `reload_prompt` (et entrées inconnues ou
+  élaguées) sont acquittés immédiatement.
+- L'inbox legacy (List) reste destructive (BLPOP) : préférer les Streams.
+
+### Bornage des streams (A3)
+
+Tous les `XADD` métier (inbox/outbox) sont bornés à `IO_STREAM_MAXLEN`
+(défaut 10000, `approximate=True`) ; les streams monitoring à 1000.
+Un lint de test (`tests/test_stream_bounds.py`) vérifie qu'aucun `xadd`
+sans `maxlen` n'est introduit.
+
+---
+
+## Détection de fin de réponse (A1)
+
+Le bridge ne lit pas un flux structuré : il **parse le rendu du terminal**
+(`tmux capture-pane -S -200`). Tous les marqueurs UI du CLI Claude sont
+externalisés dans `scripts/agent-bridge/markers.yaml` — si un libellé du CLI
+change, c'est ce fichier qu'on corrige, pas le code.
+
+Logique de `_wait_for_response` :
+
+1. Capture une baseline du pane avant la réponse.
+2. Boucle de scrutation **adaptative** (A2) : intervalle `POLL_MIN` tant que
+   le pane change, allongé ×1.5 jusqu'à `POLL_MAX` dès stabilité.
+3. La réponse est considérée terminée quand la zone de prompt (3 dernières
+   lignes non vides) contient la ligne de statut (`status_line`), qu'un
+   marqueur de prompt (`prompt_markers` : `❯`, `>`, …) est visible, et que
+   cette zone est stable depuis `STABLE_READY_SECS` (fallback sans marqueur :
+   `STABLE_FALLBACK_SECS` ; mode plan : `STABLE_PLAN_SECS`).
+
+### Cas particuliers gérés pendant l'attente
+
+| Détection (markers.yaml) | Réaction du bridge |
+|--------------------------|--------------------|
+| `Conversation compacted` (nouvelle occurrence) | Re-met en queue : msg 1 `deviens agent <prompt>` (ré-injection identité) + msg 2 rappel du contexte (dernière ligne `.history` + prompt d'origine), qui porte l'`ack_id` et le `correlation_id` d'origine. Statut transitoire `context_compacted`. |
+| `API Error:` / `rate_limit` / `overloaded_error`… (`api_error_patterns`) | Re-queue du prompt avec backoff `RETRY_BACKOFF_SECS` (max 2 retries). Événement `api_error_retry` dans `events.jsonl`, statut transitoire `api_error_retry`. |
+| `How is Claude doing` (sondage de session) | Auto-rejet : envoi de `0`, puis reprise de l'attente. |
+| `Would you like to proceed` (plan mode) | Statut Redis `waiting_approval` tant que la demande est visible ; l'utilisateur approuve directement dans le pane tmux. |
+| `Press up to edit queued messages` | Le prompt n'a pas été traité (Claude occupé) : retour immédiat. |
+
+---
+
+## Format des messages
+
+### Envoyer un prompt (inbox)
+
+```bash
+./scripts/send.sh 300 "Analyse le README"
+# ou
+redis-cli XADD "A:agent:300:inbox" MAXLEN '~' 10000 '*' \
+  prompt "Analyse le README" from_agent "cli" \
+  correlation_id "$(uuidgen)" timestamp "$(date +%s)"
+```
+
+Champs : `prompt` (requis), `from_agent`, `correlation_id` (F2, optionnel),
+`timestamp`. Un `from_agent` invalide (ni ID d'agent ni valeur réservée
+`cli|manual|legacy|auto_init|…`) est remplacé par `unknown`.
+
+### Réponse (outbox)
+
+```
+{MA_PREFIX}:agent:{id}:outbox
+  response, from_agent, to_agent, timestamp, chars
+  correlation_id   # F2 : écho du correlation_id de la requête
+```
+
+Si `from_agent` est un autre agent **vivant** (session tmux active), la
+réponse lui est aussi routée dans son inbox (type `response`, découpée en
+chunks de 15000 caractères si nécessaire, champ `complete`). Les expéditeurs
+`cli`, `manual`, `auto_init`, etc. ne reçoivent pas de routage retour.
+
+### Autres types inbox
+
+- `type=response` : notification `[FROM xxx]…[/xxx]` injectée comme prompt.
+- `type=reload_prompt` : ré-injection du prompt agent (après compaction).
+
+---
+
+## Auto-chargement du prompt agent
+
+Au démarrage, le bridge cherche le prompt de l'agent dans `prompts/` :
+
+- Pipeline standard : `prompts/{id}-*.md` → envoie `deviens agent <chemin>` ;
+- x45 : répertoire `prompts/{id}*/` avec `system.md` + `memory.md` +
+  `methodology.md` → envoie la liste des fichiers à lire ;
+- puis, si `{id}.history` existe, un rappel de la dernière entrée.
+
+Chaque prompt traité est ajouté à `prompts/…/{id}.history` (horodaté).
+
+---
+
+## Commandes interactives (stdin)
+
+```
+/status            État + taille de queue + tâches accomplies
+/queue             Taille de la queue
+/send <id> <msg>   Envoyer à un autre agent (broadcast : /send all <msg>)
+/help              Aide
+```
+
+Toute autre ligne stdin est traitée comme un prompt local (`from_agent=manual`).
+
+---
+
+## Variables d'environnement
+
+| Variable | Défaut | Rôle |
+|----------|--------|------|
+| `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` | `localhost` / `6379` / vide | Connexion Redis |
+| `MA_PREFIX` | `A` | Préfixe des clés métier (`A:agent:300:inbox`…) |
+| `MONITORING_PREFIX` | `mi` | Préfixe des streams monitoring |
+| `LOG_DIR` | `logs/` | Logs : `{LOG_DIR}/{id}/bridge_{ts}.log` + `events.jsonl` |
+| `RESPONSE_TIMEOUT` | `300` | Attente max d'une réponse (s) |
+| `POLL_MIN` / `POLL_MAX` | `0.2` / `2.0` | Scrutation adaptative du pane (A2) |
+| `STABLE_READY_SECS` | `5` | Stabilité requise avec marqueur de prompt |
+| `STABLE_FALLBACK_SECS` | `10` | Stabilité requise sans marqueur |
+| `STABLE_PLAN_SECS` | `15` | Stabilité requise en mode plan |
+| `RETRY_BACKOFF_SECS` | `10` | Backoff entre retries après erreur API |
+| `IO_STREAM_MAXLEN` | `10000` | Borne des streams inbox/outbox (A3) |
+| `AGENT_HEALTH_PORT_BASE` | `9100` | Port health = base + id numérique |
+| `HEALTH_TOKEN` | vide | Token du endpoint `/health` (vide = tout refusé) |
+
+---
+
+## Monitoring
+
+- **Heartbeat** : `mi:agent:{id}:heartbeat` toutes les 10 s (statut, mémoire,
+  CPU via psutil, compteurs de messages), borné à 1000 entrées.
+- **État dashboard (B6)** : le bridge dérive l'état du pane (`pane_state`)
+  et le publie dans le hash `{MA_PREFIX}:agent:{id}` — le dashboard lit
+  Redis, sans re-scanner tmux.
+- **Statuts** dans `{MA_PREFIX}:agent:{id}` (`status`) : `idle`, `busy`,
+  `waiting_approval`, `api_error_retry`, `context_compacted`, `has_bashes`,
+  `stopped`.
+- **Health HTTP** : `GET http://127.0.0.1:{base+id}/health?token=…` →
+  `status`, `agent_id`, `uptime_seconds`, `last_heartbeat_ts`,
+  `redis_connected`, `pty_active`.
+- **Healthcheck global** : `python3 scripts/agent-bridge/healthcheck.py`.
+
+---
+
+## Tests
+
+- `tests/test_e2e_bridge.py` (G1) : chaîne complète Redis → agent.py → tmux
+  avec un faux Claude (`tests/fixtures/fake_claude.sh`) — nominal,
+  compaction, erreur API, sondage, plan mode. Skippés si `tmux` ou
+  `redis-server` manquent ; exécutés en CI (`.github/workflows/e2e.yml`).
+- `tests/test_consumer_groups.py` (A4/G2) : routage inbox, ack après
+  publication, reprise après crash sur un vrai Redis.
+- `tests/test_stream_bounds.py` (A3), `tests/test_markers_externalized.py` (A1),
+  `tests/test_adaptive_poll.py` (A2).
+
+```bash
+python -m pytest tests/test_e2e_bridge.py -v
+```

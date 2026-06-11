@@ -1,4 +1,4 @@
-# Multi-Agent System v2.5
+# Multi-Agent System v2.12.18
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Claude](https://img.shields.io/badge/Powered%20by-Claude-blueviolet)](https://claude.ai)
@@ -27,7 +27,7 @@ Système d'orchestration multi-agents pour projets de développement complexes a
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  9XX ARCHITECTS     - Configurent le système                    │
+│  000 ARCHITECT      - Configure le système                      │
 │  0XX SUPER-MASTERS  - Coordination multi-projets                │
 │  1XX MASTERS        - Coordination projet                       │
 │  2XX EXPLORERS      - Analyse, création SPEC                    │
@@ -96,22 +96,18 @@ Si vous avez déjà une installation (ex: v2.0) et voulez mettre à jour :
 ```bash
 cd /chemin/vers/multi-agent
 
-# 1. Télécharger le script de mise à jour
-curl -O https://raw.githubusercontent.com/OlesVanHermann/multi-agent/main/upgrade.sh
-chmod +x upgrade.sh
+# 1. Simuler (optionnel, aucune modification)
+./patch/upgrade.sh --dry-run
 
-# 2. Simuler (optionnel, aucune modification)
-./upgrade.sh --dry-run
-
-# 3. Appliquer la mise à jour
-./upgrade.sh
+# 2. Appliquer la mise à jour
+./patch/upgrade.sh
 ```
 
 Le script :
-- Met à jour **uniquement** les fichiers framework (`scripts/`, `web/`, `docs/`)
-- **Préserve** vos fichiers projet (`prompts/`, `pool-requests/`, `project/`, `project-config.md`)
+- Met à jour **uniquement** les fichiers framework (`scripts/`, `web/`, `docs/`, `patch/`, `setup/`, `templates/`, `examples/`, `framework/`, `tests/`)
+- **Préserve** vos fichiers projet (`prompts/`, `pool-requests/`, `project/`, `sessions/`, `logs/`, `setup/secrets.cfg`)
 
-Voir [UPGRADE.md](UPGRADE.md) pour le guide complet. Le script est dans `patch/upgrade.sh`.
+Voir [patch/HOW_TO_UPGRADE.md](patch/HOW_TO_UPGRADE.md) pour le guide complet.
 
 ## Configuration
 
@@ -175,8 +171,6 @@ python3 scripts/agent-bridge/healthcheck.py   # Healthcheck tous les agents
 ```
 /status      - État actuel
 /queue       - Taille de la queue
-/flush       - Vider la queue
-/session     - Info session Claude
 /send <id> <msg> - Envoyer à un autre agent
 /help        - Aide
 ```
@@ -185,25 +179,29 @@ python3 scripts/agent-bridge/healthcheck.py   # Healthcheck tous les agents
 
 ```
 multi-agent/
-├── scripts/agent-bridge/    # Bridge Redis Streams + Claude
+├── scripts/agent-bridge/    # Bridge Redis Streams + Claude (tmux)
 │   ├── agent.py             # Agent principal
-│   ├── orchestrator.py      # Workflows multi-agents
+│   ├── orchestrator.py      # Workflows multi-agents (workflows/*.yaml)
 │   └── healthcheck.py       # Monitoring
-│   ├── bridge/              # SSH tunnel Mac↔VM
-│   └── dashboard/           # Web dashboard
 │
 ├── scripts/
 │   ├── infra.sh             # start/stop infrastructure + Agent 000
 │   ├── agent.sh             # start/stop agents workers
 │   ├── web.sh               # start/stop/rebuild dashboard
-│   ├── proxy.sh             # reverse proxy :80 → :8090
+│   ├── proxy.sh             # reverse proxy :80 → :8050
 │   ├── send.sh              # Envoyer message à un agent
 │   ├── watch.sh             # Voir réponses en temps réel
 │   └── status.sh            # Diagnostic rapide du système
 │
+├── web/                     # Dashboard (FastAPI :8050 + React)
+├── framework/               # Outils Chrome/CDP
+├── patch/                   # Pipeline de patches + upgrade.sh
+├── setup/                   # Installation (Redis, Keycloak, profils)
 ├── prompts/                 # Prompts système des agents
 ├── examples/                # Exemples de configuration
+├── templates/               # Templates réutilisables
 ├── docs/                    # Documentation détaillée
+├── tests/                   # Tests unitaires et E2E du framework
 │
 ├── pool-requests/           # Queue de travail (fichiers)
 ├── logs/                    # Logs des agents
@@ -233,8 +231,9 @@ multi-agent/
 | Fichier | Description |
 |---------|-------------|
 | [CLAUDE.md](CLAUDE.md) | Documentation principale |
-| [UPGRADE.md](UPGRADE.md) | Guide de mise à jour (processus général) |
-| [patch/PIPELINE.md](patch/PIPELINE.md) | **Pipeline de patches** (Mac → Hub → GitHub) |
+| [patch/HOW_TO_UPGRADE.md](patch/HOW_TO_UPGRADE.md) | Guide de mise à jour |
+| [patch/HOW_TO_PATCH.md](patch/HOW_TO_PATCH.md) | **Pipeline de patches** (projet → Hub → GitHub) |
+| [docs/AUTH.md](docs/AUTH.md) | Authentification (Keycloak, JWT, WebSocket) |
 | [docs/BRIDGE.md](docs/BRIDGE.md) | Documentation technique du bridge |
 | [docs/AGENT_MONO.md](docs/AGENT_MONO.md) | Format agent mono |
 | [prompts/CONVENTIONS.md](prompts/CONVENTIONS.md) | Convention de numérotation |
@@ -276,8 +275,8 @@ redis-cli ping
 # Vérifier les sessions tmux
 tmux ls | grep agent
 
-# Vérifier les logs
-tail -f logs/300/bridge.log
+# Vérifier les logs (un fichier horodaté par démarrage)
+tail -f logs/300/bridge_*.log
 ```
 
 ### Erreur "Invalid API key"
@@ -312,4 +311,4 @@ MIT - voir [LICENSE](LICENSE)
 
 ---
 
-*Multi-Agent System v2.5 - 2026*
+*Multi-Agent System v2.12.18 - 2026*
