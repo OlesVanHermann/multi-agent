@@ -917,31 +917,8 @@ class TmuxAgent:
             self._messages_processed += 1
             self._last_message_ts = int(time.time())
 
-            # DONE/SCORE relay — detect send.sh calls in response and forward via bridge Redis
-            try:
-                done_pattern = re.compile(
-                    r'send\.sh\s+(\S+)\s+.*?FROM:' + re.escape(self.agent_id) + r'\|(DONE\b[^"\']*|SCORE\s+\d+[^"\']*)',
-                    re.IGNORECASE
-                )
-                for match in done_pattern.finditer(response):
-                    target_agent = match.group(1).strip('"\'')
-                    signal = match.group(2).strip()
-                    if target_agent == task.get('from_agent'):
-                        continue
-                    if not self._agent_alive(target_agent):
-                        self._log(f"RELAY BLOCKED: target {target_agent} invalid or not alive")
-                        continue
-                    relay_msg = f"FROM:{self.agent_id}|{signal}"
-                    self.redis.xadd(f"{MA_PREFIX}:agent:{target_agent}:inbox", {
-                        'prompt': relay_msg,
-                        'from_agent': self.agent_id,
-                        'type': 'prompt',
-                        'timestamp': int(time.time())
-                    }, maxlen=IO_STREAM_MAXLEN, approximate=True)
-                    self._log(f"RELAY: {signal} -> agent {target_agent}")
-                    self._log_event("done_relay", f"{signal} -> {target_agent}")
-            except Exception as e:
-                self._log(f"DONE relay error: {e}")
+            # A7: no DONE/SCORE scraping of model output — completion signals
+            # go through the explicit channel only (scripts/done.sh → Redis)
 
             # Notify sender if it was another agent
             from_agent = task.get('from_agent')

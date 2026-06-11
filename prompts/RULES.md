@@ -30,8 +30,15 @@ Pas de multi-tâche. Pas de fichiers multiples dispersés. Un agent = un livrabl
 **Après CHAQUE tâche, envoyer un rapport COMPLET au Master:**
 
 ```bash
-redis-cli XADD "ma:agent:100:inbox" '*' prompt "FROM:{MON_ID}|DONE {ENTREPRISE} - {RÉSUMÉ COMPLET}" from_agent "{MON_ID}" timestamp "$(date +%s)"
+# Signal de complétion : TOUJOURS via le script dédié (canal explicite)
+./scripts/done.sh 100 DONE "{ENTREPRISE} - {RÉSUMÉ COMPLET}"
+
+# Score : ./scripts/done.sh 100 SCORE 85 "{détails}"
 ```
+
+**IMPORTANT :** le bridge ne lit PLUS les signaux DONE/SCORE dans le texte
+de tes réponses. Écrire "DONE" dans ta réponse ne déclenche RIEN.
+Seule l'EXÉCUTION de `done.sh` (ou un XADD direct) émet le signal.
 
 Le rapport DOIT contenir:
 - ✅ Status: SUCCESS / FAILED / PARTIAL
