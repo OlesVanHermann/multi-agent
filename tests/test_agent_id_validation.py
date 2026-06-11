@@ -42,10 +42,10 @@ class TestPythonSource:
         assert m and m.group(1) == "345-500" and m.group(2) == "2"
 
     def test_consumers_import_single_source(self):
-        """agent.py, healthcheck.py et server.py utilisent ids.py."""
+        """agent.py, healthcheck.py et le backend web utilisent ids.py."""
         for rel in ('scripts/agent-bridge/agent.py',
                     'scripts/agent-bridge/healthcheck.py',
-                    'web/backend/server.py'):
+                    'web/backend/multi_agent/config.py'):
             src = open(os.path.join(_REPO_ROOT, rel), encoding='utf-8').read()
             assert 'from ids import' in src, rel
 
