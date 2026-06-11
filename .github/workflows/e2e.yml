@@ -1,9 +1,11 @@
-# G1 — Tests E2E du bridge (faux Claude dans tmux + Redis privé).
+# G1/G2 — Tests E2E du bridge (faux Claude dans tmux + Redis privé) et
+# tests des chemins de panne (reprise consumer groups, bornage streams,
+# rejet JWT, rate limit WS).
 #
-# Job séparé du reste : seuls les tests E2E (tests/test_e2e_bridge.py) sont
-# exécutés ici, car la suite complète porte des échecs préexistants et ne
-# peut pas servir de gate CI. Les tests démarrent leur propre redis-server
-# sur un port libre ; tmux et redis-server sont installés via apt.
+# Job séparé du reste : seuls ces fichiers sont exécutés ici, car la suite
+# complète porte des échecs préexistants et ne peut pas servir de gate CI.
+# Les tests démarrent leur propre redis-server sur un port libre ; tmux et
+# redis-server sont installés via apt.
 name: e2e
 
 on:
@@ -11,14 +13,14 @@ on:
     branches: [main]
     paths:
       - 'scripts/agent-bridge/**'
-      - 'tests/test_e2e_bridge.py'
-      - 'tests/fixtures/**'
+      - 'web/backend/**'
+      - 'tests/**'
       - '.github/workflows/e2e.yml'
   pull_request:
     paths:
       - 'scripts/agent-bridge/**'
-      - 'tests/test_e2e_bridge.py'
-      - 'tests/fixtures/**'
+      - 'web/backend/**'
+      - 'tests/**'
       - '.github/workflows/e2e.yml'
 
 permissions:
@@ -45,5 +47,13 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      - name: Run E2E bridge tests
+      - name: Run E2E bridge tests (G1)
         run: python -m pytest tests/test_e2e_bridge.py -v
+
+      - name: Run failure-path tests (G2 — A3/A4/B2/B5)
+        run: >
+          python -m pytest -v
+          tests/test_consumer_groups.py
+          tests/test_stream_bounds.py
+          tests/test_jwt_verification.py
+          tests/test_rate_limit_redis.py

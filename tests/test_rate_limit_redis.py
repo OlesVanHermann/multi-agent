@@ -110,3 +110,49 @@ class TestSharedRedisCounter:
                 await client.aclose()
 
         asyncio.run(scenario())
+
+
+class _StubWebSocket:
+    """WebSocket minimal : juste ce que lisent les handlers avant accept()."""
+
+    def __init__(self):
+        from types import SimpleNamespace
+        self.headers = {}
+        self.client = SimpleNamespace(host="203.0.113.9")
+        self.query_params = {}
+        self.cookies = {}
+        self.close_code = None
+
+    async def close(self, code=1000):
+        self.close_code = code
+
+
+class TestWsCloseCodes:
+    """G2 — dépassement de limite sur les endpoints WS : fermeture immédiate
+    avec le code dédié (4002 sur /ws/agent), avant origin/auth. Sous la
+    limite, la requête atteint la barrière suivante (auth → 4001)."""
+
+    def test_over_limit_closes_4002(self, rl, st, monkeypatch):
+        from multi_agent.routers.ws import websocket_agent_output
+        monkeypatch.setattr(st, "redis_pool", None)  # compteur local
+        monkeypatch.setattr(rl, "_RATE_LIMIT", 0)    # tout dépasse
+        ws = _StubWebSocket()
+        asyncio.run(websocket_agent_output(ws, "300"))
+        assert ws.close_code == 4002
+
+    def test_under_limit_reaches_auth_gate(self, st, monkeypatch):
+        from multi_agent.routers.ws import websocket_agent_output
+        monkeypatch.setattr(st, "redis_pool", None)
+        # limite à 5 (fixture small_limit) : la 1re requête passe le rate
+        # limiter et échoue plus loin, sur l'auth (4001) — pas sur 4002
+        ws = _StubWebSocket()
+        asyncio.run(websocket_agent_output(ws, "300"))
+        assert ws.close_code == 4001
+
+    def test_status_endpoint_over_limit_closes_1008(self, rl, st, monkeypatch):
+        from multi_agent.routers.ws import websocket_status
+        monkeypatch.setattr(st, "redis_pool", None)
+        monkeypatch.setattr(rl, "_RATE_LIMIT", 0)
+        ws = _StubWebSocket()
+        asyncio.run(websocket_status(ws))
+        assert ws.close_code == 1008
