@@ -138,8 +138,8 @@ class TestHeartbeatEnriched:
         assert _mod.HEARTBEAT_INTERVAL == 10
 
     def test_monitoring_prefix_configurable(self):
-        """CT-002 : MONITORING_PREFIX defaults to MA_PREFIX."""
-        assert _mod.MONITORING_PREFIX == os.environ.get("MONITORING_PREFIX", _mod.MA_PREFIX)
+        """CT-002 : MONITORING_PREFIX vaut "mi" par défaut."""
+        assert _mod.MONITORING_PREFIX == os.environ.get("MONITORING_PREFIX", "mi")
 
     def test_heartbeat_stream_maxlen(self):
         """CT-009 : STREAM_MAXLEN = 1000."""
@@ -291,8 +291,8 @@ class TestRedisKeyPrefix:
         assert _mod.MA_PREFIX == os.environ.get("MA_PREFIX", "A")
 
     def test_monitoring_uses_configured_prefix(self):
-        """CT-002 : MONITORING_PREFIX = MA_PREFIX par défaut."""
-        assert _mod.MONITORING_PREFIX == os.environ.get("MONITORING_PREFIX", _mod.MA_PREFIX)
+        """CT-002 : MONITORING_PREFIX = "mi" par défaut."""
+        assert _mod.MONITORING_PREFIX == os.environ.get("MONITORING_PREFIX", "mi")
 
     def test_prefix_is_string(self):
         """CT-002 : MA_PREFIX est une chaîne non vide."""

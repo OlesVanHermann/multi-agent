@@ -25,6 +25,61 @@ _BASE = _find_project_root(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, os.path.join(_BASE, 'scripts', 'agent-bridge'))
 
 
+@pytest.fixture(scope="session")
+def redis_client():
+    """Client vers un redis-server privé éphémère (port libre, sans
+    persistance). Skip si le binaire redis-server est absent."""
+    import shutil
+    import socket
+    if shutil.which("redis-server") is None:
+        pytest.skip("redis-server absent")
+    redis_mod = pytest.importorskip("redis")
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    proc = subprocess.Popen(
+        ["redis-server", "--port", str(port), "--bind", "127.0.0.1",
+         "--save", "", "--appendonly", "no"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    client = redis_mod.Redis(host="127.0.0.1", port=port, decode_responses=True)
+    deadline = time.time() + 10
+    while True:
+        try:
+            client.ping()
+            break
+        except redis_mod.exceptions.ConnectionError:
+            if time.time() > deadline:
+                proc.terminate()
+                pytest.skip("redis-server n'a pas démarré")
+            time.sleep(0.1)
+    yield client
+    proc.terminate()
+    proc.wait(timeout=5)
+
+
+@pytest.fixture
+def mock_tmux_session():
+    """Session tmux jetable réelle (skip si tmux absent)."""
+    import shutil
+    if shutil.which("tmux") is None:
+        pytest.skip("tmux absent")
+    name = f"pytest-tmux-{os.getpid()}-{int(time.time() * 1000) % 100000}"
+    subprocess.run(["tmux", "new-session", "-d", "-s", name], check=True)
+    yield name
+    subprocess.run(["tmux", "kill-session", "-t", name], capture_output=True)
+
+
+@pytest.fixture
+def sample_messages():
+    """Messages legacy (List A:inject:{id}) dans les formats supportés."""
+    return {
+        'with_from': "FROM:100|go example.com",
+        'simple': "Hello agent",
+        'with_type': "FROM:300|DONE SUCCESS",
+    }
+
+
 @pytest.fixture
 def mock_redis_client():
     """Mock Redis client with common operations pre-configured"""

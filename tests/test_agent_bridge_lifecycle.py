@@ -233,8 +233,8 @@ class TestPromptReload:
 
         assert agent.messages_since_reload == 0
 
-    def test_reload_sends_reset_first(self):
-        """_reload_prompt() envoie /reset avant le nouveau prompt (EF-001)"""
+    def test_reload_queues_prompt_no_reset(self):
+        """_reload_prompt() enqueue le prompt de réinjection sans /reset (EF-001)"""
         from agent import TmuxAgent
 
         agent = object.__new__(TmuxAgent)
@@ -249,7 +249,10 @@ class TestPromptReload:
              patch.object(TmuxAgent, '_is_x45_agent', return_value=False):
             agent._reload_prompt()
 
-        agent._send_keys.assert_called_once_with("/reset")
+        agent._send_keys.assert_not_called()
+        task = agent.prompt_queue.get(timeout=1)
+        assert task['prompt'] == "deviens agent /path/to/300.md"
+        assert task['from_agent'] == 'compaction_reload'
 
     def test_reload_no_prompt_file(self):
         """_reload_prompt() ne fait rien si pas de fichier prompt (EF-001)"""

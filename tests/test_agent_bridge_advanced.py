@@ -271,8 +271,9 @@ class TestListenRedisMessageTypes:
 class TestReloadPrompt:
     """Tests pour _reload_prompt (EF-001)"""
 
-    def test_reload_resets_counter_and_sends_reset(self):
-        """_reload_prompt remet messages_since_reload à 0 et envoie /reset (EF-001)"""
+    def test_reload_resets_counter_and_queues_prompt(self):
+        """_reload_prompt remet messages_since_reload à 0 et enqueue le prompt
+        (pas de /reset — réinjection simple, EF-001)"""
         agent = _make_agent()
         agent.messages_since_reload = 42
         agent._send_keys = MagicMock()
@@ -283,7 +284,10 @@ class TestReloadPrompt:
             agent._reload_prompt()
 
         assert agent.messages_since_reload == 0
-        agent._send_keys.assert_called_once_with("/reset")
+        agent._send_keys.assert_not_called()
+        task = agent.prompt_queue.get(timeout=1)
+        assert task['prompt'] == "deviens agent /fake/prompt.md"
+        assert task['from_agent'] == 'compaction_reload'
 
     def test_reload_x45_queues_multi_file_prompt(self):
         """_reload_prompt en mode x45 enqueue un prompt multi-fichiers (EF-001)"""
