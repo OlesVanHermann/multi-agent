@@ -35,8 +35,18 @@ if [ -n "$(git status --porcelain)" ]; then
     exit 1
 fi
 
-# 3. Run tests
-echo -e "${CYAN}[1/5] Running tests...${NC}"
+# 3. Garde-fou anti-fuite de secrets (D3)
+echo -e "${CYAN}[1/6] Checking secrets (D3)...${NC}"
+if ./patch/check-secrets.sh; then
+    echo -e "${GREEN}Secret check passed.${NC}"
+else
+    echo -e "${RED}Secret check FAILED. Aborting release.${NC}"
+    exit 1
+fi
+echo ""
+
+# 4. Run tests
+echo -e "${CYAN}[2/6] Running tests...${NC}"
 if python -m pytest tests/ -v 2>&1; then
     echo -e "${GREEN}Tests passed.${NC}"
 else
@@ -76,11 +86,11 @@ esac
 
 NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH_NUM}"
 
-echo -e "${CYAN}[2/5] Version: ${YELLOW}$CURRENT_TAG${NC} → ${GREEN}$NEW_VERSION${NC}"
+echo -e "${CYAN}[3/6] Version: ${YELLOW}$CURRENT_TAG${NC} → ${GREEN}$NEW_VERSION${NC}"
 echo ""
 
 # 5. Update version in CLAUDE.md
-echo -e "${CYAN}[3/5] Updating version in CLAUDE.md...${NC}"
+echo -e "${CYAN}[4/6] Updating version in CLAUDE.md...${NC}"
 sed -i "s/Multi-Agent System v[0-9]*\.[0-9]*/Multi-Agent System v${MAJOR}.${MINOR}/" CLAUDE.md 2>/dev/null || true
 sed -i "s/Multi-Agent System v[0-9]*\.[0-9]*\.[0-9]*/Multi-Agent System v${MAJOR}.${MINOR}.${PATCH_NUM}/" CLAUDE.md 2>/dev/null || true
 
@@ -105,7 +115,7 @@ git commit -m "release: $NEW_VERSION" --allow-empty 2>/dev/null || true
 echo ""
 
 # 6. Tag (signé GPG si une clé de signature est configurée — C3)
-echo -e "${CYAN}[4/5] Creating tag $NEW_VERSION...${NC}"
+echo -e "${CYAN}[5/6] Creating tag $NEW_VERSION...${NC}"
 TAG_SIGN_FLAG="-a"
 if git config --get user.signingkey >/dev/null 2>&1; then
     TAG_SIGN_FLAG="-s"
@@ -117,7 +127,7 @@ git tag "$TAG_SIGN_FLAG" "$NEW_VERSION" -m "Version ${NEW_VERSION} - ${COMMIT_CO
 echo ""
 
 # 7. Push to GitHub via orphan commit (single commit, no history)
-echo -e "${CYAN}[5/5] Pushing to GitHub (origin) via orphan commit...${NC}"
+echo -e "${CYAN}[6/6] Pushing to GitHub (origin) via orphan commit...${NC}"
 TREE=$(git write-tree)
 ORPHAN=$(git commit-tree "$TREE" -m "release: $NEW_VERSION")
 git tag "$TAG_SIGN_FLAG" -f "$NEW_VERSION" "$ORPHAN" -m "Version ${NEW_VERSION} - ${COMMIT_COUNT} commits since ${CURRENT_TAG}"

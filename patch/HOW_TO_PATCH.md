@@ -188,6 +188,31 @@ git push origin main --tags   # humain avec passphrase SSH
 
 ---
 
+## Anti-fuite de secrets (D3)
+
+Le socle « aucun secret commité » est verrouillé par trois contrôles :
+
+1. **`patch/check-secrets.sh`** — exécuté en première étape de
+   `hub-release.sh` (release bloquée si échec) :
+   - aucun `secrets.cfg` tracké par git ;
+   - `setup/secrets.cfg` local sans valeurs par défaut
+     (`changeme`/`admin`/vide pour `KEYCLOAK_ADMIN_PASSWORD` et
+     `HEALTH_TOKEN` — mêmes valeurs refusées qu'au démarrage infra) ;
+   - scan `gitleaks` si l'outil est installé localement.
+2. **CI GitHub** (`.github/workflows/security.yml`) — sur chaque push/PR :
+   job `gitleaks` (historique complet) + job `secret-guards`
+   (ré-exécute `check-secrets.sh`).
+3. **Démarrage infra** — `scripts/infra.sh` et `setup/install_keycloak.sh`
+   refusent de lancer Keycloak avec un mot de passe admin par défaut (C1).
+
+Vérification manuelle à tout moment :
+
+```bash
+./patch/check-secrets.sh
+```
+
+---
+
 ## Scripts
 
 | Script | Role |
@@ -195,5 +220,6 @@ git push origin main --tags   # humain avec passphrase SSH
 | `patch/sync-to-git.sh` | Sync `~/multi-agent/` vers `~/multi-agent-git/` (bulk) |
 | `patch/hub-receive.sh` | Lister les patches en attente |
 | `patch/hub-cherry-pick.sh` | Cherry-pick un patch dans main |
-| `patch/hub-release.sh` | Tag + push GitHub |
+| `patch/hub-release.sh` | Tag + push GitHub (bloqué si secret détecté) |
+| `patch/check-secrets.sh` | Garde-fou anti-fuite de secrets (D3) |
 | `patch/v*.sh` | Patch scripts (applicables sans git) |
