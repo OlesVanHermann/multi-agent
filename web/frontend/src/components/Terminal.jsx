@@ -1,26 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react'
-import { api, wsUrl } from '../basePath'
-import { getWsTicket } from '../apiFetch'
+import React, { useState, useRef } from 'react'
+import { api } from '../basePath'
 import { createLogger } from '../lib/logger'
-import { useWakeDetector } from '../lib/useWakeDetector'
 import { useAuth } from '../AuthProvider'
-
-function UsageBars({ usage }) {
-  if (!usage) return null
-  return (
-    <span className="usage-bars">
-      <span className="usage-bar-name">{usage.login}</span>
-      {usage.bars?.length ? usage.bars.map((b, i) => (
-        <span key={i} className="usage-bar-item" title={`${b.label}: ${b.percent}% used${b.resets ? ' — Resets ' + b.resets : ''}`}>
-          <span className="usage-bar-track">
-            <span className="usage-bar-fill" style={{width: `${Math.min(b.percent, 100)}%`}} />
-          </span>
-          <span className="usage-bar-pct">{b.percent}%</span>
-        </span>
-      )) : <span className="usage-bar-pct" title="Usage data unavailable (personal account)">N/A</span>}
-    </span>
-  )
-}
+import { useAgentWebSocket } from './terminal/useAgentWebSocket'
+import TerminalHeader from './terminal/TerminalHeader'
+import TerminalInput from './terminal/TerminalInput'
 
 function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   const log = createLogger(`Terminal:${agentId}`)
@@ -28,46 +12,30 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   const [output, setOutput] = useState('')
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
-  // wsState: 'live' | 'jwt' | 'rate' | 'forbidden' | 'overloaded' | 'disconnected'
-  const [wsState, setWsState] = useState('disconnected')
-  const connected = wsState === 'live'  // alias kept for existing internal usages
   const [syncing, setSyncing] = useState(false)
   const [paused, setPaused] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
   const [historyLines, setHistoryLines] = useState(null)
   const [showNotes, setShowNotes] = useState(false)
   const [notesContent, setNotesContent] = useState('')
-  const [planUsage, setPlanUsage] = useState(null)
+  const [uploading, setUploading] = useState(false)
   const outputRef = useRef(null)
-  const wsRef = useRef(null)
   const inputRef = useRef(null)
   const fileRef = useRef(null)
   const lastSentInput = useRef('')
   const syncTimeoutRef = useRef(null)
-  const wakeReconnectRef = useRef(null)
-
-  // Fetch plan usage for this agent's login
-  useEffect(() => {
-    if (!agentId) return
-    fetch(api(`api/usage/${agentId}`))
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.login) setPlanUsage(d) })
-      .catch(() => {})
-  }, [agentId])
 
   // Scroll/pause refs
   const userScrolledRef = useRef(false)
   const scrollPauseRef = useRef(null)
   const pendingOutputRef = useRef(null) // latest output while paused
   const selectingRef = useRef(false) // true while user is selecting text
+  const selectResumeRef = useRef(null)
 
   // Sync coordination refs (avoid stale closures in WebSocket handler)
   const lastLocalEditRef = useRef(0)
   const lastSubmitRef = useRef(0)
   const inputValueRef = useRef('')
-
-  // WebSocket lifecycle ref
-  const reconnectTimeoutRef = useRef(null)
 
   // Resume syncing: apply pending output and scroll to bottom
   const resumeSync = () => {
@@ -106,7 +74,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   }
 
   // Focus input when this terminal becomes active
-  useEffect(() => {
+  React.useEffect(() => {
     if (focused && inputRef.current) {
       inputRef.current.focus()
     }
@@ -114,7 +82,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
 
   // Auto-scroll when output changes (only fires when not paused)
   // Double rAF ensures layout is computed before scrolling (avoids oscillation)
-  useEffect(() => {
+  React.useEffect(() => {
     if (userScrolledRef.current) return
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
@@ -125,24 +93,21 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
     })
   }, [output])
 
-  // Load and connect
-  useEffect(() => {
-    if (!agentId) return
-
-    setOutput('Loading...')
-    setWsState('disconnected')
-    setPaused(false)
-    setInput('')
-    inputValueRef.current = ''
-    lastSentInput.current = ''
-    lastLocalEditRef.current = 0
-    lastSubmitRef.current = 0
-    userScrolledRef.current = false
-    pendingOutputRef.current = null
-    if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current)
-
-    // Fetch initial output
-    const fetchOutput = async () => {
+  // --- WebSocket lifecycle (delegated to useAgentWebSocket) ---
+  const handlersRef = useRef({})
+  handlersRef.current = {
+    onReset: () => {
+      setOutput('Loading...')
+      setPaused(false)
+      setInput('')
+      inputValueRef.current = ''
+      lastSentInput.current = ''
+      lastLocalEditRef.current = 0
+      lastSubmitRef.current = 0
+      userScrolledRef.current = false
+      pendingOutputRef.current = null
+    },
+    fetchInitial: async () => {
       try {
         const res = await fetch(api(`api/agent/${agentId}/output`))
         if (res.ok) {
@@ -166,218 +131,36 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
         console.error('Failed to fetch output:', err)
         setOutput('Error loading output')
       }
-    }
-
-    fetchOutput()
-
-    // Connect WebSocket (pauses when tab is hidden)
-    let intentionalClose = false
-    let pingTimer = null
-    let pongTimer = null
-
-    const clearHeartbeat = () => {
-      if (pingTimer) { clearInterval(pingTimer); pingTimer = null }
-      if (pongTimer) { clearTimeout(pongTimer); pongTimer = null }
-    }
-
-    const startHeartbeat = (ws) => {
-      clearHeartbeat()
-      pingTimer = setInterval(() => {
-        if (ws.readyState !== WebSocket.OPEN) return
-        try { ws.send(JSON.stringify({ type: 'ping' })) } catch {}
-        if (pongTimer) clearTimeout(pongTimer)
-        pongTimer = setTimeout(() => {
-          log.ws('pong-miss', { agentId })
-          try { ws.close() } catch {}
-        }, 5000)
-      }, 25000)
-    }
-
-    const connect = async () => {
-      if (document.hidden) return  // Don't connect if tab is hidden
-      const token = await ensureFreshToken()
-      if (!token) {
-        reconnectTimeoutRef.current = setTimeout(() => connect(), 1000)
-        return
-      }
-      // B4 : ticket à usage unique demandé à chaque (re)connexion ;
-      // en cas d'échec le cookie HttpOnly authentifie encore le handshake.
-      const ticket = await getWsTicket()
-      intentionalClose = false
-      const freshWsUrl = wsUrl(`ws/agent/${agentId}?poll=${pollInterval}${ticket ? `&ticket=${ticket}` : ''}`)
-      const ws = new WebSocket(freshWsUrl)
-      wsRef.current = ws
-
-      ws.onopen = () => {
-        if (wsRef.current !== ws) {
-          // This WS is stale (component changed agentId or unmounted while connecting)
-          ws.close()
-          return
-        }
-        setWsState('live')
-        log.ws('open', { agentId })
-        startHeartbeat(ws)
-      }
-
-      ws.onmessage = (event) => {
-        const data = JSON.parse(event.data)
-
-        if (data.type === 'pong') {
-          if (pongTimer) { clearTimeout(pongTimer); pongTimer = null }
-          return
-        }
-        if (data.type === 'output') {
-          if (userScrolledRef.current || selectingRef.current) {
-            pendingOutputRef.current = data.output || ''
-          } else {
-            setOutput(data.output || '')
-            pendingOutputRef.current = null
-          }
-        }
-        else if (data.type === 'input_sync') {
-          const now = Date.now()
-          const tmuxInput = data.current_input || ''
-
-          if (now - lastLocalEditRef.current < 800) return
-          if (now - lastSubmitRef.current < 3000) return
-          if (document.activeElement === inputRef.current &&
-              tmuxInput !== inputValueRef.current) return
-
-          setInput(tmuxInput)
-          inputValueRef.current = tmuxInput
-          lastSentInput.current = tmuxInput
-        }
-        else if (data.type === 'error') {
-          setOutput(`Error: ${data.message}`)
-        }
-      }
-
-      const scheduleReconnect = () => {
-        clearHeartbeat()
-        if (intentionalClose) return  // prevent zombie reconnects after cleanup
-        if (reconnectTimeoutRef.current) return  // already scheduled, avoid double-fire
-        reconnectTimeoutRef.current = setTimeout(() => {
-          reconnectTimeoutRef.current = null
-          connect()
-        }, 2000)
-      }
-
-      ws.onclose = (event) => {
-        // Map close codes set by backend (server.py /ws/agent handler)
-        const codeToState = {
-          4001: 'jwt',        // JWT invalid/missing
-          4002: 'rate',       // Rate limit exceeded
-          4005: 'forbidden',  // Agent 000 forbidden
-          1013: 'overloaded', // Server overloaded (max connections)
-        }
-        const newState = codeToState[event.code] || 'disconnected'
-        setWsState(newState)
-        log.ws('close', { agentId, code: event.code, state: newState })
-        if (wsRef.current === ws) wsRef.current = null  // clear stale ref so handleVisibility can reconnect
-        scheduleReconnect()
-      }
-
-      ws.onerror = () => {
-        // Don't set 'disconnected' here — onclose fires next with the real code
-        log.ws('error', { agentId })
-      }
-    }
-
-    // Force-close current WS and reconnect (used by wake detector and watchdog).
-    // intentionalClose=true *before* close() suppresses the stale onclose →
-    // scheduleReconnect path that would race the fresh socket.
-    const forceReconnect = async () => {
-      log.ws('force-reconnect', { agentId })
-      if (reconnectTimeoutRef.current) { clearTimeout(reconnectTimeoutRef.current); reconnectTimeoutRef.current = null }
-      clearHeartbeat()
-      const ws = wsRef.current
-      wsRef.current = null
-      setWsState('disconnected')
-      if (ws) {
-        intentionalClose = true
-        try { ws.close() } catch {}
-      }
-      await connect()             // connect() resets intentionalClose=false
-    }
-    wakeReconnectRef.current = forceReconnect
-
-    // Live = present AND CONNECTING/OPEN. Do not gate on truthiness alone:
-    // CLOSING/CLOSED refs without onclose firing would block reconnects.
-    const isLive = (ws) => ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)
-
-    const handleVisibility = () => {
-      if (document.hidden) {
-        intentionalClose = true
-        clearHeartbeat()
-        if (reconnectTimeoutRef.current) { clearTimeout(reconnectTimeoutRef.current); reconnectTimeoutRef.current = null }
-        // Only close OPEN sockets immediately; CONNECTING ones are handled in onopen to avoid Chrome warning
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          wsRef.current.close()
-          wsRef.current = null
-        }
-        setWsState('disconnected')
+    },
+    onOutput: (text) => {
+      if (userScrolledRef.current || selectingRef.current) {
+        pendingOutputRef.current = text
       } else {
-        intentionalClose = false
-        if (!isLive(wsRef.current) && !reconnectTimeoutRef.current) forceReconnect()
+        setOutput(text)
+        pendingOutputRef.current = null
       }
-    }
+    },
+    onInputSync: (tmuxInput) => {
+      const now = Date.now()
+      if (now - lastLocalEditRef.current < 800) return
+      if (now - lastSubmitRef.current < 3000) return
+      if (document.activeElement === inputRef.current &&
+          tmuxInput !== inputValueRef.current) return
 
-    // Reconnect immediately when network comes back (only if no active/pending connection)
-    const handleOnline = () => {
-      if (!isLive(wsRef.current) && !reconnectTimeoutRef.current) forceReconnect()
-    }
-
-    document.addEventListener('visibilitychange', handleVisibility)
-    window.addEventListener('online', handleOnline)
-    connect()
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibility)
-      window.removeEventListener('online', handleOnline)
-      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current)
-      intentionalClose = true
-      clearHeartbeat()
-      wakeReconnectRef.current = null
-      if (wsRef.current) {
-        // Only close OPEN sockets; CONNECTING ones will be closed in onopen via stale check
-        if (wsRef.current.readyState === WebSocket.OPEN) {
-          wsRef.current.close()
-        }
-        wsRef.current = null
-      }
+      setInput(tmuxInput)
+      inputValueRef.current = tmuxInput
+      lastSentInput.current = tmuxInput
+    },
+    onError: (message) => setOutput(`Error: ${message}`),
+    onCleanup: () => {
       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
       if (scrollPauseRef.current) clearTimeout(scrollPauseRef.current)
       if (selectResumeRef.current) clearTimeout(selectResumeRef.current)
       selectingRef.current = false
-    }
-  }, [agentId, pollInterval, ensureFreshToken])
+    },
+  }
 
-  // Wake handler: trigger force-reconnect on wake event
-  useWakeDetector(() => {
-    if (wakeReconnectRef.current) wakeReconnectRef.current()
-  })
-
-  // WS health watchdog (per terminal). Recovers from broken reconnect chains
-  // (suspended setTimeout, onclose never firing). 30s cadence.
-  useEffect(() => {
-    if (!agentId) return
-    const tick = () => {
-      if (document.hidden) return
-      const ws = wsRef.current
-      const live = ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)
-      if (live) return
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current)
-        reconnectTimeoutRef.current = null
-      }
-      if (wakeReconnectRef.current) {
-        log.info('watchdog: no live ws, forcing reconnect')
-        wakeReconnectRef.current()
-      }
-    }
-    const id = setInterval(tick, 30000)
-    return () => clearInterval(id)
-  }, [agentId])
+  const wsState = useAgentWebSocket({ agentId, pollInterval, ensureFreshToken, handlersRef })
 
   // Sync mutex: prevent concurrent syncs that interleave in tmux
   const syncInFlightRef = useRef(false)
@@ -497,7 +280,6 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   }
 
   // Pause updates while selecting text in terminal output
-  const selectResumeRef = useRef(null)
   const handleOutputMouseDown = () => {
     selectingRef.current = true
     setPaused(true)
@@ -532,8 +314,6 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
     if (window.getSelection()?.toString()) return
     inputRef.current?.focus()
   }
-
-  const [uploading, setUploading] = useState(false)
 
   const handleUpload = async (e) => {
     const files = e.target.files
@@ -618,35 +398,19 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
 
   return (
     <div className="terminal" onClick={handleTerminalClick}>
-      <div className="terminal-header">
-        {(() => {
-          const WS_LABELS = {
-            live:         { text: 'live',         dot: 'green', title: 'WebSocket connecté, messages reçus' },
-            jwt:          { text: 'JWT',          dot: 'red',   title: 'Token Keycloak invalide ou expiré — re-login requis' },
-            rate:         { text: 'RATE',         dot: 'red',   title: 'Rate limit dépassé (300 req/min/IP) — attends 60s' },
-            forbidden:    { text: 'FORBIDDEN',    dot: 'red',   title: 'Agent 000 (Architect) ne peut pas être contrôlé via le dashboard' },
-            overloaded:   { text: 'OVERLOADED',   dot: 'red',   title: 'Backend a atteint le max de connexions WS' },
-            disconnected: { text: 'disconnected', dot: 'red',   title: 'Connexion fermée (réseau, backend down, ou close normal)' },
-          }
-          const w = WS_LABELS[wsState] || WS_LABELS.disconnected
-          return (
-            <>
-              <span className={`status-dot ${w.dot}`}></span>
-              Agent {agentId} <span title={w.title}>({w.text})</span>
-            </>
-          )
-        })()}
-        {syncing && <span className="sync-indicator"> ⟳</span>}
-        {paused && <span className="pause-indicator"> ⏸</span>}
-        <UsageBars usage={planUsage} />
-        <button onClick={toggleHistory} className={`config-btn${showHistory ? ' config-btn-active' : ''}`}
-          title="Voir historique des prompts">{showHistory ? 'terminal' : 'historique'}</button>
-        <button onClick={toggleNotes} className={`config-btn${showNotes ? ' config-btn-active' : ''}`}
-          title="Notes de l'agent">notes</button>
-        <input type="file" ref={fileRef} hidden multiple onChange={handleUpload} />
-        <button onClick={() => fileRef.current?.click()} className="config-btn" title="Upload file" disabled={uploading}>
-          {uploading ? '...' : 'upload'}</button>
-      </div>
+      <TerminalHeader
+        agentId={agentId}
+        wsState={wsState}
+        syncing={syncing}
+        paused={paused}
+        showHistory={showHistory}
+        onToggleHistory={toggleHistory}
+        showNotes={showNotes}
+        onToggleNotes={toggleNotes}
+        fileRef={fileRef}
+        uploading={uploading}
+        onUpload={handleUpload}
+      />
       {showNotes ? (
         <textarea className="terminal-notes" value={notesContent}
           onChange={(e) => setNotesContent(e.target.value)}
@@ -657,34 +421,15 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
           {showHistory ? (historyLines && historyLines.length > 0 ? historyLines.join('\n') : '(aucun historique)') : output}
         </pre>
       )}
-      <div className="terminal-input">
-        <span className="prompt">❯</span>
-        <textarea
-          ref={inputRef}
-          rows={1}
-          value={input}
-          onChange={(e) => {
-            handleInputChange(e)
-            // Auto-resize: reset then grow to fit content
-            e.target.style.height = 'auto'
-            e.target.style.height = e.target.scrollHeight + 'px'
-          }}
-          onKeyDown={handleKeyDown}
-          placeholder={`Co-edit with tmux...`}
-          disabled={sending}
-        />
-        <span className="key-group">
-          <button onClick={handleSubmit} disabled={sending} title="Send (Enter)">⏎</button>
-          <button onClick={() => sendKeys('Escape')} className="key-btn" title="Escape">Esc</button>
-          <button onClick={() => sendKeys('C-c')} className="key-btn danger" title="Ctrl+C">^C</button>
-        </span>
-        <span className="key-group">
-          <button onClick={() => sendKeys('Left')} className="key-btn" title="Left arrow">←</button>
-          <button onClick={() => sendKeys('Down')} className="key-btn" title="Down arrow">↓</button>
-          <button onClick={() => sendKeys('Right')} className="key-btn" title="Right arrow">→</button>
-          <button onClick={() => sendKeys('S-Tab')} className="key-btn" title="Shift+Tab (cycle permission mode)">⇧⇥</button>
-        </span>
-      </div>
+      <TerminalInput
+        inputRef={inputRef}
+        input={input}
+        onInputChange={handleInputChange}
+        onKeyDown={handleKeyDown}
+        onSubmit={handleSubmit}
+        sendKeys={sendKeys}
+        sending={sending}
+      />
     </div>
   )
 }
