@@ -192,6 +192,31 @@ _cache = {
 _cache_lock = asyncio.Lock()
 _cache_task: Optional[asyncio.Task] = None
 
+# B6: pane states are published by each bridge (heartbeat 10s); beyond this
+# age the dashboard falls back to a direct tmux scan for that agent.
+PANE_STATE_TTL = int(os.environ.get("PANE_STATE_TTL", "30"))
+
+
+def _pane_states_from_redis(agent_ids, agent_redis_data, now):
+    """B6: read bridge-published pane states; return (states, stale_ids)."""
+    states, stale = {}, []
+    for aid in agent_ids:
+        data = agent_redis_data.get(aid, {})
+        raw = data.get("pane_state")
+        ts = data.get("pane_state_ts")
+        try:
+            fresh = raw and ts and (now - int(ts)) <= PANE_STATE_TTL
+        except (TypeError, ValueError):
+            fresh = False
+        if fresh:
+            try:
+                states[aid] = json.loads(raw)
+                continue
+            except (json.JSONDecodeError, TypeError):
+                pass
+        stale.append(aid)
+    return states, stale
+
 # === Event Logging ===
 # Track previous states for transition detection
 _prev_agent_states: dict[str, dict] = {}
@@ -263,12 +288,43 @@ async def _refresh_cache_once():
 
     health = {"status": "ok" if redis_state == "ok" else "degraded", "redis": redis_state, "timestamp": now}
 
-    # --- Agent tmux states (sequential for loop, single capture per agent) ---
-    agent_states = {}
+    # --- Agent list (tmux sessions) ---
+    agent_ids = []
     try:
+        result = await _run_subprocess(
+            ["tmux", "list-sessions", "-F", "#{session_name}"], text=True
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().split("\n"):
+                if line.startswith(f"{MA_PREFIX}-agent-"):
+                    agent_id = line.replace(f"{MA_PREFIX}-agent-", "")
+                    # Accept numeric IDs (345) and compound IDs (345-500)
+                    if re.match(r'^\d{3}(-\d{3})?$', agent_id):
+                        agent_ids.append(agent_id)
+    except Exception as e:
+        print(f"[cache] agent list error: {e}")
+
+    # --- Batch Redis enrichment (1 pipeline round-trip instead of N) ---
+    agent_redis_data = {}
+    if redis_pool and agent_ids:
+        try:
+            pipe = redis_pool.pipeline()
+            for agent_id in agent_ids:
+                pipe.hgetall(f"{MA_PREFIX}:agent:{agent_id}")
+            results = await pipe.execute()
+            for agent_id, data in zip(agent_ids, results):
+                agent_redis_data[agent_id] = data if isinstance(data, dict) else {}
+        except Exception as e:
+            print(f"[cache] redis pipeline error: {e}")
+
+    # --- Agent pane states: Redis first (published by the bridge, B6),
+    #     tmux multi-grep scan only for agents with missing/stale pane_state ---
+    agent_states, stale_ids = _pane_states_from_redis(agent_ids, agent_redis_data, now)
+    if stale_ids:
+      try:
         # Single capture -S -30 per agent (not 2x -S -200) = 30x less data.
         script = (
-            'for s in $(tmux ls -F "#{session_name}" 2>/dev/null | grep "^' + MA_PREFIX + '-agent-"); do '
+            'for s in "$@"; do '
             'id="${s#' + MA_PREFIX + '-agent-}"; '
             'out=$(tmux capture-pane -t "$s:0.0" -p -J -S -30 2>/dev/null); '
             'pane_cmd=$(tmux display-message -t "$s:0.0" -p "#{pane_current_command}" 2>/dev/null || echo ""); '
@@ -295,8 +351,9 @@ async def _refresh_cache_once():
             'echo "$id:$busy:$compacted:$ctx:$done_compacting:$prompt_loaded:$ctx_limit:$api_error:$model_change:$has_bashes:$plan_mode:$has_down:$waiting_approval:$claude_alive"; '
             'done'
         )
+        stale_sessions = [f"{MA_PREFIX}-agent-{aid}" for aid in stale_ids]
         result = await _run_subprocess(
-            ["bash", "-c", script], text=True, timeout=60
+            ["bash", "-c", script, "_", *stale_sessions], text=True, timeout=60
         )
         for line in result.stdout.strip().split('\n'):
             if ':' not in line:
@@ -329,37 +386,8 @@ async def _refresh_cache_once():
                     'model_change': model_change,
                     'claude_alive': claude_alive,
                 }
-    except Exception as e:
+      except Exception as e:
         print(f"[cache] tmux states error: {e}")
-
-    # --- Agent list (tmux sessions) ---
-    agent_ids = []
-    try:
-        result = await _run_subprocess(
-            ["tmux", "list-sessions", "-F", "#{session_name}"], text=True
-        )
-        if result.returncode == 0:
-            for line in result.stdout.strip().split("\n"):
-                if line.startswith(f"{MA_PREFIX}-agent-"):
-                    agent_id = line.replace(f"{MA_PREFIX}-agent-", "")
-                    # Accept numeric IDs (345) and compound IDs (345-500)
-                    if re.match(r'^\d{3}(-\d{3})?$', agent_id):
-                        agent_ids.append(agent_id)
-    except Exception as e:
-        print(f"[cache] agent list error: {e}")
-
-    # --- Batch Redis enrichment (1 pipeline round-trip instead of N) ---
-    agent_redis_data = {}
-    if redis_pool and agent_ids:
-        try:
-            pipe = redis_pool.pipeline()
-            for agent_id in agent_ids:
-                pipe.hgetall(f"{MA_PREFIX}:agent:{agent_id}")
-            results = await pipe.execute()
-            for agent_id, data in zip(agent_ids, results):
-                agent_redis_data[agent_id] = data if isinstance(data, dict) else {}
-        except Exception as e:
-            print(f"[cache] redis pipeline error: {e}")
 
     # --- Batch XLEN inbox for prompt detection ---
     if redis_pool and agent_ids:

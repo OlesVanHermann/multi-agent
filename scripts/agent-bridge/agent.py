@@ -78,6 +78,60 @@ STREAM_MAXLEN = 1000
 IO_STREAM_MAXLEN = int(os.environ.get("IO_STREAM_MAXLEN", 10000))
 
 
+def _parse_pane_state(out, pane_cmd, agent_id):
+    """B6: derive dashboard agent state from tmux pane content.
+
+    Pure function (testable) — mirrors the historical bash multi-grep that
+    the dashboard ran per agent per cycle. Keys match the dashboard cache.
+    """
+    claude_alive = pane_cmd in ("claude", "node")
+    lines = out.split('\n')
+
+    bp_line = ""
+    for line in lines:
+        if "bypass permissions" in line:
+            bp_line = line
+
+    has_bashes = bool(re.search(r'bashes|shell', bp_line))
+    if not claude_alive:
+        busy = False
+    elif "esc to interrupt" in bp_line:
+        busy = True
+    elif any('❯' in l for l in lines[-10:]):
+        busy = False
+    else:
+        busy = True
+
+    done_compacting = bool(re.search(r'conversation compacted', out, re.IGNORECASE))
+    pid = str(agent_id).split('-')[0]
+    prompt_loaded = bool(done_compacting and re.search(
+        r'prompts/' + re.escape(pid) + r'[^ ]*/' + re.escape(str(agent_id)) + r'[.-]'
+        r'|prompts/' + re.escape(str(agent_id)) + r'-', out))
+
+    ctx = -1
+    ctx_matches = re.findall(r'[0-9]+% until auto-compact|auto-compact: [0-9]+%', out)
+    if ctx_matches:
+        nums = re.findall(r'[0-9]+', ctx_matches[-1])
+        if nums:
+            ctx = int(nums[-1])
+
+    return {
+        'busy': busy,
+        'has_bashes': has_bashes,
+        'has_down': '↓' in bp_line,
+        'plan_mode': 'plan mode on' in out,
+        'waiting_approval': 'Enter to select' in out,
+        'compacted': bool(re.search(r'compacting conversation', out, re.IGNORECASE)),
+        'context_pct': ctx,
+        'done_compacting': done_compacting,
+        'prompt_loaded': prompt_loaded,
+        'context_limit': 'Context limit reached' in out,
+        'api_error': out.count('API Error:') >= 3 or (claude_alive and not bp_line),
+        'model_change': '/model ' in out,
+        'claude_alive': claude_alive,
+    }
+
+
 class _HealthHandler(http.server.BaseHTTPRequestHandler):
     """Health endpoint HTTP — EF-001, CT-001 (http.server stdlib).
 
@@ -526,12 +580,31 @@ class TmuxAgent:
             except Exception:
                 pass
 
+    def _derive_pane_state(self):
+        """B6: capture this agent's pane once and derive its dashboard state.
+
+        Runs in the bridge (1 process per agent) so the dashboard reads the
+        result from Redis instead of forking a multi-grep scan per cycle.
+        """
+        target = f"{self.session_name}:0.0"
+        try:
+            out = subprocess.run(
+                ["tmux", "capture-pane", "-t", target, "-p", "-J", "-S", "-30"],
+                capture_output=True, text=True, timeout=10).stdout
+            pane_cmd = subprocess.run(
+                ["tmux", "display-message", "-t", target, "-p", "#{pane_current_command}"],
+                capture_output=True, text=True, timeout=10).stdout.strip()
+        except Exception:
+            return None
+        return _parse_pane_state(out, pane_cmd, self.agent_id)
+
     def _heartbeat_loop(self):
         """Thread: heartbeat enrichi toutes les 10s — EF-003, CA-004.
 
         Publie 7 champs sur mi:agent:{id}:heartbeat (CT-002, CT-009).
         Champs: agent_id, timestamp, status, memory_mb, cpu_percent,
                 messages_processed, last_message_ts.
+        B6: publie aussi pane_state (JSON) + pane_state_ts dans le hash agent.
         """
         try:
          while self.running:
@@ -562,6 +635,14 @@ class TmuxAgent:
 
                 # Update last_seen in agent hash so dashboard doesn't show disconnected
                 self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", "last_seen", int(time.time()))
+
+                # B6: publish pane-derived state so the dashboard skips tmux scans
+                pane_state = self._derive_pane_state()
+                if pane_state is not None:
+                    self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", mapping={
+                        "pane_state": json.dumps(pane_state),
+                        "pane_state_ts": int(time.time()),
+                    })
 
                 # Enregistrer dans métriques (R-INTEGRATE)
                 if self.metrics:
