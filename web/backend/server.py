@@ -13,6 +13,7 @@ Entrée uvicorn : multi_agent.backend:app (qui ré-exporte app d'ici).
 """
 
 import asyncio
+import hmac
 import json
 import os
 import shlex
@@ -27,7 +28,13 @@ from fastapi.staticfiles import StaticFiles
 
 from multi_agent import config as cfg
 from multi_agent import state
-from multi_agent.auth import _PUBLIC_PATHS, _PUBLIC_PREFIXES, _verify_jwt_minimal
+from multi_agent.auth import (
+    ACCESS_COOKIE,
+    CSRF_COOKIE,
+    _PUBLIC_PATHS,
+    _PUBLIC_PREFIXES,
+    _verify_jwt_minimal,
+)
 from multi_agent.cache import _cache_loop, _seed_prompt_history
 from multi_agent.ratelimit import _check_rate_limit
 from multi_agent.routers import agent_chat, agents, chat, crontab, system, ws
@@ -166,11 +173,15 @@ async def auth_middleware(request: Request, call_next):
     if not path.startswith("/api/") and not path.startswith("/ws/"):
         return await call_next(request)
 
-    # Extract Bearer token
+    # Extract token: header Authorization, cookie HttpOnly (B3), query WS en repli
     auth_header = request.headers.get("authorization", "")
     token = None
+    token_from_cookie = False
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
+    elif request.cookies.get(ACCESS_COOKIE):
+        token = request.cookies.get(ACCESS_COOKIE)
+        token_from_cookie = True
     elif request.query_params.get("token"):
         token = request.query_params.get("token")  # WebSocket fallback
 
@@ -180,6 +191,19 @@ async def auth_middleware(request: Request, call_next):
             status_code=401,
             media_type="application/json",
         )
+
+    # B3 : anti-CSRF double-submit — quand l'auth vient du cookie (envoyé
+    # automatiquement par le navigateur), toute requête mutative doit porter
+    # le header X-CSRF-Token égal au cookie ma_csrf (lisible par le JS légitime).
+    if token_from_cookie and request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        csrf_cookie = request.cookies.get(CSRF_COOKIE, "")
+        csrf_header = request.headers.get("x-csrf-token", "")
+        if not csrf_cookie or not hmac.compare_digest(csrf_cookie, csrf_header):
+            return Response(
+                content=json.dumps({"detail": "CSRF token missing or invalid"}),
+                status_code=403,
+                media_type="application/json",
+            )
 
     return await call_next(request)
 

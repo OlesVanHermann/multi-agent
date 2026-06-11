@@ -15,6 +15,12 @@ logger = logging.getLogger(__name__)
 _PUBLIC_PATHS = {"/api/agent-chat/health", "/api/agent-chat/spec"}
 _PUBLIC_PREFIXES = ("/auth/", "/assets/", "/favicon")
 
+# B3 : cookies HttpOnly porteurs des jetons, posés par le proxy /auth/*.
+# ma_csrf n'est PAS HttpOnly : le JS le relit pour le double-submit anti-CSRF.
+ACCESS_COOKIE = "ma_access"
+REFRESH_COOKIE = "ma_refresh"
+CSRF_COOKIE = "ma_csrf"
+
 _jwks_cache = {"keys": None, "fetched": 0}
 
 
@@ -85,9 +91,16 @@ def _extract_username_from_jwt(auth_header: str) -> Optional[str]:
         return None
 
 
-def _get_jwt_username(request: Request) -> str:
+def _request_token(request: Request) -> str:
+    """Token porteur : header Authorization d'abord, cookie HttpOnly sinon (B3)."""
     auth_header = request.headers.get("authorization", "")
-    username = _extract_username_from_jwt(auth_header)
+    if auth_header.startswith("Bearer "):
+        return auth_header[7:]
+    return request.cookies.get(ACCESS_COOKIE, "")
+
+
+def _get_jwt_username(request: Request) -> str:
+    username = _extract_username_from_jwt(_request_token(request))
     if not username:
         raise HTTPException(status_code=401, detail="Authentication required")
     return username

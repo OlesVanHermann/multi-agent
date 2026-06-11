@@ -8,7 +8,7 @@ from fastapi import APIRouter, WebSocket
 
 from .. import config as cfg
 from .. import state
-from ..auth import _verify_jwt_minimal
+from ..auth import ACCESS_COOKIE, _verify_jwt_minimal
 from ..ratelimit import _check_rate_limit
 from ..tmuxio import _capture_agent_pane, _extract_current_input
 
@@ -82,7 +82,8 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
     if not cfg.AGENT_ID_RE.match(agent_id):
         await websocket.close(code=1008)
         return
-    token = websocket.query_params.get("token", "")
+    # B3 : cookie HttpOnly accepté en plus du query param (retiré en B4)
+    token = websocket.query_params.get("token", "") or websocket.cookies.get(ACCESS_COOKIE, "")
     if not token or not _verify_jwt_minimal(token):
         print(f"[ws] REJECTED agent={agent_id} from={websocket.client}")
         await websocket.close(code=4001)
@@ -197,7 +198,7 @@ async def websocket_messages(websocket: WebSocket):
     if not _ws_origin_ok(websocket):
         await websocket.close(code=1008)
         return
-    token = websocket.query_params.get("token", "")
+    token = websocket.query_params.get("token", "") or websocket.cookies.get(ACCESS_COOKIE, "")
     if not token or not _verify_jwt_minimal(token):
         await websocket.close(code=1008)
         return
@@ -268,7 +269,7 @@ async def websocket_status(websocket: WebSocket):
     if not _ws_origin_ok(websocket):
         await websocket.close(code=1008)
         return
-    token = websocket.query_params.get("token", "")
+    token = websocket.query_params.get("token", "") or websocket.cookies.get(ACCESS_COOKIE, "")
     if not token or not _verify_jwt_minimal(token):
         await websocket.close(code=1008)
         return

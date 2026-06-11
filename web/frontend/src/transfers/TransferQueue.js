@@ -423,6 +423,9 @@ class TransferQueue {
     this._abortables.set(id, xhr)
 
     xhr.open('POST', cb.url)
+    // Auth via cookie HttpOnly (B3) ; header anti-CSRF requis sur les POST
+    const csrfMatch = document.cookie.match(/(?:^|;\s*)ma_csrf=([^;]*)/)
+    if (csrfMatch) xhr.setRequestHeader('X-CSRF-Token', decodeURIComponent(csrfMatch[1]))
 
     xhr.upload.addEventListener('progress', (e) => {
       if (e.lengthComputable) {

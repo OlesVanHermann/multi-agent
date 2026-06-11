@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
 from .. import config as cfg
-from ..auth import _extract_username_from_jwt, _get_freemium_token
+from ..auth import _extract_username_from_jwt, _get_freemium_token, _request_token
 
 router = APIRouter()
 
@@ -50,8 +50,7 @@ async def agent_chat_spec():
 @router.post("/api/agent-chat/rpc")
 async def agent_chat_rpc(request: Request):
     """Proxy to shim /rpc — auth bridge: dashboard JWT -> freemium JWT."""
-    auth_header = request.headers.get("authorization", "")
-    username = _extract_username_from_jwt(auth_header)
+    username = _extract_username_from_jwt(_request_token(request))
     if not username:
         return Response(
             content=json.dumps({"error": "cannot extract username from token"}),
@@ -101,8 +100,7 @@ async def agent_chat_rpc(request: Request):
 @router.get("/api/agent-chat/facts")
 async def agent_chat_facts(request: Request):
     """Proxy to shim /api/facts — requires auth."""
-    auth_header = request.headers.get("authorization", "")
-    username = _extract_username_from_jwt(auth_header)
+    username = _extract_username_from_jwt(_request_token(request))
     if not username:
         return Response(content=json.dumps({"error": "unauthorized"}), status_code=401,
                         media_type="application/json")
@@ -127,8 +125,7 @@ async def agent_chat_facts(request: Request):
 @router.get("/api/agent-chat/events")
 async def agent_chat_events(request: Request):
     """SSE proxy to shim /events/progress — requires auth with user isolation."""
-    auth_header = request.headers.get("authorization", "")
-    username = _extract_username_from_jwt(auth_header)
+    username = _extract_username_from_jwt(_request_token(request))
     if not username:
         return Response(content=json.dumps({"error": "unauthorized"}), status_code=401,
                         media_type="application/json")
@@ -154,8 +151,7 @@ async def agent_chat_events(request: Request):
 @router.get("/api/agent-chat/conversations")
 async def agent_chat_conversations(request: Request):
     """Proxy to shim /api/conversations — requires auth."""
-    auth_header = request.headers.get("authorization", "")
-    username = _extract_username_from_jwt(auth_header)
+    username = _extract_username_from_jwt(_request_token(request))
     if not username:
         return Response(content=json.dumps({"error": "unauthorized"}), status_code=401,
                         media_type="application/json")
@@ -182,8 +178,7 @@ async def agent_chat_conversation_messages(conv_id: str, request: Request):
     """Proxy to shim /api/conversations/{id}/messages — requires auth."""
     if not re.match(r'^[a-zA-Z0-9_-]+$', conv_id):
         raise HTTPException(status_code=400, detail="Invalid conversation ID format")
-    auth_header = request.headers.get("authorization", "")
-    username = _extract_username_from_jwt(auth_header)
+    username = _extract_username_from_jwt(_request_token(request))
     if not username:
         return Response(content=json.dumps({"error": "unauthorized"}), status_code=401,
                         media_type="application/json")

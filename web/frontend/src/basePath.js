@@ -4,10 +4,8 @@ const BASE = ''
 export const api = (path) => `/${path}`
 export const wsUrl = (path) => {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const token = localStorage.getItem('access_token')
-  const sep = path.includes('?') ? '&' : '?'
-  const tokenParam = token ? `${sep}token=${encodeURIComponent(token)}` : ''
-  return `${protocol}//${window.location.host}${BASE}/${path}${tokenParam}`
+  // B3 : plus de ?token= — le cookie HttpOnly accompagne le handshake WS
+  return `${protocol}//${window.location.host}${BASE}/${path}`
 }
 
 export default BASE

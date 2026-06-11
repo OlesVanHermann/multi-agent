@@ -44,16 +44,18 @@ async function flush() {
   if (buffer.length === 0) return
   const batch = buffer.splice(0, buffer.length)
 
-  // Use __maRawFetch (saved before the JWT interceptor in App.jsx) so the
+  // Use __maRawFetch (saved before the CSRF interceptor in App.jsx) so the
   // logger's own POST doesn't get intercepted → no infinite loop.
   const fetchFn = window.__maRawFetch || window.fetch
   try {
-    const token = localStorage.getItem('access_token')
+    // Auth via cookie HttpOnly (B3) ; header anti-CSRF requis sur les POST
     const headers = { 'Content-Type': 'application/json' }
-    if (token) headers['Authorization'] = `Bearer ${token}`
+    const m = document.cookie.match(/(?:^|;\s*)ma_csrf=([^;]*)/)
+    if (m) headers['X-CSRF-Token'] = decodeURIComponent(m[1])
     await fetchFn(ENDPOINT, {
       method: 'POST',
       headers,
+      credentials: 'same-origin',
       body: JSON.stringify({ events: batch }),
     })
   } catch {

@@ -1,21 +1,26 @@
-// Authenticated fetch wrapper — injects JWT Bearer token from localStorage
+// Authenticated fetch wrapper — l'auth est portée par le cookie HttpOnly
+// ma_access posé par le backend (B3) ; le JS ne voit plus le JWT.
+// Les requêtes mutatives portent le header anti-CSRF (double-submit ma_csrf).
 // All API calls should use apiFetch() instead of fetch()
 
 import { api } from './basePath'
 
+export function getCsrfToken() {
+  const m = document.cookie.match(/(?:^|;\s*)ma_csrf=([^;]*)/)
+  return m ? decodeURIComponent(m[1]) : ''
+}
+
 export function apiFetch(path, options = {}) {
-  const token = localStorage.getItem('access_token')
   const headers = { ...(options.headers || {}) }
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
+  const csrf = getCsrfToken()
+  if (csrf && !headers['X-CSRF-Token']) {
+    headers['X-CSRF-Token'] = csrf
   }
-  return fetch(api(path), { ...options, headers })
+  return fetch(api(path), { credentials: 'same-origin', ...options, headers })
 }
 
 export function apiWsUrl(path) {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const token = localStorage.getItem('access_token')
-  const sep = path.includes('?') ? '&' : '?'
-  const tokenParam = token ? `${sep}token=${encodeURIComponent(token)}` : ''
-  return `${protocol}//${window.location.host}/${path}${tokenParam}`
+  // B3 : plus de ?token= — le cookie HttpOnly accompagne le handshake WS
+  return `${protocol}//${window.location.host}/${path}`
 }

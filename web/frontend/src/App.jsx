@@ -9,26 +9,28 @@ import DevChat from './components/DevChat'
 
 import { useAuth, LoginForm } from './AuthProvider'
 import { api, wsUrl } from './basePath'
+import { getCsrfToken } from './apiFetch'
 import { createLogger } from './lib/logger'
 import { useWakeDetector } from './lib/useWakeDetector'
 
 const log = createLogger('App')
 
-// Save raw fetch BEFORE the JWT interceptor so the logger can flush without
-// going through the interceptor (avoids auth wrapper on /api/logs/frontend).
+// Save raw fetch BEFORE the CSRF interceptor so the logger can flush without
+// going through the interceptor (avoids wrapper on /api/logs/frontend).
 window.__maRawFetch = window.fetch
 
-// Intercept all fetch() calls to inject JWT Bearer token automatically.
-// This secures every API call without modifying individual components.
+// Intercept all fetch() calls to inject the anti-CSRF header automatically.
+// L'auth est portée par le cookie HttpOnly (B3) envoyé par le navigateur ;
+// le double-submit ma_csrf protège les requêtes mutatives.
 const _originalFetch = window.fetch
 window.fetch = function(url, options = {}) {
-  const token = localStorage.getItem('access_token')
-  if (token && typeof url === 'string' && (url.startsWith('/api/') || url.includes('/api/'))) {
+  if (typeof url === 'string' && (url.startsWith('/api/') || url.includes('/api/'))) {
+    const csrf = getCsrfToken()
     const headers = new Headers(options.headers || {})
-    if (!headers.has('Authorization')) {
-      headers.set('Authorization', `Bearer ${token}`)
+    if (csrf && !headers.has('X-CSRF-Token')) {
+      headers.set('X-CSRF-Token', csrf)
     }
-    options = { ...options, headers }
+    options = { credentials: 'same-origin', ...options, headers }
   }
   return _originalFetch.call(this, url, options)
 }
