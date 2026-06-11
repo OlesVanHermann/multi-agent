@@ -173,7 +173,8 @@ async def auth_middleware(request: Request, call_next):
     if not path.startswith("/api/") and not path.startswith("/ws/"):
         return await call_next(request)
 
-    # Extract token: header Authorization, cookie HttpOnly (B3), query WS en repli
+    # Extract token: header Authorization ou cookie HttpOnly (B3).
+    # B4 : plus aucun JWT accepté en query string (fuite via access logs).
     auth_header = request.headers.get("authorization", "")
     token = None
     token_from_cookie = False
@@ -182,8 +183,6 @@ async def auth_middleware(request: Request, call_next):
     elif request.cookies.get(ACCESS_COOKIE):
         token = request.cookies.get(ACCESS_COOKIE)
         token_from_cookie = True
-    elif request.query_params.get("token"):
-        token = request.query_params.get("token")  # WebSocket fallback
 
     if not token or not _verify_jwt_minimal(token):
         return Response(

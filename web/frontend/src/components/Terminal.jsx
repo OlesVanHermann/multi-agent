@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { api, wsUrl } from '../basePath'
+import { getWsTicket } from '../apiFetch'
 import { createLogger } from '../lib/logger'
 import { useWakeDetector } from '../lib/useWakeDetector'
 import { useAuth } from '../AuthProvider'
@@ -199,9 +200,11 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
         reconnectTimeoutRef.current = setTimeout(() => connect(), 1000)
         return
       }
+      // B4 : ticket à usage unique demandé à chaque (re)connexion ;
+      // en cas d'échec le cookie HttpOnly authentifie encore le handshake.
+      const ticket = await getWsTicket()
       intentionalClose = false
-      // Re-read token on every reconnect (token may have been refreshed)
-      const freshWsUrl = wsUrl(`ws/agent/${agentId}?poll=${pollInterval}`)
+      const freshWsUrl = wsUrl(`ws/agent/${agentId}?poll=${pollInterval}${ticket ? `&ticket=${ticket}` : ''}`)
       const ws = new WebSocket(freshWsUrl)
       wsRef.current = ws
 

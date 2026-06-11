@@ -2,9 +2,11 @@
 
 import asyncio
 import json
+import re
+import secrets
 import time
 
-from fastapi import APIRouter, WebSocket
+from fastapi import APIRouter, HTTPException, WebSocket
 
 from .. import config as cfg
 from .. import state
@@ -15,6 +17,46 @@ from ..tmuxio import _capture_agent_pane, _extract_current_input
 router = APIRouter()
 
 _WS_ALLOWED_ORIGINS = set(cfg._ALLOWED_ORIGINS + cfg._ALLOWED_ORIGINS_LOCAL_DEV)
+
+# B4 : ticket WS à usage unique — le JWT ne transite plus jamais en query
+# string (les ?token= finissent dans les access logs nginx/proxies).
+WS_TICKET_TTL = 30
+_WS_TICKET_RE = re.compile(r"^[A-Za-z0-9_-]{20,100}$")
+
+
+def _ws_ticket_key(ticket: str) -> str:
+    return f"{cfg.MA_PREFIX}:wsticket:{ticket}"
+
+
+@router.post("/api/ws-ticket")
+async def create_ws_ticket():
+    """Ticket opaque court (TTL 30 s) ; l'auth JWT est déjà imposée par le middleware."""
+    if not state.redis_pool:
+        raise HTTPException(status_code=503, detail="Redis unavailable")
+    ticket = secrets.token_urlsafe(32)
+    try:
+        await state.redis_pool.setex(_ws_ticket_key(ticket), WS_TICKET_TTL, "1")
+    except Exception:
+        raise HTTPException(status_code=503, detail="Redis unavailable")
+    return {"ticket": ticket, "expires_in": WS_TICKET_TTL}
+
+
+async def _consume_ws_ticket(ticket: str) -> bool:
+    """Valide ET invalide le ticket (DEL atomique → non rejouable)."""
+    if not ticket or not _WS_TICKET_RE.match(ticket) or not state.redis_pool:
+        return False
+    try:
+        return bool(await state.redis_pool.delete(_ws_ticket_key(ticket)))
+    except Exception:
+        return False
+
+
+async def _ws_authenticated(websocket: WebSocket) -> bool:
+    """Auth WS (B4) : ticket à usage unique, sinon cookie HttpOnly (jamais de JWT en URL)."""
+    if await _consume_ws_ticket(websocket.query_params.get("ticket", "")):
+        return True
+    cookie_token = websocket.cookies.get(ACCESS_COOKIE, "")
+    return bool(cookie_token) and _verify_jwt_minimal(cookie_token)
 
 
 def _ws_origin_ok(websocket: WebSocket) -> bool:
@@ -82,9 +124,7 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
     if not cfg.AGENT_ID_RE.match(agent_id):
         await websocket.close(code=1008)
         return
-    # B3 : cookie HttpOnly accepté en plus du query param (retiré en B4)
-    token = websocket.query_params.get("token", "") or websocket.cookies.get(ACCESS_COOKIE, "")
-    if not token or not _verify_jwt_minimal(token):
+    if not await _ws_authenticated(websocket):
         print(f"[ws] REJECTED agent={agent_id} from={websocket.client}")
         await websocket.close(code=4001)
         return
@@ -198,8 +238,7 @@ async def websocket_messages(websocket: WebSocket):
     if not _ws_origin_ok(websocket):
         await websocket.close(code=1008)
         return
-    token = websocket.query_params.get("token", "") or websocket.cookies.get(ACCESS_COOKIE, "")
-    if not token or not _verify_jwt_minimal(token):
+    if not await _ws_authenticated(websocket):
         await websocket.close(code=1008)
         return
     if not await manager.connect(websocket):
@@ -269,8 +308,7 @@ async def websocket_status(websocket: WebSocket):
     if not _ws_origin_ok(websocket):
         await websocket.close(code=1008)
         return
-    token = websocket.query_params.get("token", "") or websocket.cookies.get(ACCESS_COOKIE, "")
-    if not token or not _verify_jwt_minimal(token):
+    if not await _ws_authenticated(websocket):
         await websocket.close(code=1008)
         return
     await websocket.accept()

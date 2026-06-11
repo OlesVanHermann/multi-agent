@@ -9,7 +9,7 @@ import DevChat from './components/DevChat'
 
 import { useAuth, LoginForm } from './AuthProvider'
 import { api, wsUrl } from './basePath'
-import { getCsrfToken } from './apiFetch'
+import { getCsrfToken, getWsTicket } from './apiFetch'
 import { createLogger } from './lib/logger'
 import { useWakeDetector } from './lib/useWakeDetector'
 
@@ -163,8 +163,11 @@ function App() {
         setTimeout(() => connect(), 1000)
         return
       }
+      // B4 : ticket à usage unique ; en cas d'échec (ex. Redis indisponible)
+      // le cookie HttpOnly authentifie encore le handshake.
+      const ticket = await getWsTicket()
       intentionalClose = false
-      const freshStatusUrl = wsUrl(`ws/status?poll=${statusPoll}`)
+      const freshStatusUrl = wsUrl(`ws/status?poll=${statusPoll}${ticket ? `&ticket=${ticket}` : ''}`)
       const ws = new WebSocket(freshStatusUrl)
       wsRef.current = ws
 

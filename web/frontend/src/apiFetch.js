@@ -19,8 +19,14 @@ export function apiFetch(path, options = {}) {
   return fetch(api(path), { credentials: 'same-origin', ...options, headers })
 }
 
-export function apiWsUrl(path) {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  // B3 : plus de ?token= — le cookie HttpOnly accompagne le handshake WS
-  return `${protocol}//${window.location.host}/${path}`
+// B4 : ticket WS à usage unique (TTL 30 s) — le JWT ne passe jamais en URL.
+export async function getWsTicket() {
+  try {
+    const r = await apiFetch('api/ws-ticket', { method: 'POST' })
+    if (!r.ok) return null
+    const data = await r.json()
+    return data.ticket || null
+  } catch {
+    return null
+  }
 }
