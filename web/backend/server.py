@@ -711,9 +711,10 @@ async def _get_jwks():
     return _jwks_cache["keys"]  # return stale if fetch fails
 
 _EXPECTED_AUDIENCE = os.environ.get("KEYCLOAK_CLIENT_ID", "multi-agent-web")
+_EXPECTED_ISSUER = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}"
 
 def _verify_jwt_minimal(token: str) -> bool:
-    """JWT verification with signature check via Keycloak JWKS."""
+    """JWT verification: RS256 signature via Keycloak JWKS, strict issuer, audience (aud or azp)."""
     try:
         import jwt as pyjwt
         from jwt import PyJWKClient
@@ -723,10 +724,16 @@ def _verify_jwt_minimal(token: str) -> bool:
             token,
             signing_key.key,
             algorithms=["RS256"],
-            options={"verify_aud": False, "verify_iss": False, "verify_exp": True},
+            issuer=_EXPECTED_ISSUER,
+            options={"verify_aud": False, "verify_iss": True, "verify_exp": True},
         )
-        iss = payload.get("iss", "")
-        if not iss.endswith(f"/realms/{KEYCLOAK_REALM}"):
+        # Keycloak public clients without an audience mapper put the client ID
+        # in azp (aud is "account"); accept either aud or azp matching.
+        aud = payload.get("aud", [])
+        if isinstance(aud, str):
+            aud = [aud]
+        if _EXPECTED_AUDIENCE not in aud and payload.get("azp") != _EXPECTED_AUDIENCE:
+            logger.warning("JWT rejected: audience/azp mismatch (aud=%s azp=%s)", aud, payload.get("azp"))
             return False
         return True
     except Exception as e:
