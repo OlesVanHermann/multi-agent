@@ -99,6 +99,9 @@ web/backend/venv/
 # Safe-delete archive
 removed/
 
+# Uploads runtime (destination /api/upload)
+uploads/
+
 # Secrets (real passwords — never commit)
 setup/secrets.cfg
 

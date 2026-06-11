@@ -55,6 +55,17 @@ KEEPALIVE_DIR = BASE_DIR / "keepalive"
 PROFILES_DIR = BASE_DIR / "login"
 FRONTEND_LOG_DIR = BASE_DIR / "logs" / "frontend"
 
+# Upload (B7) : répertoire dédié, jamais servi statiquement, créé en 0700.
+UPLOAD_DIR = Path(os.environ.get("MA_UPLOAD_DIR", str(BASE_DIR / "uploads")))
+MAX_UPLOAD_BYTES = int(os.environ.get("MA_MAX_UPLOAD_MB", "5120")) * 1024 * 1024
+# Extensions autorisées (liste blanche, vide = tout accepter : transfert
+# générique vers les agents, le répertoire n'étant pas exposé par le web).
+UPLOAD_ALLOWED_EXT = {
+    e.strip().lower().lstrip(".")
+    for e in os.environ.get("MA_UPLOAD_ALLOWED_EXT", "").split(",")
+    if e.strip()
+}
+
 # Agent Chat (Robeke shim proxy)
 AGENT_SHIM_URL = os.environ.get("AGENT_SHIM_URL", "http://127.0.0.1:8093")
 AGENT_FREEMIUM_TOKEN_URL = os.environ.get(

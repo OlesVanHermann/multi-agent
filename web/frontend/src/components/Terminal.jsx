@@ -644,7 +644,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
         <button onClick={toggleNotes} className={`config-btn${showNotes ? ' config-btn-active' : ''}`}
           title="Notes de l'agent">notes</button>
         <input type="file" ref={fileRef} hidden multiple onChange={handleUpload} />
-        <button onClick={() => fileRef.current?.click()} className="config-btn" title="Upload file to /tmp" disabled={uploading}>
+        <button onClick={() => fileRef.current?.click()} className="config-btn" title="Upload file" disabled={uploading}>
           {uploading ? '...' : 'upload'}</button>
       </div>
       {showNotes ? (

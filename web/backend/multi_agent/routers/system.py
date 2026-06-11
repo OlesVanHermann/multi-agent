@@ -77,12 +77,14 @@ async def read_prompt_file(path: str = "", reverse: bool = False):
     return {"path": path, "content": content}
 
 
-MAX_UPLOAD_SIZE = 5 * 1024 * 1024 * 1024  # 5 GB
+# B7 : destination dédiée (cfg.UPLOAD_DIR, 0700, jamais servie statiquement),
+# taille bornée (cfg.MAX_UPLOAD_BYTES) et liste blanche d'extensions optionnelle.
+MAX_UPLOAD_SIZE = cfg.MAX_UPLOAD_BYTES
 
 
 @router.post("/api/upload")
 async def upload_file(file: UploadFile):
-    """Upload a file to /tmp and return its path."""
+    """Upload a file to the dedicated uploads dir and return its path."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="no filename")
     # Sanitize: strip path components, replace spaces, remove ..
@@ -90,11 +92,16 @@ async def upload_file(file: UploadFile):
     safe_name = re.sub(r'[^\w.\-]', '_', safe_name)
     if not safe_name or safe_name.startswith('.'):
         safe_name = f"upload_{int(time.time())}"
+    if cfg.UPLOAD_ALLOWED_EXT:
+        ext = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else ""
+        if ext not in cfg.UPLOAD_ALLOWED_EXT:
+            raise HTTPException(status_code=415, detail="file type not allowed")
+    cfg.UPLOAD_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     ts = time.strftime("%Y%m%d_%H%M%S")
-    dest = Path("/tmp") / f"{ts}_{safe_name}"
+    dest = cfg.UPLOAD_DIR / f"{ts}_{safe_name}"
     counter = 1
     while dest.exists():
-        dest = Path("/tmp") / f"{ts}_{counter}_{safe_name}"
+        dest = cfg.UPLOAD_DIR / f"{ts}_{counter}_{safe_name}"
         counter += 1
     size = 0
     try:
@@ -103,7 +110,7 @@ async def upload_file(file: UploadFile):
                 size += len(chunk)
                 if size > MAX_UPLOAD_SIZE:
                     dest.unlink(missing_ok=True)
-                    raise HTTPException(status_code=413, detail="file too large (max 5GB)")
+                    raise HTTPException(status_code=413, detail="file too large")
                 f.write(chunk)
     except HTTPException:
         raise
@@ -113,19 +120,30 @@ async def upload_file(file: UploadFile):
     return {"path": str(dest), "name": safe_name, "size": size}
 
 
+# B7 : corps borné (anti-flood) en plus du rate limit /api/* du middleware
+# et du plafond journalier de 50 Mo ci-dessous.
+MAX_FRONTEND_LOG_BODY = 256 * 1024
+
+
 @router.post("/api/logs/frontend")
 async def post_frontend_logs(request: Request):
     """Receive frontend log events and append them as JSONL to logs/frontend/."""
+    raw = await request.body()
+    if len(raw) > MAX_FRONTEND_LOG_BODY:
+        raise HTTPException(status_code=413, detail="payload too large")
     try:
-        body = await request.json()
+        body = json.loads(raw)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON")
     events = body.get("events", [])
     if not events:
         return {"ok": True, "written": 0}
-    if not isinstance(events, list) or len(events) > 20:
-        raise HTTPException(status_code=400, detail="events must be a list of max 20 items")
+    if not isinstance(events, list) or len(events) > 20 \
+            or not all(isinstance(e, dict) for e in events):
+        raise HTTPException(status_code=400, detail="events must be a list of max 20 objects")
 
     cfg.FRONTEND_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
