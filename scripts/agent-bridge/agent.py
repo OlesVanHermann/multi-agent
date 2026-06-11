@@ -190,6 +190,9 @@ class TmuxAgent:
         self.redis = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD or None, decode_responses=True)
         self.inbox = f"{MA_PREFIX}:agent:{agent_id}:inbox"
         self.outbox = f"{MA_PREFIX}:agent:{agent_id}:outbox"
+        # A4: consumer group — survives bridge restarts (no lost/replayed messages)
+        self.group = "bridge"
+        self.consumer = f"agent-{agent_id}"
 
         try:
             self.redis.ping()
@@ -576,57 +579,111 @@ class TmuxAgent:
             self._log(traceback.format_exc())
         self._log("WARNING: heartbeat thread exiting")
 
+    def _ensure_group(self):
+        """A4: create the inbox consumer group (idempotent, ignore BUSYGROUP)."""
+        try:
+            self.redis.xgroup_create(self.inbox, self.group, id='$', mkstream=True)
+        except redis.ResponseError as e:
+            if 'BUSYGROUP' not in str(e):
+                raise
+
+    def _ack_inbox(self, msg_id):
+        """A4: acknowledge an inbox message after successful handling."""
+        try:
+            self.redis.xack(self.inbox, self.group, msg_id)
+        except Exception as e:
+            self._log(f"XACK error for {msg_id}: {e}")
+
+    def _handle_inbox_message(self, msg_id, data):
+        """Handle one inbox stream message.
+
+        Prompts carry ack_id and are XACK'd by _process_queue after the
+        response is published; other types are XACK'd immediately.
+        """
+        if not data:
+            # Entry trimmed from stream while pending — nothing to replay
+            self._ack_inbox(msg_id)
+            return
+
+        # R-INTEGRATE: record inbound message
+        if self.metrics:
+            self.metrics.record_message(self.agent_id, "inbound")
+
+        msg_type = data.get('type', 'prompt')
+
+        if msg_type == 'prompt' or 'prompt' in data:
+            raw_from = data.get('from_agent', 'unknown')
+            safe_from = raw_from if re.fullmatch(r'[0-9]{3}(-[0-9]{3})?|cli|manual|legacy|unknown|auto_init|compaction_reload|compaction_resume|response_[0-9]{3}(-[0-9]{3})?', str(raw_from)) else 'unknown'
+            self.prompt_queue.put({
+                'prompt': data.get('prompt', ''),
+                'from_agent': safe_from,
+                'msg_id': msg_id,
+                'ack_id': msg_id,
+                'source': 'redis'
+            })
+            self._log(f"<- Queued from {safe_from}: {data.get('prompt', '')[:50]}...")
+        elif msg_type == 'reload_prompt':
+            self._log("Received reload_prompt — reloading agent personality")
+            self._reload_prompt()
+            self._ack_inbox(msg_id)
+        elif msg_type == 'response':
+            from_id = data.get('from_agent', '?')
+            response_text = data.get('response', '')
+            raw_chunk = data.get('chunk', '')
+            chunk_info = raw_chunk if re.fullmatch(r'[\w\-/. ]{0,30}', str(raw_chunk)) else ''
+            is_complete = data.get('complete', 'true')
+
+            self._log(f"<- Response from {from_id} ({len(response_text)} chars){' ['+chunk_info+']' if chunk_info else ''}")
+
+            header = f"[FROM {from_id}]"
+            if chunk_info:
+                header += f" [{chunk_info}]"
+
+            notification = f"{header}\n{response_text}\n[/{from_id}]"
+            self.prompt_queue.put({
+                'prompt': notification,
+                'from_agent': f'response_{from_id}',
+                'msg_id': f"response-{int(time.time())}",
+                'source': 'response'
+            })
+            self._ack_inbox(msg_id)
+        else:
+            self._log(f"<- Unknown message type '{msg_type}' from {data.get('from_agent', '?')} — acked")
+            self._ack_inbox(msg_id)
+
     def _listen_redis(self):
-        """Thread: listen to Redis inbox (Streams format)"""
-        last_id = '$'
+        """Thread: listen to Redis inbox via consumer group (A4: XREADGROUP + XACK).
+
+        On startup, unacked messages from a previous run (crash) are drained
+        first (id '0'), then new messages are consumed (id '>').
+        """
+        group_ready = False
+        pending_drained = False
         try:
          while self.running:
             try:
-                result = self.redis.xread({self.inbox: last_id}, block=2000, count=1)
+                if not group_ready:
+                    self._ensure_group()
+                    group_ready = True
+
+                if not pending_drained:
+                    while self.running:
+                        result = self.redis.xreadgroup(
+                            self.group, self.consumer, {self.inbox: '0'}, count=10)
+                        messages = result[0][1] if result else []
+                        if not messages:
+                            break
+                        self._log(f"Recovering {len(messages)} pending message(s) from previous run")
+                        for msg_id, data in messages:
+                            self._handle_inbox_message(msg_id, data)
+                    pending_drained = True
+
+                result = self.redis.xreadgroup(
+                    self.group, self.consumer, {self.inbox: '>'}, block=2000, count=1)
                 if result:
                     stream, messages = result[0]
                     for msg_id, data in messages:
-                        last_id = msg_id
-
-                        # R-INTEGRATE: record inbound message
-                        if self.metrics:
-                            self.metrics.record_message(self.agent_id, "inbound")
-
-                        msg_type = data.get('type', 'prompt')
-
-                        if msg_type == 'prompt' or 'prompt' in data:
-                            raw_from = data.get('from_agent', 'unknown')
-                            safe_from = raw_from if re.fullmatch(r'[0-9]{3}(-[0-9]{3})?|cli|manual|legacy|unknown|auto_init|compaction_reload|compaction_resume|response_[0-9]{3}(-[0-9]{3})?', str(raw_from)) else 'unknown'
-                            self.prompt_queue.put({
-                                'prompt': data.get('prompt', ''),
-                                'from_agent': safe_from,
-                                'msg_id': msg_id,
-                                'source': 'redis'
-                            })
-                            self._log(f"<- Queued from {safe_from}: {data.get('prompt', '')[:50]}...")
-                        elif msg_type == 'reload_prompt':
-                            self._log("Received reload_prompt — reloading agent personality")
-                            self._reload_prompt()
-                        elif msg_type == 'response':
-                            from_id = data.get('from_agent', '?')
-                            response_text = data.get('response', '')
-                            raw_chunk = data.get('chunk', '')
-                            chunk_info = raw_chunk if re.fullmatch(r'[\w\-/. ]{0,30}', str(raw_chunk)) else ''
-                            is_complete = data.get('complete', 'true')
-
-                            self._log(f"<- Response from {from_id} ({len(response_text)} chars){' ['+chunk_info+']' if chunk_info else ''}")
-
-                            header = f"[FROM {from_id}]"
-                            if chunk_info:
-                                header += f" [{chunk_info}]"
-
-                            notification = f"{header}\n{response_text}\n[/{from_id}]"
-                            self.prompt_queue.put({
-                                'prompt': notification,
-                                'from_agent': f'response_{from_id}',
-                                'msg_id': f"response-{int(time.time())}",
-                                'source': 'response'
-                            })
+                        self._handle_inbox_message(msg_id, data)
             except redis.ConnectionError:
                 self._log("Redis connection lost, reconnecting...")
                 time.sleep(2)
@@ -647,6 +704,9 @@ class TmuxAgent:
 
         Supports FROM:xxx| prefix to identify sender:
           RPUSH A:inject:300 "FROM:100|do something"
+
+        A4: legacy Lists stay best-effort (BLPOP pops destructively, no ack) —
+        a crash between BLPOP and processing loses the message. Use Streams.
         """
         try:
          while self.running:
@@ -738,6 +798,7 @@ class TmuxAgent:
                     'prompt': task['prompt'],
                     'from_agent': task.get('from_agent', 'unknown'),
                     'msg_id': task.get('msg_id', ''),
+                    'ack_id': task.get('ack_id'),
                     '_retry_count': retry_count + 1,
                     'source': task.get('source', 'retry')
                 })
@@ -813,6 +874,7 @@ class TmuxAgent:
                     'prompt': "\n".join(parts),
                     'from_agent': 'compaction_resume',
                     'msg_id': f"resume2_{int(time.time())}",
+                    'ack_id': task.get('ack_id'),
                 })
 
                 with self.state_lock:
@@ -842,6 +904,10 @@ class TmuxAgent:
                 'chars': len(response)
             }
             self.redis.xadd(self.outbox, msg_data, maxlen=IO_STREAM_MAXLEN, approximate=True)
+
+            # A4: ack only after the response is published to the outbox
+            if task.get('ack_id'):
+                self._ack_inbox(task['ack_id'])
 
             # R-INTEGRATE: record outbound message
             if self.metrics:

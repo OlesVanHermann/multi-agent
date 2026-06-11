@@ -216,28 +216,31 @@ class TestRedisConnectionLoss:
         agent = object.__new__(TmuxAgent)
         agent.agent_id = "402"
         agent.inbox = "A:agent:402:inbox"
+        agent.group = "bridge"
+        agent.consumer = "agent-402"
         agent.running = True
         agent.prompt_queue = Queue()
         agent.logfile = MagicMock()
+        agent.metrics = None
 
         call_count = 0
-        def mock_xread(*args, **kwargs):
+        def mock_xreadgroup(*args, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count <= 2:
                 raise _RedisConnectionError("Connection lost")
-            # Stop after 3 calls
+            # Stop after a few calls (drain + live read)
             agent.running = False
             return None
 
         agent.redis = MagicMock()
-        agent.redis.xread.side_effect = mock_xread
+        agent.redis.xreadgroup.side_effect = mock_xreadgroup
         agent._log = MagicMock()
 
         # Run in thread to avoid blocking
         thread = Thread(target=agent._listen_redis, daemon=True)
         thread.start()
-        thread.join(timeout=5)
+        thread.join(timeout=10)
 
         # Should have attempted reconnection
         assert call_count >= 2
