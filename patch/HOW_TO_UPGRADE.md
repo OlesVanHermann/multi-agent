@@ -147,6 +147,35 @@ echo "Consultez patch/ pour les scripts de gestion des patches"
 
 ---
 
+## Intégrité du framework (C3)
+
+Les agents tournent en bypass-permissions : une mise à jour altérée
+propagerait du code injecté. Deux protections dans `upgrade.sh` :
+
+1. **Manifest de checksums** — `patch/checksums.sha256` est généré par
+   `hub-release.sh` à chaque release (sha256 de tous les fichiers framework
+   trackés git). `upgrade.sh` recalcule les checksums du framework téléchargé
+   et **abandonne** en cas d'écart ou de fichier hors manifest.
+2. **Signature GPG du tag** — si `user.signingkey` est configurée sur le hub,
+   `hub-release.sh` signe le tag (`git tag -s`). `upgrade.sh` tente
+   `git verify-tag` quand la cible est un tag.
+
+Mode strict (recommandé en production) :
+
+```bash
+MA_UPGRADE_STRICT=1 ./patch/upgrade.sh v2.13.0
+```
+
+En strict, le manifest **et** la signature de tag sont obligatoires (la clé
+publique de release doit être importée : `gpg --import release-key.asc`).
+Par défaut (non strict), le manifest est vérifié s'il est présent (échec =
+abandon) et l'absence de signature ne produit qu'un avertissement.
+
+Avant le remplacement des répertoires framework, l'état courant est archivé
+dans `removed/<horodatage>_upgrade_backup/` — aucune suppression définitive.
+
+---
+
 ## Mise à jour de Keycloak (cadence)
 
 L'image Keycloak est **épinglée par tag complet + digest** (C2) dans trois

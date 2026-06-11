@@ -88,21 +88,39 @@ sed -i "s/Multi-Agent System v[0-9]*\.[0-9]*\.[0-9]*/Multi-Agent System v${MAJOR
 COMMIT_COUNT=$(git rev-list --count "${CURRENT_TAG}..HEAD" 2>/dev/null || echo "0")
 CHANGES=$(git log --oneline "${CURRENT_TAG}..HEAD" 2>/dev/null | head -10)
 
+# C3 : manifest d'intégrité des fichiers framework (vérifié par upgrade.sh).
+# Basé sur les fichiers trackés git → identique au contenu d'un clone frais.
+echo -e "${CYAN}Generating patch/checksums.sha256 (C3)...${NC}"
+FRAMEWORK_PATHS=(scripts web docs patch setup tests templates examples framework
+                 requirements.txt CLAUDE.md README.md LICENSE .gitignore)
+# ':!...' = pathspec git d'exclusion (le manifest ne peut pas se contenir lui-même)
+git ls-files -z -- "${FRAMEWORK_PATHS[@]}" ':!patch/checksums.sha256' \
+    | LC_ALL=C sort -z \
+    | xargs -0 sha256sum > patch/checksums.sha256
+git add patch/checksums.sha256
+
 # Commit version bump
 git add CLAUDE.md
 git commit -m "release: $NEW_VERSION" --allow-empty 2>/dev/null || true
 echo ""
 
-# 6. Tag
+# 6. Tag (signé GPG si une clé de signature est configurée — C3)
 echo -e "${CYAN}[4/5] Creating tag $NEW_VERSION...${NC}"
-git tag -a "$NEW_VERSION" -m "Version ${NEW_VERSION} - ${COMMIT_COUNT} commits since ${CURRENT_TAG}"
+TAG_SIGN_FLAG="-a"
+if git config --get user.signingkey >/dev/null 2>&1; then
+    TAG_SIGN_FLAG="-s"
+    echo -e "${GREEN}Signing tag with GPG key $(git config --get user.signingkey)${NC}"
+else
+    echo -e "${YELLOW}No user.signingkey configured — tag annoté non signé.${NC}"
+fi
+git tag "$TAG_SIGN_FLAG" "$NEW_VERSION" -m "Version ${NEW_VERSION} - ${COMMIT_COUNT} commits since ${CURRENT_TAG}"
 echo ""
 
 # 7. Push to GitHub via orphan commit (single commit, no history)
 echo -e "${CYAN}[5/5] Pushing to GitHub (origin) via orphan commit...${NC}"
 TREE=$(git write-tree)
 ORPHAN=$(git commit-tree "$TREE" -m "release: $NEW_VERSION")
-git tag -f "$NEW_VERSION" "$ORPHAN"
+git tag "$TAG_SIGN_FLAG" -f "$NEW_VERSION" "$ORPHAN" -m "Version ${NEW_VERSION} - ${COMMIT_COUNT} commits since ${CURRENT_TAG}"
 git push --force origin "$ORPHAN":refs/heads/main
 git push --force origin "$NEW_VERSION"
 echo ""

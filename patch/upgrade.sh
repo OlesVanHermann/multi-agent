@@ -75,6 +75,55 @@ log_ok "Téléchargé"
 echo ""
 
 # ============================================================
+# 1b. Vérifier l'intégrité du framework téléchargé (C3)
+#     Les agents tournent en bypass-permissions : ne jamais appliquer
+#     une mise à jour altérée. MA_UPGRADE_STRICT=1 rend manifest ET
+#     signature de tag obligatoires.
+# ============================================================
+STRICT="${MA_UPGRADE_STRICT:-0}"
+
+# Signature GPG du tag (si BRANCH est un tag)
+if $GIT_CMD -C "$TEMP_DIR" rev-parse -q --verify "refs/tags/$BRANCH" >/dev/null 2>&1; then
+    if $GIT_CMD -C "$TEMP_DIR" verify-tag "$BRANCH" >/dev/null 2>&1; then
+        log_ok "Signature GPG du tag $BRANCH vérifiée"
+    elif [ "$STRICT" = "1" ]; then
+        log_error "Tag $BRANCH non signé ou signature invérifiable (MA_UPGRADE_STRICT=1)."
+        log_error "Importer la clé publique de release puis réessayer."
+        exit 1
+    else
+        log_warn "Tag $BRANCH : signature absente ou invérifiable (clé publique non importée ?)"
+    fi
+fi
+
+# Manifest de checksums des fichiers framework
+MANIFEST="$TEMP_DIR/patch/checksums.sha256"
+if [ -f "$MANIFEST" ]; then
+    log_info "Vérification des checksums framework..."
+    if ! (cd "$TEMP_DIR" && LC_ALL=C sha256sum --quiet -c patch/checksums.sha256); then
+        log_error "ÉCART DE CHECKSUM : le framework téléchargé ne correspond pas au manifest."
+        log_error "Mise à jour ABANDONNÉE — rien n'a été modifié."
+        exit 1
+    fi
+    # Détecter des fichiers framework présents mais absents du manifest
+    EXTRA_FILES=$(comm -23 \
+        <($GIT_CMD -C "$TEMP_DIR" ls-files -- scripts web docs patch setup tests templates examples framework requirements.txt CLAUDE.md README.md LICENSE .gitignore ':!patch/checksums.sha256' | LC_ALL=C sort) \
+        <(sed 's/^[0-9a-f]\{64\}[ *]\{2\}//' "$MANIFEST" | LC_ALL=C sort))
+    if [ -n "$EXTRA_FILES" ]; then
+        log_error "Fichiers framework hors manifest (ajout non attendu) :"
+        echo "$EXTRA_FILES" | sed 's/^/    /'
+        log_error "Mise à jour ABANDONNÉE — rien n'a été modifié."
+        exit 1
+    fi
+    log_ok "Intégrité vérifiée ($(grep -c . "$MANIFEST") fichiers)"
+elif [ "$STRICT" = "1" ]; then
+    log_error "patch/checksums.sha256 absent de la release (MA_UPGRADE_STRICT=1)."
+    exit 1
+else
+    log_warn "patch/checksums.sha256 absent (release antérieure à C3) — intégrité non vérifiée"
+fi
+echo ""
+
+# ============================================================
 # 2. Afficher ce qui va changer
 # ============================================================
 echo "─── Répertoires framework ───"
@@ -142,11 +191,20 @@ fi
 
 # ============================================================
 # 4. Appliquer la mise à jour
+#    Safe-delete (C3) : l'état actuel est archivé dans removed/
+#    avant le rsync --delete — aucune suppression définitive.
 # ============================================================
 log_info "Mise à jour..."
 
+BACKUP_DIR="./removed/$(date +%Y%m%d_%H%M%S)_upgrade_backup"
+mkdir -p "$BACKUP_DIR"
+log_info "Sauvegarde de l'état actuel dans $BACKUP_DIR"
+
 for dir in "${FRAMEWORK_DIRS[@]}"; do
     if [ -d "$TEMP_DIR/$dir" ]; then
+        if [ -d "./$dir" ]; then
+            $RSYNC_CMD -a --exclude='node_modules' --exclude='dist' --exclude='secrets.cfg' "./$dir/" "$BACKUP_DIR/$dir/"
+        fi
         mkdir -p "./$dir"
         $RSYNC_CMD -a --delete --exclude='node_modules' --exclude='dist' --exclude='secrets.cfg' "$TEMP_DIR/$dir/" "./$dir/"
         log_ok "$dir/"
