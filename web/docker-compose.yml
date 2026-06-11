@@ -21,6 +21,9 @@ services:
       - REDIS_HOST=host.docker.internal
       - REDIS_PORT=6379
       - KEYCLOAK_URL=http://keycloak:8080
+      # Optionnel : issuer public quand le dashboard est derrière un proxy TLS
+      - KEYCLOAK_PUBLIC_URL=${KEYCLOAK_PUBLIC_URL:-}
+      - KEYCLOAK_ISSUER=${KEYCLOAK_ISSUER:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -35,8 +38,9 @@ services:
       - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD requis (pas de valeur par defaut) - voir setup/secrets.cfg}
       - KC_HEALTH_ENABLED=true
       - KC_HTTP_ENABLED=true
-      # Issuer epingle : doit etre egal au KEYCLOAK_URL du backend (verification stricte)
-      - KC_HOSTNAME_URL=http://keycloak:8080
+      # Issuer epingle (verification stricte backend) : KEYCLOAK_PUBLIC_URL
+      # si le dashboard est derriere un proxy TLS public, sinon URL interne
+      - KC_HOSTNAME_URL=${KEYCLOAK_PUBLIC_URL:-http://keycloak:8080}
     command: start --import-realm
     volumes:
       - ./keycloak/realm-multi-agent.json:/opt/keycloak/data/import/realm-multi-agent.json:ro

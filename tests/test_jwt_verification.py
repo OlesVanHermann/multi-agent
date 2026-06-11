@@ -97,3 +97,38 @@ class TestJwtHardening:
 
     def test_garbage_token_rejected(self, srv, patched_jwks):
         assert srv._verify_jwt_minimal("not-a-jwt") is False
+
+
+class TestIssuerConfig:
+    """Issuer public découplé de l'URL interne (KEYCLOAK_PUBLIC_URL / KEYCLOAK_ISSUER)."""
+
+    def _reload(self):
+        import importlib
+        from multi_agent import config as cfg
+        return importlib.reload(cfg)
+
+    def test_public_url_drives_issuer(self, monkeypatch):
+        monkeypatch.setenv("KEYCLOAK_PUBLIC_URL", "https://pub.example.com")
+        cfg = self._reload()
+        assert cfg._EXPECTED_ISSUER == f"https://pub.example.com/realms/{cfg.KEYCLOAK_REALM}"
+        monkeypatch.delenv("KEYCLOAK_PUBLIC_URL")
+        self._reload()
+
+    def test_explicit_issuer_wins_over_public_url(self, monkeypatch):
+        monkeypatch.setenv("KEYCLOAK_PUBLIC_URL", "https://pub.example.com")
+        monkeypatch.setenv("KEYCLOAK_ISSUER", "https://autre.example.com/realms/x")
+        cfg = self._reload()
+        assert cfg._EXPECTED_ISSUER == "https://autre.example.com/realms/x"
+        monkeypatch.delenv("KEYCLOAK_ISSUER")
+        monkeypatch.delenv("KEYCLOAK_PUBLIC_URL")
+        self._reload()
+
+    def test_empty_vars_fall_back_to_internal_url(self, monkeypatch):
+        """Compose passe KEYCLOAK_PUBLIC_URL/ISSUER vides quand non configurés."""
+        monkeypatch.setenv("KEYCLOAK_PUBLIC_URL", "")
+        monkeypatch.setenv("KEYCLOAK_ISSUER", "")
+        cfg = self._reload()
+        assert cfg._EXPECTED_ISSUER == f"{cfg.KEYCLOAK_URL}/realms/{cfg.KEYCLOAK_REALM}"
+        monkeypatch.delenv("KEYCLOAK_PUBLIC_URL")
+        monkeypatch.delenv("KEYCLOAK_ISSUER")
+        self._reload()

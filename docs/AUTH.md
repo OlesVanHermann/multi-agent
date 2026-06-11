@@ -72,7 +72,11 @@ header `X-CSRF-Token` égal au cookie `ma_csrf`, sinon 403.
 - **Signature** : RS256 contre les clés publiques du realm (JWKS) ;
 - **Issuer strict** : égalité exacte avec
   `{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}` (un suffixe du type
-  `…/realms/multi-agent.evil.com` est rejeté) ;
+  `…/realms/multi-agent.evil.com` est rejeté). Derrière un reverse proxy
+  public (TLS), définir `KEYCLOAK_PUBLIC_URL` dans `setup/secrets.cfg` :
+  Keycloak émet alors cet issuer (`KC_HOSTNAME_URL`) et le backend l'exige,
+  `KEYCLOAK_URL` restant l'URL interne (JWKS + proxy `/auth`).
+  `KEYCLOAK_ISSUER` permet un override explicite complet ;
 - **Audience** : `multi-agent-web` doit figurer dans `aud` **ou** dans `azp`
   (les clients publics Keycloak sans mapper d'audience mettent le client ID
   dans `azp`) ;

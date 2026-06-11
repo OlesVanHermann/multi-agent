@@ -17,7 +17,15 @@ KEYCLOAK_URL = os.environ.get("KEYCLOAK_URL", "http://localhost:8080")
 KEYCLOAK_REALM = os.environ.get("KEYCLOAK_REALM", "multi-agent")
 KEYCLOAK_JWKS_URL = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/certs"
 _EXPECTED_AUDIENCE = os.environ.get("KEYCLOAK_CLIENT_ID", "multi-agent-web")
-_EXPECTED_ISSUER = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}"
+# Issuer attendu dans les JWT. Derrière un reverse proxy public (TLS),
+# Keycloak émet l'issuer du domaine public (KC_HOSTNAME_URL) alors que
+# KEYCLOAK_URL reste l'URL interne (JWKS, proxy /auth) : KEYCLOAK_PUBLIC_URL
+# découple les deux ; KEYCLOAK_ISSUER = override explicite complet.
+_KEYCLOAK_PUBLIC_URL = os.environ.get("KEYCLOAK_PUBLIC_URL", "").rstrip("/")
+_EXPECTED_ISSUER = (
+    os.environ.get("KEYCLOAK_ISSUER")
+    or f"{_KEYCLOAK_PUBLIC_URL or KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}"
+)
 
 _KEYCLOAK_ALLOWED_PREFIXES = (
     f"realms/{KEYCLOAK_REALM}/protocol/openid-connect/",

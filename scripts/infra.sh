@@ -139,12 +139,15 @@ do_start() {
             REALM_MOUNT="-v $REALM_FILE:/opt/keycloak/data/import/realm-multi-agent.json:ro"
         fi
         # Production mode (start): HTTP allowed because bound to 127.0.0.1 only;
-        # KC_HOSTNAME_URL pins the token issuer to KEYCLOAK_URL (strict check in backend).
+        # KC_HOSTNAME_URL pins the token issuer (strict check in backend) to
+        # KEYCLOAK_PUBLIC_URL (dashboard behind a public reverse proxy) or
+        # KEYCLOAK_URL. KC_PROXY=edge only when behind a public proxy.
         $DOCKER run -d --name ma-keycloak -p 127.0.0.1:8080:8080 \
             -e KEYCLOAK_ADMIN="${KEYCLOAK_ADMIN:-admin}" -e KEYCLOAK_ADMIN_PASSWORD="$KEYCLOAK_ADMIN_PASSWORD" \
             -e KC_HEALTH_ENABLED=true \
             -e KC_HTTP_ENABLED=true \
-            -e KC_HOSTNAME_URL="${KEYCLOAK_URL:-http://localhost:8080}" \
+            -e KC_HOSTNAME_URL="${KEYCLOAK_PUBLIC_URL:-${KEYCLOAK_URL:-http://localhost:8080}}" \
+            ${KEYCLOAK_PUBLIC_URL:+-e KC_PROXY=edge} \
             $REALM_MOUNT \
             -v ma-keycloak-data:/opt/keycloak/data \
             --restart unless-stopped \
