@@ -58,6 +58,22 @@ Refresh et logout : le JS appelle `/auth/...` sans connaître le refresh
 token ; le backend l'injecte depuis le cookie `ma_refresh`. Le logout efface
 les trois cookies.
 
+### Reverse proxy frontal : router `/auth/*` vers le backend, PAS Keycloak
+
+Si un reverse proxy (nginx, etc.) expose le dashboard sur un domaine public,
+**tout** doit être routé vers le backend :8050 — y compris `/auth/*`. Router
+`/auth/` directement vers Keycloak :8080 casse silencieusement le login : la
+réponse token revient en JSON brut **sans cookies** (c'est le handler FastAPI
+qui les pose), le login affiche 200 mais toutes les requêtes `/api/*`
+suivantes prennent 401. Symptôme typique : « connecté » mais dashboard vide.
+
+```nginx
+location / { proxy_pass http://127.0.0.1:8050; }   # /auth/* inclus
+```
+
+Dans cette topologie, configurer aussi `KEYCLOAK_PUBLIC_URL` (voir
+ci-dessous) pour que l'issuer émis corresponde au domaine public.
+
 ### Anti-CSRF (double-submit)
 
 Quand l'auth provient du cookie (envoyé automatiquement par le navigateur),
