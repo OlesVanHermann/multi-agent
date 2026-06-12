@@ -1,0 +1,1442 @@
+#!/usr/bin/env python3
+"""
+agent-tmux.py - Agent bridge using tmux to communicate with interactive Claude
+
+EF-001 : Health endpoint HTTP (http.server stdlib, port 9100+id)
+EF-003 : Heartbeat enrichi (10s, 7 champs, psutil CT-011)
+R-INTEGRATE : MetricsCollector intégré (record_task_start/end/error/message)
+CT-001 : http.server stdlib pour health endpoint
+CT-002 : Préfixe mi: pour streams monitoring
+CT-009 : XTRIM MAXLEN ~1000 sur streams heartbeat
+CT-011 : psutil >= 5.9 pour EF-003
+
+Usage: python agent-tmux.py <AGENT_ID>
+Requires: tmux session "agent-{id}" with Claude running interactively
+"""
+
+import sys
+import os
+import time
+import subprocess
+import re
+import argparse
+import json
+import http.server
+import threading
+from datetime import datetime
+from threading import Thread, Lock
+from queue import Queue, Empty
+from enum import Enum
+from collections import deque
+from pathlib import Path
+
+try:
+    import redis
+except ImportError:
+    sys.stderr.write(
+        "[agent-bridge] Dépendance manquante : le module Python 'redis' n'est pas installé.\n"
+        "[agent-bridge] Installer les dépendances : pip install -r requirements.txt\n"
+    )
+    sys.exit(1)
+
+# A6 : source unique du format d'ID agent
+from ids import AGENT_ID_PATTERN, is_valid_agent_id
+
+try:
+    import yaml
+except ImportError:
+    sys.stderr.write(
+        "[agent-bridge] Dépendance manquante : le module Python 'yaml' (PyYAML) n'est pas installé.\n"
+        "[agent-bridge] Installer les dépendances : pip install -r requirements.txt\n"
+    )
+    sys.exit(1)
+
+# psutil conditionnel (CT-011: autorisé pour EF-003)
+_PSUTIL_AVAILABLE = False
+try:
+    import psutil
+    _PSUTIL_AVAILABLE = True
+except ImportError:
+    pass
+
+# === CONFIG ===
+BASE_DIR = Path(__file__).parent.parent.parent
+LOG_DIR = os.environ.get("LOG_DIR", str(BASE_DIR / "logs"))
+REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
+REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
+MA_PREFIX = os.environ.get("MA_PREFIX", "A")
+
+# Préfixe dédié monitoring (CT-002: mi: pour streams monitoring)
+MONITORING_PREFIX = os.environ.get("MONITORING_PREFIX", "mi")
+
+MAX_HISTORY = 50
+RESPONSE_TIMEOUT = int(os.environ.get("RESPONSE_TIMEOUT", 300))
+POLL_INTERVAL = 1.0
+
+# A2 : scrutation adaptative — intervalle court tant que le pane change,
+# allongement progressif (×1.5) jusqu'au plafond dès stabilité.
+POLL_MIN = float(os.environ.get("POLL_MIN", 0.2))
+POLL_MAX = float(os.environ.get("POLL_MAX", 2.0))
+
+# Durées de stabilité requises (en secondes) avant de conclure une réponse.
+# Équivalentes aux anciens compteurs d'itérations à POLL_INTERVAL=1s.
+# Surchargables par env (G1 : les tests E2E les raccourcissent).
+STABLE_READY_SECS = float(os.environ.get("STABLE_READY_SECS", 5.0))
+STABLE_FALLBACK_SECS = float(os.environ.get("STABLE_FALLBACK_SECS", 10.0))
+STABLE_PLAN_SECS = float(os.environ.get("STABLE_PLAN_SECS", 15.0))
+
+# Backoff entre deux tentatives après erreur API (G1 : raccourci en test)
+RETRY_BACKOFF_SECS = float(os.environ.get("RETRY_BACKOFF_SECS", 10))
+
+
+# Budget total de vérification de soumission d'Entrée dans _send_keys (s)
+SEND_KEYS_BUDGET = 15.0
+
+
+def _next_poll_interval(current, changed):
+    """A2: prochain délai de poll — POLL_MIN si le pane a changé, sinon ×1.5 plafonné."""
+    if changed:
+        return POLL_MIN
+    return min(current * 1.5, POLL_MAX)
+
+# EF-003 : intervalle heartbeat enrichi (CA-004: toutes les 10s ± 2s)
+HEARTBEAT_INTERVAL = 10
+
+# EF-001 : port de base pour health endpoint (port = base + agent_id numérique)
+HEALTH_PORT_BASE = int(os.environ.get("AGENT_HEALTH_PORT_BASE", 9100))
+
+# A1 : marqueurs UI du CLI Claude externalisés dans markers.yaml.
+# Aucune chaîne de rendu CLI ne doit être codée en dur dans ce fichier.
+_MARKERS_PATH = Path(__file__).resolve().parent / "markers.yaml"
+with open(_MARKERS_PATH, encoding="utf-8") as _f:
+    MARKERS = yaml.safe_load(_f)
+
+PROMPT_MARKERS = MARKERS['prompt_markers']
+STATUS_LINE = MARKERS['status_line']
+BUSY_MARKERS = MARKERS['busy_markers']
+PLAN_MODE = MARKERS['plan_mode']
+COMPACTION_IN_PROGRESS = MARKERS['compaction']['in_progress']
+COMPACTION_DONE = MARKERS['compaction']['done']
+APPROVAL_PROMPT = MARKERS['approval']
+SURVEY_PROMPT = MARKERS['survey']
+QUEUED_MSG = MARKERS['queued']
+WAITING_SELECT = MARKERS['waiting_select']
+CONTEXT_LIMIT = MARKERS['context_limit']
+MODEL_CHANGE = MARKERS['model_change']
+API_ERROR_MARKER = MARKERS['api_error']
+SCROLL_INDICATOR = MARKERS['scroll_indicator']
+BASHES_PATTERN = MARKERS['bashes_pattern']
+CONTEXT_PCT_PATTERNS = MARKERS['context_pct_patterns']
+API_ERROR_PATTERNS = MARKERS['api_error_patterns']
+
+# CT-009 : borne streams monitoring
+STREAM_MAXLEN = 1000
+
+# A3 : borne streams métier (inbox/outbox) — évite la dérive mémoire Redis sur runs longs
+IO_STREAM_MAXLEN = int(os.environ.get("IO_STREAM_MAXLEN", 10000))
+
+
+def _parse_pane_state(out, pane_cmd, agent_id):
+    """B6: derive dashboard agent state from tmux pane content.
+
+    Pure function (testable) — mirrors the historical bash multi-grep that
+    the dashboard ran per agent per cycle. Keys match the dashboard cache.
+    """
+    claude_alive = pane_cmd in ("claude", "node")
+    lines = out.split('\n')
+
+    bp_line = ""
+    for line in lines:
+        if STATUS_LINE in line:
+            bp_line = line
+
+    has_bashes = bool(re.search(BASHES_PATTERN, bp_line))
+    if not claude_alive:
+        busy = False
+    elif any(m in bp_line for m in BUSY_MARKERS):
+        busy = True
+    elif any(PROMPT_MARKERS[0] in l for l in lines[-10:]):
+        busy = False
+    else:
+        busy = True
+
+    done_compacting = bool(re.search(re.escape(COMPACTION_DONE), out, re.IGNORECASE))
+    pid = str(agent_id).split('-')[0]
+    prompt_loaded = bool(done_compacting and re.search(
+        r'prompts/' + re.escape(pid) + r'[^ ]*/' + re.escape(str(agent_id)) + r'[.-]'
+        r'|prompts/' + re.escape(str(agent_id)) + r'-', out))
+
+    ctx = -1
+    ctx_matches = re.findall('|'.join(CONTEXT_PCT_PATTERNS), out)
+    if ctx_matches:
+        nums = re.findall(r'[0-9]+', ctx_matches[-1])
+        if nums:
+            ctx = int(nums[-1])
+
+    return {
+        'busy': busy,
+        'has_bashes': has_bashes,
+        'has_down': SCROLL_INDICATOR in bp_line,
+        'plan_mode': PLAN_MODE in out,
+        'waiting_approval': WAITING_SELECT in out,
+        'compacted': bool(re.search(re.escape(COMPACTION_IN_PROGRESS), out, re.IGNORECASE)),
+        'context_pct': ctx,
+        'done_compacting': done_compacting,
+        'prompt_loaded': prompt_loaded,
+        'context_limit': CONTEXT_LIMIT in out,
+        'api_error': out.count(API_ERROR_MARKER) >= 3 or (claude_alive and not bp_line),
+        'model_change': MODEL_CHANGE in out,
+        'claude_alive': claude_alive,
+    }
+
+
+class _HealthHandler(http.server.BaseHTTPRequestHandler):
+    """Health endpoint HTTP — EF-001, CT-001 (http.server stdlib).
+
+    Retourne JSON avec 6 champs requis (CA-001: <500ms).
+    Auth: static token from HEALTH_TOKEN env var (query param or Bearer header).
+    """
+    agent_ref = None  # Set by _start_health_server
+    health_token = None  # Set by _start_health_server
+
+    def _check_auth(self):
+        token = self.__class__.health_token
+        if not token:
+            return False  # no token configured = reject all (secure by default)
+        # Check query param ?token=
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        if qs.get('token', [None])[0] == token:
+            return True
+        # Check Bearer header
+        auth = self.headers.get('Authorization', '')
+        if auth == f'Bearer {token}':
+            return True
+        return False
+
+    def do_GET(self):
+        path = self.path.split('?')[0]
+        if path == '/health':
+            if not self._check_auth():
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"detail":"Authentication required"}')
+                return
+            agent = self.__class__.agent_ref
+            if not agent:
+                self.send_response(503)
+                self.end_headers()
+                return
+            try:
+                redis_ok = agent._redis_ping()
+            except Exception:
+                redis_ok = False
+            data = {
+                "status": "healthy" if redis_ok else "degraded",
+                "agent_id": agent.agent_id,
+                "uptime_seconds": int(time.time() - agent._start_time),
+                "last_heartbeat_ts": getattr(agent, '_last_heartbeat_ts', 0),
+                "redis_connected": redis_ok,
+                "pty_active": agent._tmux_session_exists()
+            }
+            body = json.dumps(data).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        pass  # Suppress default http.server logging
+
+
+class State(Enum):
+    IDLE = "idle"
+    BUSY = "busy"
+
+
+class TmuxAgent:
+    def __init__(self, agent_id):
+        self.agent_id = str(agent_id)
+        self.session_name = f"{MA_PREFIX}-agent-{agent_id}"
+        self.state = State.IDLE
+        self.state_lock = Lock()
+
+        # EF-001: start time for uptime
+        self._start_time = time.time()
+
+        # EF-003: compteurs pour heartbeat enrichi
+        self._messages_processed = 0
+        self._last_message_ts = 0
+        self._last_heartbeat_ts = 0
+
+        # Tracking
+        self.tasks_completed = 0
+        self.messages_since_reload = 0
+        self.last_output_lines = 0
+
+        # Queue
+        self.prompt_queue = Queue()
+        self.current_task = None
+        self.history = deque(maxlen=MAX_HISTORY)
+
+        # Logging
+        self.log_dir = Path(LOG_DIR) / self.agent_id
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.logfile = open(self.log_dir / f"bridge_{ts}.log", "a", buffering=1)
+
+        self._log(f"=== TmuxAgent {agent_id} started ===")
+
+        # Verify tmux session exists
+        if not self._tmux_session_exists():
+            self._log(f"ERROR: tmux session '{self.session_name}' not found!")
+            self._log("Start Claude first with: ./scripts/agent.sh start " + agent_id)
+            sys.exit(1)
+
+        # Redis
+        self.redis = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD or None, decode_responses=True)
+        self.inbox = f"{MA_PREFIX}:agent:{agent_id}:inbox"
+        self.outbox = f"{MA_PREFIX}:agent:{agent_id}:outbox"
+        # A4: consumer group — survives bridge restarts (no lost/replayed messages)
+        self.group = "bridge"
+        self.consumer = f"agent-{agent_id}"
+
+        try:
+            self.redis.ping()
+        except redis.ConnectionError:
+            self._log(f"ERROR: Cannot connect to Redis at {REDIS_HOST}:{REDIS_PORT}")
+            sys.exit(1)
+
+        # R-INTEGRATE: MetricsCollector pour tracking performance
+        try:
+            from monitoring.metrics_collector import MetricsCollector
+            self.metrics = MetricsCollector(self.redis, prefix=MONITORING_PREFIX)
+            self._log("MetricsCollector initialized (R-INTEGRATE)")
+        except ImportError:
+            self.metrics = None
+            self._log("WARNING: monitoring.metrics_collector not available")
+
+        # Get initial pane content to know baseline
+        self.last_output_lines = self._get_pane_line_count()
+
+        # Legacy inbox (A:inject:{id} format used by prompts)
+        self.legacy_inbox = f"{MA_PREFIX}:inject:{agent_id}"
+
+        # Threads
+        self.running = True
+        self.threads = [
+            Thread(target=self._listen_redis, daemon=True, name="redis_listener"),
+            Thread(target=self._listen_legacy, daemon=True, name="legacy_listener"),
+            Thread(target=self._process_queue, daemon=True, name="queue_processor"),
+            Thread(target=self._heartbeat_loop, daemon=True, name="heartbeat"),  # EF-003
+        ]
+        for t in self.threads:
+            t.start()
+
+        # EF-001: Start health endpoint HTTP server
+        self._health_server = None
+        self._start_health_server()
+
+        self._set_redis_status()
+        self._log(f"Listening: Redis={self.inbox} + {self.legacy_inbox}, tmux={self.session_name}")
+
+    def _log(self, msg):
+        ts = datetime.now().strftime("%H:%M:%S")
+        line = f"[{ts}][{self.agent_id}] {msg}"
+        print(line, flush=True)
+        self.logfile.write(line + "\n")
+
+    def _log_event(self, event_type, detail=""):
+        """Append JSON event to logs/{agent_id}/events.jsonl"""
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        entry = json.dumps({"ts": ts, "type": event_type, "detail": detail})
+        try:
+            with open(self.log_dir / "events.jsonl", "a") as fh:
+                fh.write(entry + "\n")
+        except Exception as e:
+            self._log(f"event log error: {e}")
+
+    def _redis_ping(self):
+        """Test connexion Redis — utilisé par health endpoint (EF-001)."""
+        try:
+            return self.redis.ping()
+        except Exception:
+            return False
+
+    def _tmux_session_exists(self):
+        """Check if tmux session exists"""
+        result = subprocess.run(
+            ["tmux", "has-session", "-t", self.session_name],
+            capture_output=True
+        )
+        return result.returncode == 0
+
+    def _get_pane_line_count(self):
+        """Get current number of lines in tmux pane 0"""
+        target = f"{self.session_name}:0"
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-t", target, "-p"],
+            capture_output=True, text=True
+        )
+        return len(result.stdout.split('\n'))
+
+    def _capture_pane(self, lines=100):
+        """Capture tmux pane 0 content (where Claude runs)"""
+        target = f"{self.session_name}:0"
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-t", target, "-p", "-S", f"-{lines}"],
+            capture_output=True, text=True
+        )
+        return result.stdout
+
+    def _send_keys(self, text):
+        """Send keys to tmux pane 0 (where Claude runs).
+
+        NOTE: No Ctrl-C — it would interrupt Claude's thinking/execution.
+        Ctrl-U clears the input line safely without interrupting.
+        """
+        target = f"{self.session_name}:0"
+
+        subprocess.run(["tmux", "send-keys", "-t", target, "C-u"], capture_output=True)
+        time.sleep(0.3)
+
+        subprocess.run(
+            ["tmux", "send-keys", "-t", target, "-l", text],
+            capture_output=True
+        )
+        time.sleep(1)
+
+        subprocess.run(
+            ["tmux", "send-keys", "-t", target, "Enter"],
+            capture_output=True
+        )
+
+        # Verify Enter was submitted by checking the CURSOR LINE only.
+        # The previous version checked "any line in last 3 lines", which matched
+        # scrollback echo (false positive) and missed busy/streaming states.
+        # A2: adaptive loop — exit as soon as the input line is clear,
+        # resend Enter on an escalating cadence (1/2/4/8s), same ~15s budget.
+        target_pane = f"{self.session_name}:0"
+        check_snippet = text[:40] if len(text) > 40 else text
+        deadline = time.time() + SEND_KEYS_BUDGET
+        resend_delay = 1.0
+        next_resend = time.time() + resend_delay
+        poll = POLL_MIN
+        while time.time() < deadline:
+            time.sleep(poll)
+            try:
+                cy = subprocess.run(
+                    ["tmux", "display-message", "-t", target_pane, "-p", "#{cursor_y}"],
+                    capture_output=True, text=True
+                ).stdout.strip()
+                lines = self._capture_pane(50).split('\n')
+                cursor_line = lines[int(cy)] if cy.isdigit() and int(cy) < len(lines) else ''
+            except Exception:
+                cursor_line = ''
+            if check_snippet not in cursor_line:
+                break  # submitted (text no longer on the input line)
+            if time.time() >= next_resend:
+                self._log(f"Enter not received after {resend_delay:.0f}s — resending")
+                subprocess.run(
+                    ["tmux", "send-keys", "-t", target, "Enter"],
+                    capture_output=True
+                )
+                resend_delay = min(resend_delay * 2, 8.0)
+                next_resend = time.time() + resend_delay
+            poll = _next_poll_interval(poll, False)
+
+    # Sentinel returned by _wait_for_response when compaction is detected
+    _COMPACTION_SENTINEL = "__COMPACTION_DETECTED__"
+
+    def _wait_for_response(self, timeout=RESPONSE_TIMEOUT):
+        """Wait for Claude to finish responding and return the output"""
+        start_time = time.time()
+        baseline = self._capture_pane(200)
+        baseline_hash = hash(baseline)
+        baseline_compaction_count = baseline.count(COMPACTION_DONE)
+
+        last_content = ""
+        tail3_stable_since = time.time()
+        response_started = False
+        last_printed = 0
+        poll = POLL_MIN
+
+        while time.time() - start_time < timeout:
+            time.sleep(poll)
+
+            current = self._capture_pane(200)
+            # A2: poll court tant que le pane change, allongé dès stabilité
+            poll = _next_poll_interval(poll, current != last_content)
+
+            # Detect queued message (Claude busy with bashes, prompt not processed)
+            if QUEUED_MSG in current:
+                self._log("QUEUED MESSAGE detected — prompt not processed, returning")
+                return current
+
+            # Detect plan mode approval prompt — signal blue, wait for user
+            if APPROVAL_PROMPT in current:
+                if not getattr(self, '_plan_approval_logged', False):
+                    self._log("PLAN APPROVAL DETECTED — waiting for user")
+                    self._plan_approval_logged = True
+                try:
+                    self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", "status", "waiting_approval")
+                except Exception:
+                    pass
+
+            # Detect and dismiss Claude session survey
+            if SURVEY_PROMPT in current:
+                self._log("SURVEY DETECTED — auto-dismissing (0)")
+                self._send_keys("0")
+                time.sleep(2)
+                last_content = ""
+                tail3_stable_since = time.time()
+                last_printed = 0
+                poll = POLL_MIN
+                continue
+
+            # Detect context compaction — only if NEW (more occurrences than baseline)
+            if current.count(COMPACTION_DONE) > baseline_compaction_count:
+                self._log("COMPACTION DETECTED in tmux output")
+                # Wait for Claude to finish compacting and show prompt
+                for _ in range(30):
+                    time.sleep(POLL_INTERVAL)
+                    current = self._capture_pane(200)
+                    current_lines = current.strip().split('\n')
+                    last_line = current_lines[-1].strip() if current_lines else ""
+                    for marker in PROMPT_MARKERS:
+                        if last_line.endswith(marker) or last_line == marker:
+                            return self._COMPACTION_SENTINEL
+                return self._COMPACTION_SENTINEL
+
+            if current != last_content:
+                last_content = current
+                self._plan_approval_logged = False
+                if hash(current) != baseline_hash:
+                    response_started = True
+
+                current_lines = current.strip().split('\n')
+                if len(current_lines) > last_printed:
+                    for line in current_lines[last_printed:][-5:]:
+                        if line.strip():
+                            print(f"  {line}", flush=True)
+                    last_printed = len(current_lines)
+
+            # Check if Claude is at a ready prompt (last non-empty lines show known status)
+            # status_line = normal mode → ready
+            # plan_mode = plan mode → ready only after extended stability
+            non_empty = [l for l in current.split('\n') if l.strip()]
+            tail3 = ' '.join(non_empty[-3:])
+
+            # Stability based on prompt area only (last 3 non-empty lines)
+            # Background bashes and spinners change upper content but prompt area stays stable
+            # A2: stabilité mesurée en secondes (équivalent des anciens compteurs à 1s/poll)
+            tail3_key = tail3
+            if tail3_key != getattr(self, '_last_tail3_key', ''):
+                self._last_tail3_key = tail3_key
+                tail3_stable_since = time.time()
+            stable_secs = time.time() - tail3_stable_since
+
+            at_normal_prompt = STATUS_LINE in tail3 or (PLAN_MODE in tail3 and stable_secs >= STABLE_PLAN_SECS)
+
+            current_lines = current.strip().split('\n')
+            last_line = current_lines[-1].strip() if current_lines else ""
+
+            if at_normal_prompt:
+                # Check prompt marker on last line OR last few non-empty lines
+                # (status bar with bashes count may be below the prompt marker)
+                has_marker = False
+                for marker in PROMPT_MARKERS:
+                    if last_line.endswith(marker) or last_line == marker:
+                        has_marker = True
+                        break
+                if not has_marker:
+                    for line in non_empty[-3:]:
+                        stripped = line.strip()
+                        for marker in PROMPT_MARKERS:
+                            if stripped == marker:
+                                has_marker = True
+                                break
+                        if has_marker:
+                            break
+
+                if has_marker and response_started and stable_secs >= STABLE_READY_SECS:
+                    response = '\n'.join(current_lines[:-1]).strip()
+                    return response
+
+                if stable_secs > STABLE_FALLBACK_SECS and response_started:
+                    response = '\n'.join(current_lines).strip()
+                    for marker in PROMPT_MARKERS:
+                        if response.endswith(marker):
+                            response = response[:-len(marker)].strip()
+                    return response
+
+        self._log("WARNING: Response timeout")
+        return self._capture_pane(100)
+
+    def _run_claude(self, prompt):
+        """Send prompt to Claude via tmux and capture response"""
+        self._log(f"Sending to Claude: {prompt[:60]}...")
+        self._log_event("prompt", prompt[:120])
+
+        print(f"\n{'─'*60}", flush=True)
+        print(f"📤 CLAUDE (tmux interactive):", flush=True)
+        print(f"{'─'*60}", flush=True)
+
+        self._send_keys(prompt)
+
+        # Append prompt to .history file (like a user typing in the terminal)
+        try:
+            prompt_path = self._find_prompt_file()
+            if prompt_path:
+                history_file = Path(prompt_path).parent / f"{self.agent_id}.history"
+                from datetime import datetime
+                ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                with open(history_file, 'a') as hf:
+                    hf.write(f"{ts} | {prompt}\n")
+        except Exception as e:
+            self._log(f"History append failed: {e}")
+
+        response = self._wait_for_response()
+
+        print(f"{'─'*60}\n", flush=True)
+
+        return response
+
+    def _set_redis_status(self):
+        """Update status in Redis"""
+        try:
+            self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", mapping={
+                "status": self.state.value,
+                "last_seen": int(time.time()),
+                "queue_size": self.prompt_queue.qsize(),
+                "tasks_completed": self.tasks_completed,
+                "messages_since_reload": self.messages_since_reload,
+                "mode": "tmux-interactive"
+            })
+        except redis.ConnectionError:
+            pass
+
+    def _start_health_server(self):
+        """Démarre le serveur HTTP health endpoint — EF-001, CT-001.
+
+        Port = HEALTH_PORT_BASE + agent_id numérique (CA-001: configurable).
+        """
+        try:
+            numeric_id = int(self.agent_id.split('-')[0])
+        except (ValueError, IndexError):
+            numeric_id = 0
+        port = HEALTH_PORT_BASE + numeric_id
+
+        health_token = os.environ.get('HEALTH_TOKEN', '')
+        handler_class = type('Handler', (_HealthHandler,), {'agent_ref': self, 'health_token': health_token})
+        try:
+            server = http.server.HTTPServer(('127.0.0.1', port), handler_class)
+            server.timeout = 1
+            self._health_server = server
+            t = Thread(target=self._health_serve_loop, daemon=True, name="health_server")
+            t.start()
+            self._log(f"Health endpoint started on port {port} (EF-001)")
+        except OSError as e:
+            self._log(f"WARNING: Health server port {port} unavailable: {e}")
+
+    def _health_serve_loop(self):
+        """Boucle du serveur health — EF-001."""
+        while self.running and self._health_server:
+            try:
+                self._health_server.handle_request()
+            except Exception:
+                pass
+
+    def _derive_pane_state(self):
+        """B6: capture this agent's pane once and derive its dashboard state.
+
+        Runs in the bridge (1 process per agent) so the dashboard reads the
+        result from Redis instead of forking a multi-grep scan per cycle.
+        """
+        target = f"{self.session_name}:0.0"
+        try:
+            out = subprocess.run(
+                ["tmux", "capture-pane", "-t", target, "-p", "-J", "-S", "-30"],
+                capture_output=True, text=True, timeout=10).stdout
+            pane_cmd = subprocess.run(
+                ["tmux", "display-message", "-t", target, "-p", "#{pane_current_command}"],
+                capture_output=True, text=True, timeout=10).stdout.strip()
+        except Exception:
+            return None
+        return _parse_pane_state(out, pane_cmd, self.agent_id)
+
+    def _heartbeat_loop(self):
+        """Thread: heartbeat enrichi toutes les 10s — EF-003, CA-004.
+
+        Publie 7 champs sur mi:agent:{id}:heartbeat (CT-002, CT-009).
+        Champs: agent_id, timestamp, status, memory_mb, cpu_percent,
+                messages_processed, last_message_ts.
+        B6: publie aussi pane_state (JSON) + pane_state_ts dans le hash agent.
+        """
+        try:
+         while self.running:
+            try:
+                data = {
+                    "agent_id": self.agent_id,
+                    "timestamp": str(int(time.time())),
+                    "status": self.state.value,
+                    "messages_processed": str(self._messages_processed),
+                    "last_message_ts": str(self._last_message_ts),
+                }
+                # psutil metrics (CT-011)
+                if _PSUTIL_AVAILABLE:
+                    proc = psutil.Process()
+                    data["memory_mb"] = str(round(proc.memory_info().rss / 1048576, 1))
+                    data["cpu_percent"] = str(proc.cpu_percent(interval=0))
+                else:
+                    data["memory_mb"] = "0"
+                    data["cpu_percent"] = "0"
+
+                # Publier heartbeat enrichi (CT-002: mi: prefix, CT-009: XTRIM)
+                self.redis.xadd(
+                    f"{MONITORING_PREFIX}:agent:{self.agent_id}:heartbeat",
+                    data,
+                    maxlen=STREAM_MAXLEN, approximate=True
+                )
+                self._last_heartbeat_ts = int(time.time())
+
+                # Update last_seen in agent hash so dashboard doesn't show disconnected
+                self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", "last_seen", int(time.time()))
+
+                # B6: publish pane-derived state so the dashboard skips tmux scans
+                pane_state = self._derive_pane_state()
+                if pane_state is not None:
+                    self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", mapping={
+                        "pane_state": json.dumps(pane_state),
+                        "pane_state_ts": int(time.time()),
+                    })
+
+                # Enregistrer dans métriques (R-INTEGRATE)
+                if self.metrics:
+                    self.metrics.record_heartbeat(self.agent_id, data)
+
+            except redis.ConnectionError:
+                self._log("Heartbeat: Redis connection lost")
+            except Exception as e:
+                self._log(f"Heartbeat error: {e}")
+
+            time.sleep(HEARTBEAT_INTERVAL)
+        except Exception as e:
+            import traceback
+            self._log(f"FATAL: heartbeat crashed: {e}")
+            self._log(traceback.format_exc())
+        self._log("WARNING: heartbeat thread exiting")
+
+    def _ensure_group(self):
+        """A4: create the inbox consumer group (idempotent, ignore BUSYGROUP)."""
+        try:
+            self.redis.xgroup_create(self.inbox, self.group, id='$', mkstream=True)
+        except redis.ResponseError as e:
+            if 'BUSYGROUP' not in str(e):
+                raise
+
+    def _ack_inbox(self, msg_id):
+        """A4: acknowledge an inbox message after successful handling."""
+        try:
+            self.redis.xack(self.inbox, self.group, msg_id)
+        except Exception as e:
+            self._log(f"XACK error for {msg_id}: {e}")
+
+    def _handle_inbox_message(self, msg_id, data):
+        """Handle one inbox stream message.
+
+        Prompts carry ack_id and are XACK'd by _process_queue after the
+        response is published; other types are XACK'd immediately.
+        """
+        if not data:
+            # Entry trimmed from stream while pending — nothing to replay
+            self._ack_inbox(msg_id)
+            return
+
+        # R-INTEGRATE: record inbound message
+        if self.metrics:
+            self.metrics.record_message(self.agent_id, "inbound")
+
+        msg_type = data.get('type', 'prompt')
+
+        if msg_type == 'prompt' or 'prompt' in data:
+            raw_from = data.get('from_agent', 'unknown')
+            safe_from = raw_from if re.fullmatch(
+                rf'{AGENT_ID_PATTERN}|cli|manual|legacy|unknown|auto_init'
+                rf'|compaction_reload|compaction_resume|response_{AGENT_ID_PATTERN}',
+                str(raw_from)) else 'unknown'
+            self.prompt_queue.put({
+                'prompt': data.get('prompt', ''),
+                'from_agent': safe_from,
+                'msg_id': msg_id,
+                'ack_id': msg_id,
+                'correlation_id': data.get('correlation_id', ''),
+                'source': 'redis'
+            })
+            self._log(f"<- Queued from {safe_from}: {data.get('prompt', '')[:50]}...")
+        elif msg_type == 'reload_prompt':
+            self._log("Received reload_prompt — reloading agent personality")
+            self._reload_prompt()
+            self._ack_inbox(msg_id)
+        elif msg_type == 'response':
+            from_id = data.get('from_agent', '?')
+            response_text = data.get('response', '')
+            raw_chunk = data.get('chunk', '')
+            chunk_info = raw_chunk if re.fullmatch(r'[\w\-/. ]{0,30}', str(raw_chunk)) else ''
+            is_complete = data.get('complete', 'true')
+
+            self._log(f"<- Response from {from_id} ({len(response_text)} chars){' ['+chunk_info+']' if chunk_info else ''}")
+
+            header = f"[FROM {from_id}]"
+            if chunk_info:
+                header += f" [{chunk_info}]"
+
+            notification = f"{header}\n{response_text}\n[/{from_id}]"
+            self.prompt_queue.put({
+                'prompt': notification,
+                'from_agent': f'response_{from_id}',
+                'msg_id': f"response-{int(time.time())}",
+                'source': 'response'
+            })
+            self._ack_inbox(msg_id)
+        else:
+            self._log(f"<- Unknown message type '{msg_type}' from {data.get('from_agent', '?')} — acked")
+            self._ack_inbox(msg_id)
+
+    def _listen_redis(self):
+        """Thread: listen to Redis inbox via consumer group (A4: XREADGROUP + XACK).
+
+        On startup, unacked messages from a previous run (crash) are drained
+        first (id '0'), then new messages are consumed (id '>').
+        """
+        group_ready = False
+        pending_drained = False
+        try:
+         while self.running:
+            try:
+                if not group_ready:
+                    self._ensure_group()
+                    group_ready = True
+
+                if not pending_drained:
+                    while self.running:
+                        result = self.redis.xreadgroup(
+                            self.group, self.consumer, {self.inbox: '0'}, count=10)
+                        messages = result[0][1] if result else []
+                        if not messages:
+                            break
+                        self._log(f"Recovering {len(messages)} pending message(s) from previous run")
+                        for msg_id, data in messages:
+                            self._handle_inbox_message(msg_id, data)
+                    pending_drained = True
+
+                result = self.redis.xreadgroup(
+                    self.group, self.consumer, {self.inbox: '>'}, block=2000, count=1)
+                if result:
+                    stream, messages = result[0]
+                    for msg_id, data in messages:
+                        self._handle_inbox_message(msg_id, data)
+            except redis.ConnectionError:
+                self._log("Redis connection lost, reconnecting...")
+                time.sleep(2)
+            except Exception as e:
+                self._log(f"Redis error: {e}")
+                # R-INTEGRATE: record error
+                if self.metrics:
+                    self.metrics.record_error(self.agent_id, type(e).__name__, str(e))
+                time.sleep(1)
+        except Exception as e:
+            import traceback
+            self._log(f"FATAL: redis_listener crashed: {e}")
+            self._log(traceback.format_exc())
+        self._log("WARNING: redis_listener thread exiting")
+
+    def _listen_legacy(self):
+        """Thread: listen to legacy Redis inbox (List format: A:inject:{id})
+
+        Supports FROM:xxx| prefix to identify sender:
+          RPUSH A:inject:300 "FROM:100|do something"
+
+        A4: legacy Lists stay best-effort (BLPOP pops destructively, no ack) —
+        a crash between BLPOP and processing loses the message. Use Streams.
+        """
+        try:
+         while self.running:
+            try:
+                result = self.redis.blpop(self.legacy_inbox, timeout=2)
+                if result:
+                    _, message = result
+
+                    # R-INTEGRATE: record inbound message
+                    if self.metrics:
+                        self.metrics.record_message(self.agent_id, "inbound")
+
+                    from_agent = 'legacy'
+                    prompt = message
+                    if message.startswith('FROM:'):
+                        parts = message.split('|', 1)
+                        if len(parts) == 2:
+                            raw_from = parts[0][5:]
+                            if re.fullmatch(rf'{AGENT_ID_PATTERN}|cli|manual', str(raw_from)):
+                                from_agent = raw_from
+                            prompt = parts[1]
+
+                    self.prompt_queue.put({
+                        'prompt': prompt,
+                        'from_agent': from_agent,
+                        'msg_id': f"legacy-{int(time.time())}",
+                        'source': 'legacy'
+                    })
+                    self._log(f"<- Queued from {from_agent}: {prompt[:50]}...")
+            except redis.ConnectionError:
+                time.sleep(2)
+            except Exception as e:
+                self._log(f"Legacy Redis error: {e}")
+                if self.metrics:
+                    self.metrics.record_error(self.agent_id, type(e).__name__, str(e))
+                time.sleep(1)
+        except Exception as e:
+            import traceback
+            self._log(f"FATAL: legacy_listener crashed: {e}")
+            self._log(traceback.format_exc())
+        self._log("WARNING: legacy_listener thread exiting")
+
+    def _process_queue(self):
+        """Thread: process prompt queue"""
+        try:
+         while self.running:
+            try:
+                task = self.prompt_queue.get(timeout=1)
+            except Empty:
+                continue
+
+            with self.state_lock:
+                self.state = State.BUSY
+                self.current_task = task
+
+            self._set_redis_status()
+            src = f"[{task.get('from_agent', 'local')}]"
+            self._log(f"-> Executing {src}: {task['prompt'][:80]}...")
+
+            # R-INTEGRATE: record task start
+            if self.metrics:
+                self.metrics.record_task_start(self.agent_id, task_id=task.get('msg_id'))
+
+            # Run prompt
+            try:
+                response = self._run_claude(task['prompt'])
+            except Exception as e:
+                self._log(f"ERROR running Claude: {e}")
+                if self.metrics:
+                    self.metrics.record_error(self.agent_id, type(e).__name__, str(e))
+                response = f"[ERROR] {e}"
+
+            # API error detection — retry with backoff (max 2 retries)
+            # A1: motifs externalisés dans markers.yaml (API_ERROR_PATTERNS)
+            retry_count = task.get('_retry_count', 0)
+            is_api_error = any(pat in response for pat in API_ERROR_PATTERNS)
+
+            if is_api_error and retry_count < 2:
+                self._log(f"API ERROR detected (retry {retry_count+1}/2), re-queuing prompt")
+                self._log_event("api_error_retry", f"retry={retry_count+1}")
+                try:
+                    self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", "status", "api_error_retry")
+                except Exception:
+                    pass
+                self.prompt_queue.put({
+                    'prompt': task['prompt'],
+                    'from_agent': task.get('from_agent', 'unknown'),
+                    'msg_id': task.get('msg_id', ''),
+                    'ack_id': task.get('ack_id'),
+                    'correlation_id': task.get('correlation_id', ''),
+                    '_retry_count': retry_count + 1,
+                    'source': task.get('source', 'retry')
+                })
+                with self.state_lock:
+                    self.current_task = None
+                    self.state = State.IDLE
+                self._set_redis_status()
+                time.sleep(RETRY_BACKOFF_SECS)
+                continue
+
+            # Compaction detected — re-queue with identity + context reminder
+            if response == self._COMPACTION_SENTINEL:
+                self._log(f"COMPACTION: re-queuing with identity + context reminder")
+                try:
+                    self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", "status", "context_compacted")
+                except Exception:
+                    pass
+
+                # Drain any stale compaction_resume messages from previous attempts
+                # (prevents message_2 from old round running before message_1 of new round)
+                kept = []
+                drained = 0
+                while not self.prompt_queue.empty():
+                    try:
+                        item = self.prompt_queue.get_nowait()
+                        if item.get('from_agent') == 'compaction_resume':
+                            drained += 1
+                        else:
+                            kept.append(item)
+                    except Empty:
+                        break
+                for item in kept:
+                    self.prompt_queue.put(item)
+                if drained:
+                    self._log(f"COMPACTION: drained {drained} stale resume messages from queue")
+
+                # Build resume: identity + history + current task (2 sequential messages)
+                prompt_path = self._find_prompt_file()
+                # Use original prompt unless this was already a resume attempt
+                if task.get('from_agent') == 'compaction_resume':
+                    original_prompt = task.get('_original_prompt', task['prompt'])
+                else:
+                    original_prompt = task['prompt']
+
+                # Read last timestamped entry from .history file
+                last_history = ""
+                try:
+                    if prompt_path:
+                        hf = Path(prompt_path).parent / f"{self.agent_id}.history"
+                        if hf.exists():
+                            for line in reversed(hf.read_text().strip().split('\n')):
+                                if line and line[:4].isdigit() and ' | ' in line[:25]:
+                                    last_history = line
+                                    break
+                except Exception:
+                    pass
+
+                # Message 1: reload identity
+                self.prompt_queue.put({
+                    'prompt': f"deviens agent {prompt_path}",
+                    'from_agent': 'compaction_resume',
+                    'msg_id': f"resume1_{int(time.time())}",
+                    '_original_prompt': original_prompt,
+                })
+
+                # Message 2: context reminder (queued, will run after msg 1)
+                parts = []
+                if last_history:
+                    parts.append(f"Dernière ligne de ton historique : \"{last_history}\"")
+                parts.append(f"Tu étais en train de travailler sur ce prompt : \"{original_prompt}\"")
+                parts.append("Continue.")
+                self.prompt_queue.put({
+                    'prompt': "\n".join(parts),
+                    'from_agent': 'compaction_resume',
+                    'msg_id': f"resume2_{int(time.time())}",
+                    'ack_id': task.get('ack_id'),
+                    'correlation_id': task.get('correlation_id', ''),
+                })
+
+                with self.state_lock:
+                    self.current_task = None
+                    self.state = State.IDLE
+                self._set_redis_status()
+                continue
+
+            # R-INTEGRATE: record task end
+            if self.metrics:
+                self.metrics.record_task_end(self.agent_id, task_id=task.get('msg_id'))
+
+            # Save to history
+            self.history.append({
+                'prompt': task['prompt'],
+                'response': response,
+                'from_agent': task.get('from_agent'),
+                'timestamp': int(time.time())
+            })
+
+            # Publish to Redis
+            msg_data = {
+                'response': response,
+                'from_agent': self.agent_id,
+                'to_agent': task.get('from_agent', ''),
+                'timestamp': int(time.time()),
+                'chars': len(response)
+            }
+            # F2: echo correlation_id so readers match response to request
+            if task.get('correlation_id'):
+                msg_data['correlation_id'] = task['correlation_id']
+            self.redis.xadd(self.outbox, msg_data, maxlen=IO_STREAM_MAXLEN, approximate=True)
+
+            # A4: ack only after the response is published to the outbox
+            if task.get('ack_id'):
+                self._ack_inbox(task['ack_id'])
+
+            # R-INTEGRATE: record outbound message
+            if self.metrics:
+                self.metrics.record_message(self.agent_id, "outbound")
+
+            # EF-003: update message counters
+            self._messages_processed += 1
+            self._last_message_ts = int(time.time())
+
+            # A7: no DONE/SCORE scraping of model output — completion signals
+            # go through the explicit channel only (scripts/done.sh → Redis)
+
+            # Notify sender if it was another agent
+            from_agent = task.get('from_agent')
+
+            if from_agent and from_agent not in ['manual', 'cli', 'auto_init', 'unknown', 'legacy', 'compaction_reload', 'compaction_resume']:
+                if not self._agent_alive(from_agent):
+                    self._log(f"ko response routing: '{from_agent}' not alive or invalid format — skipping")
+                else:
+                    try:
+                        MAX_CHUNK = 15000
+                        corr = task.get('correlation_id', '')
+
+                        if len(response) <= MAX_CHUNK:
+                            reply = {
+                                'response': response,
+                                'from_agent': self.agent_id,
+                                'type': 'response',
+                                'timestamp': int(time.time()),
+                                'complete': 'true'
+                            }
+                            if corr:
+                                reply['correlation_id'] = corr
+                            self.redis.xadd(f"{MA_PREFIX}:agent:{from_agent}:inbox", reply,
+                                            maxlen=IO_STREAM_MAXLEN, approximate=True)
+                        else:
+                            chunks = [response[i:i+MAX_CHUNK] for i in range(0, len(response), MAX_CHUNK)]
+                            for i, chunk in enumerate(chunks):
+                                reply = {
+                                    'response': chunk,
+                                    'from_agent': self.agent_id,
+                                    'type': 'response',
+                                    'timestamp': int(time.time()),
+                                    'chunk': f"{i+1}/{len(chunks)}",
+                                    'complete': 'true' if i == len(chunks)-1 else 'false'
+                                }
+                                if corr:
+                                    reply['correlation_id'] = corr
+                                self.redis.xadd(f"{MA_PREFIX}:agent:{from_agent}:inbox", reply,
+                                                maxlen=IO_STREAM_MAXLEN, approximate=True)
+
+                        self._log(f"ok -> response sent to {from_agent} ({len(response)} chars)")
+                    except Exception as e:
+                        self._log(f"ko response to {from_agent}: {e}")
+                        if self.metrics:
+                            self.metrics.record_error(self.agent_id, "SendError", str(e))
+
+            self._log(f"Response sent ({len(response)} chars)")
+            self.tasks_completed += 1
+            self.messages_since_reload += 1
+
+            with self.state_lock:
+                self.current_task = None
+                self.state = State.IDLE
+
+            self._set_redis_status()
+
+            # Check for background bashes after response
+            try:
+                pane = self._capture_pane(10)
+                if "bashes" in pane or "bash" in pane.split('\n')[-1]:
+                    self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", "status", "has_bashes")
+                    self._log("Background bashes detected — status set to has_bashes")
+            except Exception:
+                pass
+        except Exception as e:
+            import traceback
+            self._log(f"FATAL: queue_processor crashed: {e}")
+            self._log(traceback.format_exc())
+        self._log("WARNING: queue_processor thread exiting")
+
+    def _resolve_triangle(self, to_agent):
+        """Auto-resolve bare suffix to full triangle ID based on sender's triangle.
+        E.g. sender=388-388, target=188 → 388-188"""
+        if '-' not in str(to_agent) and '-' in str(self.agent_id):
+            triangle = str(self.agent_id).split('-')[0]
+            resolved = f"{triangle}-{to_agent}"
+            self._log(f"WARNING: auto-resolved {to_agent} -> {resolved} (sender {self.agent_id} in triangle {triangle})")
+            return resolved
+        return to_agent
+
+    def _agent_alive(self, agent_id: str) -> bool:
+        """Return True if agent_id is valid format and has a running tmux session."""
+        if not is_valid_agent_id(agent_id):
+            return False
+        try:
+            result = subprocess.run(
+                ['tmux', 'has-session', '-t', f'{MA_PREFIX}-agent-{agent_id}'],
+                capture_output=True
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+
+    def send_to_agent(self, to_agent, prompt):
+        """Send message to another agent. Returns 'ok' or 'ko'."""
+        if to_agent == 'all':
+            sent_count = 0
+            for key in self.redis.scan_iter(f'{MA_PREFIX}:agent:*', count=200):
+                parts = key.split(':')
+                if len(parts) == 3 and is_valid_agent_id(parts[2]):
+                    target_id = parts[2]
+                    if target_id != self.agent_id:
+                        self.redis.xadd(f"{MA_PREFIX}:agent:{target_id}:inbox", {
+                            'prompt': prompt,
+                            'from_agent': self.agent_id,
+                            'timestamp': int(time.time())
+                        }, maxlen=IO_STREAM_MAXLEN, approximate=True)
+                        sent_count += 1
+            self._log(f"ok -> broadcast to {sent_count} agents: {prompt[:60]}...")
+            return 'ok'
+        else:
+            to_agent = self._resolve_triangle(to_agent)
+            try:
+                self.redis.xadd(f"{MA_PREFIX}:agent:{to_agent}:inbox", {
+                    'prompt': prompt,
+                    'from_agent': self.agent_id,
+                    'timestamp': int(time.time())
+                }, maxlen=IO_STREAM_MAXLEN, approximate=True)
+            except Exception as e:
+                self._log(f"ko send_to_agent {to_agent}: {e}")
+                return 'ko'
+            if not self._agent_alive(to_agent):
+                self._log(f"ko: agent {to_agent} not running — msg in orphan queue")
+                return 'ko'
+            self._log(f"ok -> agent {to_agent}: {prompt[:60]}...")
+            return 'ok'
+
+    def run(self):
+        """Main loop - also accepts stdin commands"""
+        self._log("Ready. Monitoring Redis and stdin...")
+
+        # Auto-load prompt
+        prompt_path = self._find_prompt_file()
+        if prompt_path:
+            # Read last timestamped entry from .history for context on restart
+            last_history = ""
+            try:
+                hf = Path(prompt_path).parent / f"{self.agent_id}.history"
+                if hf.exists() and hf.stat().st_size > 0:
+                    for line in reversed(hf.read_text().strip().split('\n')):
+                        if line and line[:4].isdigit() and ' | ' in line[:25]:
+                            last_history = line
+                            break
+            except Exception:
+                pass
+
+            if self._is_x45_agent(prompt_path):
+                files_list = self._get_x45_files(prompt_path)
+
+                if files_list:
+                    files_str = ", ".join(files_list)
+                    self._log(f"Auto-loading x45 agent: {prompt_path} ({len(files_list)} files)")
+                    # Message 1: become the agent
+                    self.prompt_queue.put({
+                        'prompt': f"Lis ces fichiers dans l'ordre et deviens cet agent : {files_str}",
+                        'from_agent': 'auto_init',
+                        'msg_id': f"init_{int(time.time())}",
+                    })
+                    # Message 2: history context (sent after agent has loaded)
+                    if last_history:
+                        self.prompt_queue.put({
+                            'prompt': f"Dernière ligne de ton historique : \"{last_history}\"\nContinue.",
+                            'from_agent': 'auto_init',
+                            'msg_id': f"init_resume_{int(time.time())}",
+                        })
+                else:
+                    self._log(f"WARNING: x45 dir {prompt_path} found but no system.md or {self.agent_id}-system.md")
+            else:
+                self._log(f"Auto-loading: {prompt_path}")
+                # Message 1: become the agent
+                self.prompt_queue.put({
+                    'prompt': f"deviens agent {prompt_path}",
+                    'from_agent': 'auto_init',
+                    'msg_id': f"init_{int(time.time())}",
+                })
+                # Message 2: history context (sent after agent has loaded)
+                if last_history:
+                    self.prompt_queue.put({
+                        'prompt': f"Dernière ligne de ton historique : \"{last_history}\"\nContinue.",
+                        'from_agent': 'auto_init',
+                        'msg_id': f"init_resume_{int(time.time())}",
+                    })
+
+        try:
+            import select
+            while self.running:
+                if select.select([sys.stdin], [], [], 0.5)[0]:
+                    line = sys.stdin.readline()
+                    if not line:
+                        break
+                    line = line.strip()
+                    if line:
+                        if line.startswith('/'):
+                            self._handle_command(line)
+                        else:
+                            self.prompt_queue.put({
+                                'prompt': line,
+                                'from_agent': 'manual',
+                                'msg_id': f"manual-{int(time.time())}",
+                            })
+        except KeyboardInterrupt:
+            self._log("Shutting down...")
+        finally:
+            self.running = False
+            self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", "status", "stopped")
+            if self._health_server:
+                self._health_server.server_close()
+            self.logfile.close()
+
+    def _reload_prompt(self):
+        """Reload agent prompt file after context compaction (NO /reset — just re-inject prompt)"""
+        prompt_path = self._find_prompt_file()
+        if prompt_path:
+            self._log(f"RELOAD: {prompt_path} (re-inject prompt, no /reset)")
+            self.messages_since_reload = 0
+
+            if self._is_x45_agent(prompt_path):
+                files_list = self._get_x45_files(prompt_path)
+                if files_list:
+                    files_str = ", ".join(files_list)
+                    self.prompt_queue.put({
+                        'prompt': f"Lis ces fichiers dans l'ordre et deviens cet agent : {files_str}",
+                        'from_agent': 'compaction_reload',
+                        'msg_id': f"reload_{int(time.time())}",
+                    })
+            else:
+                self.prompt_queue.put({
+                    'prompt': f"deviens agent {prompt_path}",
+                    'from_agent': 'compaction_reload',
+                    'msg_id': f"reload_{int(time.time())}",
+                })
+            self._set_redis_status()
+
+    def _resolve_prompts_dir(self, prompts_dir, numeric_id):
+        """Resolve a numeric ID to its prompts directory.
+
+        Handles both plain (341/) and verbose (341-analyse-archi-.../) names.
+        R-REGTEST: guard against missing prompts_dir.
+        """
+        exact = prompts_dir / numeric_id
+        if exact.is_dir():
+            return exact
+        if not prompts_dir.is_dir():
+            return None
+        for d in prompts_dir.iterdir():
+            if d.is_dir() and re.match(rf'^{re.escape(numeric_id)}-', d.name):
+                return d
+        return None
+
+    def _find_prompt_file(self):
+        """Find prompt file for this agent.
+
+        Supports three formats:
+        - x45 triangles (new): prompts/{dir}/{id}.md symlink
+        - x45 mode (old): prompts/{id}/system.md (directory with 3 files)
+        - Pipeline standard: prompts/{id}-*.md (flat file)
+        """
+        prompts_dir = BASE_DIR / "prompts"
+
+        parent_id = self.agent_id.split('-')[0] if '-' in self.agent_id else self.agent_id
+
+        parent_dir = self._resolve_prompts_dir(prompts_dir, parent_id)
+
+        if parent_dir:
+            # x45/z21: {id}.md entry point (symlink to AGENT.md)
+            x45_entry = parent_dir / f"{self.agent_id}.md"
+            if x45_entry.exists():
+                return str(x45_entry)
+
+            # x45/z21: {id}-system.md
+            x45_system = parent_dir / f"{self.agent_id}-system.md"
+            if x45_system.exists():
+                return str(parent_dir)
+
+            # old x45: system.md
+            system_md = parent_dir / "system.md"
+            if system_md.exists():
+                return str(parent_dir)
+
+            # mono: flat .md file inside directory (e.g. 900-architect-chat/900-architect-chat.md)
+            mono_matches = list(parent_dir.glob(f"{parent_id}-*.md"))
+            if mono_matches:
+                return str(mono_matches[0])
+
+        if '-' in self.agent_id and parent_dir:
+            sat_system = parent_dir / f"{self.agent_id}-system.md"
+            if sat_system.exists():
+                return str(parent_dir)
+
+        pattern = f"{self.agent_id}-*.md"
+        matches = [m for m in prompts_dir.glob(pattern) if m.is_file()]
+        if matches:
+            return str(matches[0])
+        return None
+
+    def _is_x45_agent(self, prompt_path):
+        """Check if prompt_path is an x45 directory (vs .md file)."""
+        return Path(prompt_path).is_dir()
+
+    def _get_x45_files(self, prompt_path):
+        """Get the ordered list of x45 files to load for this agent."""
+        p = Path(prompt_path)
+        aid = self.agent_id
+        files_list = []
+
+        for candidate in [p.parent / "RULES.md", p / "RULES.md"]:
+            if candidate.exists():
+                files_list.append(str(candidate))
+                break
+
+        for candidate in [p / f"{aid}.md", p.parent / "AGENT.md", p / "AGENT.md"]:
+            if candidate.exists():
+                files_list.append(str(candidate))
+                break
+
+        for candidate in [p / f"{aid}-system.md", p / "system.md"]:
+            if candidate.exists():
+                files_list.append(str(candidate))
+                break
+
+        for candidate in [p / f"{aid}-memory.md", p / "memory.md"]:
+            if candidate.exists():
+                files_list.append(str(candidate))
+                break
+
+        for candidate in [p / f"{aid}-methodology.md", p / "methodology.md"]:
+            if candidate.exists():
+                files_list.append(str(candidate))
+                break
+
+        return files_list
+
+    def _handle_command(self, line):
+        """Handle slash commands"""
+        if line == '/status':
+            self._log(f"State: {self.state.value} | Queue: {self.prompt_queue.qsize()} | Tasks: {self.tasks_completed}")
+        elif line == '/queue':
+            self._log(f"Queue size: {self.prompt_queue.qsize()}")
+        elif line.startswith('/send '):
+            parts = line[6:].split(' ', 1)
+            if len(parts) == 2:
+                self.send_to_agent(parts[0], parts[1])
+            else:
+                self._log("Usage: /send <agent_id> <message>")
+        elif line == '/help':
+            self._log("Commands: /status /queue /send <id> <msg> /help")
+        else:
+            self._log(f"Unknown command: {line}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description='TmuxAgent - Bridge for interactive Claude in tmux')
+    parser.add_argument('agent_id', help='Agent ID (e.g., 300)')
+    args = parser.parse_args()
+
+    agent = TmuxAgent(args.agent_id)
+    agent.run()
+
+
+if __name__ == "__main__":
+    main()
