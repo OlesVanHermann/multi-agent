@@ -68,6 +68,21 @@ def _ws_origin_ok(websocket: WebSocket) -> bool:
     return origin in _WS_ALLOWED_ORIGINS
 
 
+async def _reject(websocket: WebSocket, code: int) -> None:
+    """Deliver a custom close code to the browser.
+
+    A close BEFORE accept() is turned into an HTTP 403 handshake failure by
+    uvicorn — the browser never receives the 4xxx code and reports a generic
+    1006, so the UI shows 'disconnected' instead of the real cause. Accepting
+    first, then closing, sends a proper close frame carrying the code.
+    """
+    try:
+        await websocket.accept()
+        await websocket.close(code=code)
+    except Exception:
+        pass
+
+
 class ConnectionManager:
     """Manage WebSocket connections"""
 
@@ -116,7 +131,7 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
     """
     client_ip = websocket.headers.get("x-real-ip") or (websocket.client.host if websocket.client else "unknown")
     if not await _check_rate_limit(client_ip):
-        await websocket.close(code=4002)
+        await _reject(websocket, 4002)
         return
     if not _ws_origin_ok(websocket):
         await websocket.close(code=1008)
@@ -126,14 +141,14 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
         return
     if not await _ws_authenticated(websocket):
         print(f"[ws] REJECTED agent={agent_id} from={websocket.client}")
-        await websocket.close(code=4001)
+        await _reject(websocket, 4001)
         return
     base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
     if base_id == "000":
-        await websocket.close(code=4005)
+        await _reject(websocket, 4005)
         return
     if len(_ws_agent_connections) >= _WS_AGENT_MAX:
-        await websocket.close(code=1013)
+        await _reject(websocket, 1013)
         return
     print(f"[ws] ACCEPTED agent={agent_id} from={websocket.client}")
     await websocket.accept()

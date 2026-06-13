@@ -74,6 +74,7 @@ do_start() {
     cd "$WEB_DIR/backend"
     MA_PREFIX=$MA_PREFIX \
         python3 -m uvicorn multi_agent.backend:app --host 127.0.0.1 --port 8050 \
+        --ws-ping-interval 25 --ws-ping-timeout 90 \
         >> "$LOG_DIR/dashboard.log" 2>&1 &
     DASHBOARD_PID=$!
     echo "$DASHBOARD_PID" > "$PID_FILE"

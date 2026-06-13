@@ -10,4 +10,4 @@ COPY multi_agent/ ./multi_agent/
 
 EXPOSE 8090
 
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8090"]
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8090", "--ws-ping-interval", "25", "--ws-ping-timeout", "90"]

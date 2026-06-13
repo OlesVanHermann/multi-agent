@@ -15,11 +15,32 @@ export function useAgentWebSocket({ agentId, pollInterval, ensureFreshToken, han
   const wsRef = useRef(null)
   const reconnectTimeoutRef = useRef(null)
   const wakeReconnectRef = useRef(null)
+  const disconnectTimerRef = useRef(null)
 
   // Load and connect
   useEffect(() => {
     if (!agentId) return
     const log = createLogger(`Terminal:${agentId}`)
+
+    const clearDisconnectTimer = () => {
+      if (disconnectTimerRef.current) { clearTimeout(disconnectTimerRef.current); disconnectTimerRef.current = null }
+    }
+    // Grace period before showing the red 'disconnected' badge. Fast reconnects
+    // (wake detector, watchdog, hide/show — median gap ~0.5s) shouldn't flash red.
+    // Mapped error states (jwt/rate/forbidden/overloaded) are shown immediately;
+    // a real outage still turns red after 3s (reconnect attempts keep failing).
+    const applyWsState = (s) => {
+      if (s === 'disconnected') {
+        if (disconnectTimerRef.current) return  // grace already pending — keep it
+        disconnectTimerRef.current = setTimeout(() => {
+          disconnectTimerRef.current = null
+          setWsState('disconnected')
+        }, 3000)
+      } else {
+        clearDisconnectTimer()
+        setWsState(s)
+      }
+    }
 
     setWsState('disconnected')
     if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current)
@@ -55,7 +76,10 @@ export function useAgentWebSocket({ agentId, pollInterval, ensureFreshToken, han
       if (document.hidden) return  // Don't connect if tab is hidden
       const token = await ensureFreshToken()
       if (!token) {
-        reconnectTimeoutRef.current = setTimeout(() => connect(), 1000)
+        reconnectTimeoutRef.current = setTimeout(() => {
+          reconnectTimeoutRef.current = null  // clear fired timer so scheduleReconnect/visibility/online aren't blocked
+          connect()
+        }, 1000)
         return
       }
       // B4 : ticket à usage unique demandé à chaque (re)connexion ;
@@ -72,7 +96,7 @@ export function useAgentWebSocket({ agentId, pollInterval, ensureFreshToken, han
           ws.close()
           return
         }
-        setWsState('live')
+        applyWsState('live')
         log.ws('open', { agentId })
         startHeartbeat(ws)
       }
@@ -114,10 +138,10 @@ export function useAgentWebSocket({ agentId, pollInterval, ensureFreshToken, han
           1013: 'overloaded', // Server overloaded (max connections)
         }
         const newState = codeToState[event.code] || 'disconnected'
-        setWsState(newState)
+        applyWsState(newState)
         log.ws('close', { agentId, code: event.code, state: newState })
         if (wsRef.current === ws) wsRef.current = null  // clear stale ref so handleVisibility can reconnect
-        scheduleReconnect()
+        if (newState !== 'forbidden') scheduleReconnect()  // 4005 (agent 000) is permanent — don't hammer every 2s
       }
 
       ws.onerror = () => {
@@ -135,7 +159,7 @@ export function useAgentWebSocket({ agentId, pollInterval, ensureFreshToken, han
       clearHeartbeat()
       const ws = wsRef.current
       wsRef.current = null
-      setWsState('disconnected')
+      applyWsState('disconnected')
       if (ws) {
         intentionalClose = true
         try { ws.close() } catch {}
@@ -158,7 +182,8 @@ export function useAgentWebSocket({ agentId, pollInterval, ensureFreshToken, han
           wsRef.current.close()
           wsRef.current = null
         }
-        setWsState('disconnected')
+        clearDisconnectTimer()
+        setWsState('disconnected')  // tab hidden: invisible to user, mark immediately
       } else {
         intentionalClose = false
         if (!isLive(wsRef.current) && !reconnectTimeoutRef.current) forceReconnect()
@@ -178,6 +203,7 @@ export function useAgentWebSocket({ agentId, pollInterval, ensureFreshToken, han
       document.removeEventListener('visibilitychange', handleVisibility)
       window.removeEventListener('online', handleOnline)
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current)
+      clearDisconnectTimer()
       intentionalClose = true
       clearHeartbeat()
       wakeReconnectRef.current = null

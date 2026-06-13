@@ -32,7 +32,7 @@ if [ "$MODE" = "dev" ]; then
 
     echo "[backend] Starting FastAPI on :8050..."
     cd "$SCRIPT_DIR/backend"
-    MA_PREFIX="${MA_PREFIX:-A}" python3 -m uvicorn multi_agent.backend:app --host 127.0.0.1 --port 8050 --reload &
+    MA_PREFIX="${MA_PREFIX:-A}" python3 -m uvicorn multi_agent.backend:app --host 127.0.0.1 --port 8050 --ws-ping-interval 25 --ws-ping-timeout 90 --reload &
     BACKEND_PID=$!
 
     echo ""
@@ -57,7 +57,7 @@ else
 
     echo "[backend] Starting FastAPI on :8050..."
     cd "$SCRIPT_DIR/backend"
-    MA_PREFIX="${MA_PREFIX:-A}" python3 -m uvicorn multi_agent.backend:app --host 127.0.0.1 --port 8050
+    MA_PREFIX="${MA_PREFIX:-A}" python3 -m uvicorn multi_agent.backend:app --host 127.0.0.1 --port 8050 --ws-ping-interval 25 --ws-ping-timeout 90
 
     # Backend serves frontend from ../frontend/dist
 fi
