@@ -122,6 +122,12 @@ class _StubWebSocket:
         self.query_params = {}
         self.cookies = {}
         self.close_code = None
+        self.accepted = False
+
+    async def accept(self):
+        # _reject() accepte avant de fermer pour que le navigateur reçoive le
+        # vrai code 4xxx (au lieu d'un 1006 générique sur close-avant-accept).
+        self.accepted = True
 
     async def close(self, code=1000):
         self.close_code = code
