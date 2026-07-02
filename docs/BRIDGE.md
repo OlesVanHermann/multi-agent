@@ -167,6 +167,13 @@ Toute autre ligne stdin est traitée comme un prompt local (`from_agent=manual`)
 | `IO_STREAM_MAXLEN` | `10000` | Borne des streams inbox/outbox (A3) |
 | `AGENT_HEALTH_PORT_BASE` | `9100` | Port health = base + id numérique |
 | `HEALTH_TOKEN` | vide | Token du endpoint `/health` (vide = tout refusé) |
+| `VERIFY_MAX_RETRIES` | `3` | V3 : budget de retries verify par tâche |
+| `VERIFY_TIMEOUT` | `600` | V3 : timeout (s) d'un `verify_cmd` |
+| `PROJECT_DIR` | `$BASE/project` | V3 : cwd du verify + règles anti-hacking |
+| `WAL_MAXLEN` | `100000` | V3 : borne du stream `{MA_PREFIX}:wal` |
+| `WATCHDOG_STALL_THRESHOLD` | `600` | V3 : silence WAL (s) avant nudge watchdog |
+
+Boucle verify, WAL et détection de stall : voir `docs/V3.md`.
 
 ---
 

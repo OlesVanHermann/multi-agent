@@ -191,10 +191,13 @@ multi-agent/
 │
 ├── docs/                        # Documentation
 │   ├── BRIDGE.md                # Doc technique du bridge
+│   ├── V3.md                    # Boucle verify, WAL, stall, banc (V3)
 │   ├── AUTH.md                  # Guide authentification
 │   ├── FRONTEND.md              # Guide dashboard
 │   ├── AGENT_MONO.md            # Format agent mono
 │   └── AGENT_X45-*.md           # Docs x45 (architecture, conventions, etc.)
+│
+├── bench/                       # Banc de mesure V3 (tasks/, oracle/, run.sh)
 │
 ├── tests/                       # Tests unitaires framework
 │
