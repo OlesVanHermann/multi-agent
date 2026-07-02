@@ -95,8 +95,11 @@ sed -i "s/Multi-Agent System v[0-9]*\.[0-9]*/Multi-Agent System v${MAJOR}.${MINO
 sed -i "s/Multi-Agent System v[0-9]*\.[0-9]*\.[0-9]*/Multi-Agent System v${MAJOR}.${MINOR}.${PATCH_NUM}/" CLAUDE.md 2>/dev/null || true
 
 # Count changes since last tag
+# NB : les tags release sont des commits orphelins → la plage couvre tout
+# l'historique. Pas de `| head` ici : sous pipefail, git log tué par SIGPIPE
+# (141) avorterait le script en silence — la limite se passe à git (-n 10).
 COMMIT_COUNT=$(git rev-list --count "${CURRENT_TAG}..HEAD" 2>/dev/null || echo "0")
-CHANGES=$(git log --oneline "${CURRENT_TAG}..HEAD" 2>/dev/null | head -10)
+CHANGES=$(git log --oneline -n 10 "${CURRENT_TAG}..HEAD" 2>/dev/null || true)
 
 # C3 : manifest d'intégrité des fichiers framework (vérifié par upgrade.sh).
 # Basé sur les fichiers trackés git → identique au contenu d'un clone frais.
