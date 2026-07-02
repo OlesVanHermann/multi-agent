@@ -26,7 +26,7 @@ mets à jour le numéro de version, crées un tag Git, et publies la release.
 1. Vérifier que les tests passent :
    ```bash
    cd $PROJECT
-   python -m pytest tests/ -v
+   python3 -m pytest tests/ -v
    ```
 2. Si tests FAIL → arrêter :
    ```bash

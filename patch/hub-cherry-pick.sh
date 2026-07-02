@@ -95,7 +95,7 @@ echo -e "${BOLD}Result: ${GREEN}$SUCCESS picked${NC}, ${RED}$FAILED failed${NC}"
 if [ $FAILED -eq 0 ] && [ $SUCCESS -gt 0 ]; then
     echo ""
     echo -e "${GREEN}All commits applied successfully.${NC}"
-    echo -e "Next: ${CYAN}python -m pytest tests/ -v${NC} then ${CYAN}./patch/hub-release.sh${NC}"
+    echo -e "Next: ${CYAN}python3 -m pytest tests/ -v${NC} then ${CYAN}./patch/hub-release.sh${NC}"
 
     # Extract project name for cleanup suggestion
     PROJECT_BRANCH=$(echo "$BRANCH" | sed 's|hub/||')

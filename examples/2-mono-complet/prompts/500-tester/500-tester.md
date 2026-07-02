@@ -75,7 +75,7 @@ et valides quand tout passe.
 5. EXÉCUTER le test :
    ```bash
    cd $PROJECT
-   python -m pytest tests/test_{function}.py -v
+   python3 -m pytest tests/test_{function}.py -v
    ```
 6. Si PASS → MOVE vers done :
    ```bash

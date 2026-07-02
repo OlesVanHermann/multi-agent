@@ -510,8 +510,8 @@ Voir `patch/HOW_TO_PATCH.md` pour le workflow complet.
 ### Tests
 
 ```bash
-python -m pytest tests/ -v
-python -m pytest tests/ --cov=scripts --cov-report=term-missing
+python3 -m pytest tests/ -v
+python3 -m pytest tests/ --cov=scripts --cov-report=term-missing
 ```
 
 ### Release

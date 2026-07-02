@@ -140,8 +140,8 @@ indisponible. Appliqué :
 ## Tests
 
 ```bash
-python -m pytest tests/test_jwt_verification.py -v   # B2/G2 : issuer, audience, exp, signature
-python -m pytest tests/test_auth_cookies.py -v       # B3
-python -m pytest tests/test_ws_ticket.py -v          # B4
-python -m pytest tests/test_rate_limit_redis.py -v   # B5/G2 : compteur partagé + codes WS
+python3 -m pytest tests/test_jwt_verification.py -v   # B2/G2 : issuer, audience, exp, signature
+python3 -m pytest tests/test_auth_cookies.py -v       # B3
+python3 -m pytest tests/test_ws_ticket.py -v          # B4
+python3 -m pytest tests/test_rate_limit_redis.py -v   # B5/G2 : compteur partagé + codes WS
 ```

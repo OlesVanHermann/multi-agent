@@ -140,7 +140,7 @@ migrations v3 (bench/, deny, prompts canoniques) :
 ./patch/upgrade.sh          # passe 1 : installe le nouvel outillage (patch/, scripts/, tests/…)
 ./patch/upgrade.sh --dry-run   # contrôle : la section Migrations doit apparaître
 ./patch/upgrade.sh          # passe 2 : applique les migrations v3
-python -m pytest tests/ -q  # 559+ tests attendus verts
+python3 -m pytest tests/ -q  # 579+ tests attendus verts
 ```
 
 Les migrations étant idempotentes, relancer une passe de trop est sans effet.

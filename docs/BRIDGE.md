@@ -206,5 +206,5 @@ Boucle verify, WAL et détection de stall : voir `docs/V3.md`.
   `tests/test_adaptive_poll.py` (A2).
 
 ```bash
-python -m pytest tests/test_e2e_bridge.py -v
+python3 -m pytest tests/test_e2e_bridge.py -v
 ```

@@ -47,7 +47,7 @@ echo ""
 
 # 4. Run tests
 echo -e "${CYAN}[2/6] Running tests...${NC}"
-if python -m pytest tests/ -v 2>&1; then
+if python3 -m pytest tests/ -v 2>&1; then
     echo -e "${GREEN}Tests passed.${NC}"
 else
     echo -e "${RED}Tests FAILED. Aborting release.${NC}"

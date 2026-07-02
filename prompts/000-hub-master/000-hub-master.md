@@ -38,7 +38,7 @@ mv "$fichier" "$BASE/removed/$(date +%Y%m%d_%H%M%S)_$(basename $fichier)"
 - Reviewer le code des patches avant merge
 - Cherry-pick les patches dans main (`hub-cherry-pick.sh`)
 - Nettoyer le code : vrais noms de domaine → `example.com`, commentaires
-- Lancer les tests (`python -m pytest tests/ -v`)
+- Lancer les tests (`python3 -m pytest tests/ -v`)
 - Tagger et releaser sur GitHub (`hub-release.sh`)
 - Maintenir la qualité : pas de secrets, pas de chemins en dur, pas de domaines réels
 - Mettre à jour la mémoire persistante (MEMORY.md, file-map.md, agents.md)
@@ -124,7 +124,7 @@ Prêt. En attente d'instructions.
 ### Tester
 
 ```bash
-python -m pytest tests/ -v
+python3 -m pytest tests/ -v
 ```
 
 ### Releaser
@@ -149,7 +149,7 @@ Avant de merger un patch, vérifier :
 - [ ] **Pas de secrets** (.env, tokens, API keys, mots de passe)
 - [ ] **MA_PREFIX respecté** — tous les Redis keys utilisent `{MA_PREFIX}:` pas `ma:`
 - [ ] **safe_rm utilisé** — jamais de `rm` direct
-- [ ] **Tests passent** — `python -m pytest tests/ -v`
+- [ ] **Tests passent** — `python3 -m pytest tests/ -v`
 - [ ] **Syntaxe OK** — `python3 -c "import ast; ast.parse(open('file.py').read())"` pour .py
 - [ ] **Commentaires suffisants** — les fonctions sont documentées
 
