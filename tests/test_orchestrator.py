@@ -225,3 +225,90 @@ class TestMessageFormat:
         add_call = mock_redis.xadd.call_args
         key = add_call[0][0]
         assert key == f"{MA_PREFIX}:agent:300:inbox"
+
+
+# === V3/C1 : transport verify ===
+
+class TestVerifyTransport:
+    """V3 — verify_cmd/task_id sur le message inbox, [VERIFY_FAILED] → RuntimeError"""
+
+    def test_verify_cmd_carried_on_inbox_message(self, mock_redis):
+        from orchestrator import send_and_wait
+
+        mock_redis.xread.return_value = [
+            ("A:agent:300:outbox", [("1-0", {"response": "ok\n[VERIFY_GREEN]"})])
+        ]
+
+        response = send_and_wait(300, "implémente", from_agent=100,
+                                 verify_cmd="pytest -q", task_id="t1")
+
+        fields = mock_redis.xadd.call_args[0][1]
+        assert fields['verify_cmd'] == "pytest -q"
+        assert fields['task_id'] == "t1"
+        assert response.endswith("[VERIFY_GREEN]")
+
+    def test_task_id_defaults_to_correlation_prefix(self, mock_redis):
+        from orchestrator import send_and_wait
+
+        mock_redis.xread.return_value = [
+            ("A:agent:300:outbox", [("1-0", {"response": "ok"})])
+        ]
+
+        send_and_wait(300, "go", verify_cmd="exit 0")
+
+        fields = mock_redis.xadd.call_args[0][1]
+        assert fields['task_id'] == fields['correlation_id'][:8]
+
+    def test_no_verify_cmd_keeps_v2_message_format(self, mock_redis):
+        """Invariant v2 : sans verify_cmd, aucun champ V3 sur le message."""
+        from orchestrator import send_and_wait
+
+        mock_redis.xread.return_value = [
+            ("A:agent:300:outbox", [("1-0", {"response": "ok"})])
+        ]
+
+        send_and_wait(300, "go", from_agent=100)
+
+        fields = mock_redis.xadd.call_args[0][1]
+        assert 'verify_cmd' not in fields
+        assert 'task_id' not in fields
+
+    def test_verify_failed_raises_runtime_error(self, mock_redis):
+        from orchestrator import send_and_wait
+
+        mock_redis.xread.return_value = [
+            ("A:agent:300:outbox",
+             [("1-0", {"response": "[VERIFY_FAILED] BLOCKED|task=t1|raison=hacking\ndétails"})])
+        ]
+
+        with pytest.raises(RuntimeError, match=r"VERIFY_FAILED.*raison=hacking"):
+            send_and_wait(300, "go", from_agent=100, verify_cmd="exit 0", task_id="t1")
+
+
+class TestLoadWorkflowVariables:
+    """V3 — substitution {{clef}} avant parse YAML (--var, utilisé par bench)"""
+
+    def test_variables_substituted(self, tmp_path):
+        from orchestrator import load_workflow
+
+        wf_file = tmp_path / "wf.yaml"
+        wf_file.write_text(
+            "name: bench-{{task}}\n"
+            "steps:\n"
+            "  - name: dev\n"
+            "    agent: 300\n"
+            "    prompt: \"Tâche {{task}}\"\n"
+            "    verify: \"{{verify}}\"\n")
+
+        wf = load_workflow(str(wf_file), {"task": "t1", "verify": "pytest -q"})
+        assert wf['name'] == "bench-t1"
+        assert wf['steps'][0]['prompt'] == "Tâche t1"
+        assert wf['steps'][0]['verify'] == "pytest -q"
+
+    def test_no_variables_is_noop(self, tmp_path):
+        from orchestrator import load_workflow
+
+        wf_file = tmp_path / "wf.yaml"
+        wf_file.write_text("name: plain\nsteps:\n  - name: a\n    agent: 300\n    prompt: x\n")
+        wf = load_workflow(str(wf_file))
+        assert wf['name'] == "plain"

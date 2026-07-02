@@ -18,6 +18,7 @@ Schéma d'un workflow (scripts/agent-bridge/workflows/*.yaml) :
       on_success: notifier      # optionnel — déclenche une étape `manual: true`
       on_failure: abort         # abort (défaut) | continue | <étape manual>
       manual: true              # ne s'exécute que si déclenchée
+      verify: "pytest -q"       # optionnel (V3) — preuve exigée par le bridge
     - name: pause
       wait: 30                  # étape d'attente (exclusive avec agent/prompt)
 
@@ -48,7 +49,7 @@ from ids import is_valid_agent_id
 _REF_RE = re.compile(r'\{([A-Za-z0-9_-]+)(?::(\d+))?\}')
 
 _STEP_KEYS = {'name', 'agent', 'prompt', 'wait', 'depends_on', 'timeout',
-              'from_agent', 'on_success', 'on_failure', 'manual'}
+              'from_agent', 'on_success', 'on_failure', 'manual', 'verify'}
 
 
 class WorkflowError(ValueError):
@@ -80,8 +81,8 @@ def validate_workflow(wf):
         if unknown:
             raise WorkflowError(f"step '{name}': champs inconnus {sorted(unknown)}")
         if 'wait' in s:
-            if 'agent' in s or 'prompt' in s:
-                raise WorkflowError(f"step '{name}': 'wait' est exclusif avec agent/prompt")
+            if 'agent' in s or 'prompt' in s or 'verify' in s:
+                raise WorkflowError(f"step '{name}': 'wait' est exclusif avec agent/prompt/verify")
             if not isinstance(s['wait'], (int, float)) or s['wait'] < 0:
                 raise WorkflowError(f"step '{name}': 'wait' doit être un nombre >= 0")
         else:
@@ -103,6 +104,7 @@ def validate_workflow(wf):
             'on_success': s.get('on_success'),
             'on_failure': s.get('on_failure', 'abort'),
             'manual': bool(s.get('manual', False)),
+            'verify': s.get('verify'),
         }
 
     for step in by_name.values():
@@ -207,8 +209,14 @@ def run_workflow(wf, send, state_file=None, max_workers=8, log=print):
             time.sleep(step['wait'])
             return ''
         prompt = render_prompt(step['prompt'], results)
+        # V3 : kwargs conditionnels — un send() v2 injecté (tests, transports
+        # custom) sans ces paramètres reste valide tant que verify est absent.
+        kwargs = {}
+        if step.get('verify'):
+            kwargs = {'verify_cmd': step['verify'], 'task_id': step['name']}
         return send(step['agent'], prompt,
-                    from_agent=step['from_agent'], timeout=step['timeout'])
+                    from_agent=step['from_agent'], timeout=step['timeout'],
+                    **kwargs)
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {}

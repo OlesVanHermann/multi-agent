@@ -324,3 +324,70 @@ class TestShippedWorkflows:
         assert by_name['dispatch']['from_agent'] == 0
         assert by_name['attente-devs']['wait'] == 30
         assert by_name['test']['depends_on'] == ['merge']
+
+
+# === V3/C1 : clé verify ===
+
+class TestVerifyKey:
+
+    def test_verify_accepted_and_normalized(self):
+        by_name = validate_workflow(make_wf(
+            [{'name': 'a', 'agent': 300, 'prompt': 'x', 'verify': 'pytest -q'}]))
+        assert by_name['a']['verify'] == 'pytest -q'
+
+    def test_verify_default_none(self):
+        by_name = validate_workflow(make_wf(
+            [{'name': 'a', 'agent': 300, 'prompt': 'x'}]))
+        assert by_name['a']['verify'] is None
+
+    def test_wait_exclusive_with_verify(self):
+        with pytest.raises(WorkflowError, match="exclusif"):
+            validate_workflow(make_wf(
+                [{'name': 'a', 'wait': 5, 'verify': 'pytest -q'}]))
+
+    def test_verify_step_passes_kwargs_to_send(self):
+        calls = []
+
+        def send(agent, prompt, from_agent=0, timeout=120, **kw):
+            calls.append((agent, kw))
+            return 'ok'
+
+        wf = make_wf([
+            {'name': 'libre', 'agent': 300, 'prompt': 'sans verify'},
+            {'name': 'prouve', 'agent': 301, 'prompt': 'avec verify',
+             'verify': 'pytest -q', 'depends_on': ['libre']},
+        ])
+        results = run_workflow(wf, send=send, log=quiet)
+        assert results['prouve']['status'] == 'done'
+        by_agent = dict(calls)
+        assert by_agent[300] == {}  # étape sans verify : aucun kwarg V3
+        assert by_agent[301] == {'verify_cmd': 'pytest -q', 'task_id': 'prouve'}
+
+    def test_v2_send_signature_still_works_without_verify(self):
+        """Invariant : un send() v2 (sans **kw) reste valide si aucun step
+        ne porte verify — le moteur n'ajoute pas de kwargs."""
+        def send_v2(agent, prompt, from_agent=0, timeout=120):
+            return 'ok'
+
+        wf = make_wf([{'name': 'a', 'agent': 300, 'prompt': 'x'}])
+        results = run_workflow(wf, send=send_v2, log=quiet)
+        assert results['a']['status'] == 'done'
+
+    def test_verify_failed_send_error_triggers_on_failure(self):
+        """RuntimeError du transport ([VERIFY_FAILED]) → politique on_failure."""
+        def send(agent, prompt, from_agent=0, timeout=120, **kw):
+            if kw.get('verify_cmd'):
+                raise RuntimeError("[VERIFY_FAILED] BLOCKED|task=b|raison=budget_retries")
+            return 'ok'
+
+        wf = make_wf([
+            {'name': 'a', 'agent': 300, 'prompt': 'x'},
+            {'name': 'b', 'agent': 301, 'prompt': 'y', 'verify': 'exit 1',
+             'depends_on': ['a'], 'on_failure': 'continue'},
+            {'name': 'c', 'agent': 302, 'prompt': 'z', 'depends_on': ['b']},
+        ])
+        results = run_workflow(wf, send=send, log=quiet)
+        assert results['a']['status'] == 'done'
+        assert results['b']['status'] == 'failed'
+        assert 'VERIFY_FAILED' in results['b']['error']
+        assert results['c']['status'] == 'skipped'

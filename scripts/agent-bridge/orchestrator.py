@@ -31,8 +31,14 @@ IO_STREAM_MAXLEN = int(os.environ.get("IO_STREAM_MAXLEN", 10000))
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD or None, decode_responses=True)
 
 
-def send_and_wait(to_agent, prompt, from_agent=0, timeout=120):
-    """Envoie un prompt et attend SA réponse (corrélée par correlation_id, F2)"""
+def send_and_wait(to_agent, prompt, from_agent=0, timeout=120,
+                  verify_cmd=None, task_id=None):
+    """Envoie un prompt et attend SA réponse (corrélée par correlation_id, F2).
+
+    V3/C1 : verify_cmd optionnel — porté sur le message inbox, le bridge ne
+    publie la réponse qu'après verify vert (ou [VERIFY_FAILED] si budget
+    épuisé/hacking, qui lève RuntimeError → on_failure du workflow).
+    Sans verify_cmd : comportement v2 inchangé."""
 
     # Marquer le dernier message avant d'envoyer
     outbox = f"{MA_PREFIX}:agent:{to_agent}:outbox"
@@ -40,12 +46,17 @@ def send_and_wait(to_agent, prompt, from_agent=0, timeout=120):
     correlation_id = str(uuid.uuid4())
 
     # Envoyer
-    r.xadd(f"{MA_PREFIX}:agent:{to_agent}:inbox", {
+    fields = {
         'prompt': prompt,
         'from_agent': from_agent,
         'correlation_id': correlation_id,
         'timestamp': int(time.time())
-    }, maxlen=IO_STREAM_MAXLEN, approximate=True)
+    }
+    if verify_cmd:
+        fields['verify_cmd'] = verify_cmd
+        fields['task_id'] = task_id or correlation_id[:8]
+    r.xadd(f"{MA_PREFIX}:agent:{to_agent}:inbox", fields,
+           maxlen=IO_STREAM_MAXLEN, approximate=True)
     print(f"[{from_agent}] -> [{to_agent}]: {prompt[:60]}...")
 
     # Attendre la réponse
@@ -64,6 +75,8 @@ def send_and_wait(to_agent, prompt, from_agent=0, timeout=120):
                 if resp_corr and resp_corr != correlation_id:
                     continue
                 response = data['response']
+                if response.startswith('[VERIFY_FAILED]'):
+                    raise RuntimeError(response[:500])
                 print(f"[{to_agent}] -> [{from_agent}]: {response[:80]}...")
                 return response
 
@@ -112,8 +125,11 @@ def list_workflows():
                   for p in glob.glob(os.path.join(WORKFLOWS_DIR, '*.yaml')))
 
 
-def load_workflow(spec):
-    """Charge un workflow par nom court (workflows/<nom>.yaml) ou chemin .yaml"""
+def load_workflow(spec, variables=None):
+    """Charge un workflow par nom court (workflows/<nom>.yaml) ou chemin .yaml.
+
+    variables : dict de substitutions textuelles {{clef}} → valeur, appliquées
+    AVANT le parse YAML (utilisé par bench/run.sh via --var)."""
     if spec.endswith(('.yaml', '.yml')):
         path = spec
     else:
@@ -121,7 +137,10 @@ def load_workflow(spec):
     if not os.path.exists(path):
         raise FileNotFoundError(path)
     with open(path) as f:
-        return yaml.safe_load(f)
+        text = f.read()
+    for key, value in (variables or {}).items():
+        text = text.replace("{{" + key + "}}", value)
+    return yaml.safe_load(text)
 
 
 if __name__ == "__main__":
@@ -131,10 +150,21 @@ if __name__ == "__main__":
                         help=f"nom court ({', '.join(list_workflows())}) ou chemin .yaml")
     parser.add_argument('--state', metavar='FICHIER',
                         help="fichier d'état JSON (persistance + reprise)")
+    parser.add_argument('--var', metavar='CLEF=VALEUR', action='append',
+                        default=[],
+                        help="substitution {{clef}} dans le YAML (répétable)")
     args = parser.parse_args()
 
+    variables = {}
+    for item in args.var:
+        if '=' not in item:
+            print(f"Error: --var attend CLEF=VALEUR, reçu: {item}")
+            sys.exit(1)
+        key, _, value = item.partition('=')
+        variables[key] = value
+
     try:
-        wf = load_workflow(args.workflow)
+        wf = load_workflow(args.workflow, variables)
         workflow_engine.validate_workflow(wf)
     except FileNotFoundError as exc:
         print(f"Error: workflow introuvable: {exc}")

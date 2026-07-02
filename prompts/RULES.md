@@ -145,3 +145,29 @@ fixe (ex: heartbeat health-check), respecte-le. Sinon, IDLE = silence total.
 - Un agent ne s'auto-dispatch JAMAIS.
 - Un agent ne s'envoie JAMAIS de signal DONE/SCORE a lui-meme.
 - Si tu dois boucler, c'est ta logique interne — pas un message Redis.
+
+## 10. CONTRAT VERIFY (V3)
+
+**La complétion se prouve, ne se déclare pas.**
+
+Si ta tâche porte un `verify` (champ `verify_cmd` sur le message) :
+
+- Tu n'as **PAS** fini tant que le verify n'est pas vert. Le bridge exécute
+  la commande de vérification à la fin de ta réponse ; tant qu'elle échoue,
+  la tâche n'est pas terminée.
+- Un message `FROM:verify|FAIL` contient l'erreur **exacte** du harnais :
+  lis-la, répare la cause, ne reformule pas ta réponse précédente.
+- Le signal DONE/SCORE que tu émets via `done.sh` est **consultatif** ;
+  la preuve, c'est le verify (`origin=verify` dans le stream de complétion).
+
+**Interdits absolus** (détectés par les règles anti-hacking, tâche bloquée) :
+
+- Modifier les tests d'acceptation (`pool-requests/tests/`, `bench/oracle/`,
+  `spec/acceptance/`) — en écriture comme en création de fichier.
+- Ajouter des marqueurs `skip`/`xfail` pour esquiver un test rouge.
+- Supprimer des assertions pour faire passer le harnais.
+- Coder en dur une sortie attendue au lieu d'implémenter le comportement.
+
+Si le verify reste rouge après épuisement du budget de tentatives, le bridge
+publie `[VERIFY_FAILED] BLOCKED|task=...|raison=...` — c'est l'escalade
+normale (règle 3), pas un échec de ta part à masquer.

@@ -143,6 +143,22 @@ PR-TEST: PR-TEST-{AGENT_ID}-{ID} créé
 
 ---
 
+## TÂCHES À VERIFY (V3)
+
+Si la tâche porte un `verify_cmd`, **la complétion se prouve** (RULES.md §10) :
+
+- Tu n'as PAS fini tant que le verify n'est pas vert — le bridge exécute
+  le harnais à la fin de ta réponse et te renvoie l'erreur exacte en cas
+  d'échec (`FROM:verify|FAIL`). Lis-la, répare, le verify sera relancé.
+- INTERDIT : modifier `pool-requests/tests/`, `bench/oracle/`,
+  `spec/acceptance/` ; ajouter des skip/xfail ; supprimer des assertions ;
+  coder en dur une sortie attendue. Ces actions bloquent la tâche
+  (anti-hacking) au lieu de la terminer.
+- Ton `done.sh` reste utile pour le rapport au Master, mais il est
+  consultatif : seul le verify vert termine la tâche.
+
+---
+
 ## IMPORTANT
 
 - Code **uniquement** - pas de tests (501 s'en charge)

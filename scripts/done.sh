@@ -96,10 +96,13 @@ fi
 TIMESTAMP=$(date +%s)
 
 # 1. Audit : stream de complétion dédié
+# V3 : origin=agent — sur une tâche à verify_cmd, ce signal est consultatif ;
+# seul origin=verify (émis par verifier.py) fait foi.
 $REDIS_CLI XADD "${MA_PREFIX}:completion" MAXLEN '~' "${STREAM_MAXLEN:-1000}" '*' \
     from "$FROM_AGENT" \
     to "$TO_AGENT" \
     signal "$SIGNAL" \
+    origin "agent" \
     timestamp "$TIMESTAMP" >/dev/null 2>&1
 
 # 2. Délivrance : inbox de la cible

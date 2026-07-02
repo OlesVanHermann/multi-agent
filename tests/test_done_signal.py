@@ -28,6 +28,14 @@ class TestNoTextScraping:
         assert 'done_relay' not in source
 
 
+class TestOriginField:
+    def test_done_sh_emits_origin_agent(self):
+        """V3 : le signal done.sh porte origin=agent (consultatif sur une
+        tâche à verify_cmd — seul origin=verify fait foi)."""
+        source = open(_DONE_SH, encoding='utf-8').read()
+        assert 'origin "agent"' in source
+
+
 class TestDoneShValidation:
     def _run(self, *args, env_extra=None):
         env = dict(os.environ)
@@ -105,6 +113,7 @@ class TestDoneShIntegration:
             assert data['from'] == '300'
             assert data['to'] == '100'
             assert data['signal'] == 'SCORE 85 qualité OK'
+            assert data['origin'] == 'agent'  # V3 : signal consultatif
 
             inbox_entries = r.xrange(inbox)
             assert len(inbox_entries) == 1
