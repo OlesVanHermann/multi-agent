@@ -143,20 +143,20 @@ cd ~/multi-agent/prompts
 ln -sf claude1a.login default.login
 ```
 
-Le dépôt inclut déjà `default.model -> opus-4-6.model` (Claude Opus 4.6 par défaut).
+Le dépôt inclut déjà `default.model -> fable-5.model` (Claude Fable 5 par défaut).
 Pour utiliser un autre modèle, mettre à jour le symlink :
 
 ```bash
-# Modèles disponibles : opus-4-6, sonnet-4-6, sonnet-4-5, haiku-4-5
-ln -sf sonnet-4-6.model default.model   # → claude-sonnet-4-6
-# ou garder opus-4-6 (défaut)
+# Modèles disponibles : fable-5, sonnet-5, opus-4-7, opus-4-6, sonnet-4-6, sonnet-4-5, haiku-4-5
+ln -sf sonnet-5.model default.model     # → claude-sonnet-5
+# ou garder fable-5 (défaut)
 ```
 
 Vérifier :
 
 ```bash
 ls -la prompts/default.login prompts/default.model
-cat prompts/default.model    # → claude-opus-4-6  (ou le modèle choisi)
+cat prompts/default.model    # → claude-fable-5  (ou le modèle choisi)
 ```
 
 ---

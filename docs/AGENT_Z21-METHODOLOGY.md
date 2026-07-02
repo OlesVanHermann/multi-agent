@@ -153,12 +153,12 @@ for id in {ID}-1{XX} {ID}-{ID} {ID}-5{XX} {ID}-7{XX} {ID}-8{XX} {ID}-9{XX}; do
 done
 
 # Model + Login
-ln -s ../opus-4-6.model {ID}-1{XX}.model    # Master = opus
-ln -s ../opus-4-6.model {ID}-{ID}.model     # Dev = opus
-ln -s ../sonnet-4-6.model {ID}-5{XX}.model  # Tester = sonnet
-ln -s ../sonnet-4-6.model {ID}-7{XX}.model  # Reviewer = sonnet
-ln -s ../sonnet-4-6.model {ID}-8{XX}.model  # Coach = sonnet
-ln -s ../sonnet-4-6.model {ID}-9{XX}.model  # Architect = sonnet
+ln -s ../fable-5.model {ID}-1{XX}.model     # Master = fable-5
+ln -s ../fable-5.model {ID}-{ID}.model      # Dev = fable-5
+ln -s ../sonnet-5.model {ID}-5{XX}.model    # Tester = sonnet-5
+ln -s ../sonnet-5.model {ID}-7{XX}.model    # Reviewer = sonnet-5
+ln -s ../sonnet-5.model {ID}-8{XX}.model    # Coach = sonnet-5
+ln -s ../sonnet-5.model {ID}-9{XX}.model    # Architect = sonnet-5
 
 ln -s ../claude1a.login {ID}-1{XX}.login
 ln -s ../claude1a.login {ID}-{ID}.login

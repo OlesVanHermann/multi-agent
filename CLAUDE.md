@@ -125,7 +125,7 @@ multi-agent/
 │   ├── 160-create-x45/          # Créateur de pipelines x45
 │   ├── 170-create-z21/          # Créateur de pipelines z21
 │   ├── *.login                  # Profils Claude (8 templates)
-│   └── *.model                  # Modèles (haiku/sonnet/opus)
+│   └── *.model                  # Modèles (fable-5, sonnet-5, haiku…)
 │
 ├── examples/                    # Exemples complets par mode
 │   ├── 1-mono-simple/           # Pipeline mono minimal
