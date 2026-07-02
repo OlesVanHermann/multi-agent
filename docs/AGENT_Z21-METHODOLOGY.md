@@ -158,7 +158,7 @@ ln -s ../fable-5.model {ID}-{ID}.model      # Dev = fable-5
 ln -s ../sonnet-5.model {ID}-5{XX}.model    # Tester = sonnet-5
 ln -s ../sonnet-5.model {ID}-7{XX}.model    # Reviewer = sonnet-5
 ln -s ../sonnet-5.model {ID}-8{XX}.model    # Coach = sonnet-5
-ln -s ../sonnet-5.model {ID}-9{XX}.model    # Architect = sonnet-5
+ln -s ../fable-5.model {ID}-9{XX}.model     # Architect = fable-5
 
 ln -s ../claude1a.login {ID}-1{XX}.login
 ln -s ../claude1a.login {ID}-{ID}.login
