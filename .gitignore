@@ -99,6 +99,10 @@ web/backend/venv/
 # Safe-delete archive
 removed/
 
+# Bench V3 — mesures locales (le rapport final se commit à la main)
+bench/results/*
+!bench/results/.gitkeep
+
 # Uploads runtime (destination /api/upload)
 uploads/
 
