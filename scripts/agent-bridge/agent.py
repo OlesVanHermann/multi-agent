@@ -42,6 +42,11 @@ except ImportError:
 # A6 : source unique du format d'ID agent
 from ids import AGENT_ID_PATTERN, is_valid_agent_id
 
+# V3/C1 : boucle verify — la complétion se prouve, ne se déclare pas
+import verifier
+# V3/C2 : write-ahead log d'orchestration (audit, stall detection, bench)
+import wal
+
 try:
     import yaml
 except ImportError:
@@ -73,6 +78,10 @@ MONITORING_PREFIX = os.environ.get("MONITORING_PREFIX", "mi")
 MAX_HISTORY = 50
 RESPONSE_TIMEOUT = int(os.environ.get("RESPONSE_TIMEOUT", 300))
 POLL_INTERVAL = 1.0
+
+# V3/C1 : boucle verify (opt-in par tâche via champ verify_cmd)
+VERIFY_MAX_RETRIES = int(os.environ.get("VERIFY_MAX_RETRIES", 3))
+PROJECT_DIR = os.environ.get("PROJECT_DIR", str(BASE_DIR / "project"))
 
 # A2 : scrutation adaptative — intervalle court tant que le pane change,
 # allongement progressif (×1.5) jusqu'au plafond dès stabilité.
@@ -322,6 +331,16 @@ class TmuxAgent:
             self.metrics = None
             self._log("WARNING: monitoring.metrics_collector not available")
 
+        # V3/C2 : diagnostic post-crash — tâche restée ouverte dans le WAL.
+        # Log seulement : le consumer group redélivre le message pending (A4).
+        try:
+            pending_task = wal.open_task(self.redis, MA_PREFIX, self.agent_id)
+            if pending_task:
+                self._log(f"WAL: tâche ouverte au démarrage: {pending_task} "
+                          "(redélivrance via consumer group)")
+        except Exception as e:
+            self._log(f"WAL open_task check error: {e}")
+
         # Get initial pane content to know baseline
         self.last_output_lines = self._get_pane_line_count()
 
@@ -361,6 +380,15 @@ class TmuxAgent:
                 fh.write(entry + "\n")
         except Exception as e:
             self._log(f"event log error: {e}")
+
+    def _wal(self, event, task_id=None, **fields):
+        """V3/C2 : émission WAL best-effort — une panne Redis sur le WAL
+        ne doit JAMAIS tuer le thread queue_processor."""
+        try:
+            wal.emit(self.redis, MA_PREFIX, event, self.agent_id,
+                     task_id, **fields)
+        except Exception as e:
+            self._log(f"WAL emit error ({event}): {e}")
 
     def _redis_ping(self):
         """Test connexion Redis — utilisé par health endpoint (EF-001)."""
@@ -769,7 +797,8 @@ class TmuxAgent:
             raw_from = data.get('from_agent', 'unknown')
             safe_from = raw_from if re.fullmatch(
                 rf'{AGENT_ID_PATTERN}|cli|manual|legacy|unknown|auto_init'
-                rf'|compaction_reload|compaction_resume|response_{AGENT_ID_PATTERN}',
+                rf'|compaction_reload|compaction_resume|verify|watchdog'
+                rf'|response_{AGENT_ID_PATTERN}',
                 str(raw_from)) else 'unknown'
             self.prompt_queue.put({
                 'prompt': data.get('prompt', ''),
@@ -777,6 +806,10 @@ class TmuxAgent:
                 'msg_id': msg_id,
                 'ack_id': msg_id,
                 'correlation_id': data.get('correlation_id', ''),
+                # V3 — absents = comportement v2 inchangé
+                'verify_cmd': data.get('verify_cmd', ''),
+                'task_id': data.get('task_id', ''),
+                'deadline': data.get('deadline', ''),
                 'source': 'redis'
             })
             self._log(f"<- Queued from {safe_from}: {data.get('prompt', '')[:50]}...")
@@ -928,14 +961,37 @@ class TmuxAgent:
             if self.metrics:
                 self.metrics.record_task_start(self.agent_id, task_id=task.get('msg_id'))
 
-            # Run prompt
+            self._wal("task_assigned", task.get('task_id'),
+                      source=task.get('source', ''),
+                      from_agent=task.get('from_agent', ''))
+
+            # === V3/C2 : budget wall-time ===
+            # deadline (epoch) portée par la tâche = borne du temps total,
+            # retries de verify compris. Absente : comportement v2 inchangé.
+            deadline_expired = False
             try:
-                response = self._run_claude(task['prompt'])
-            except Exception as e:
-                self._log(f"ERROR running Claude: {e}")
-                if self.metrics:
-                    self.metrics.record_error(self.agent_id, type(e).__name__, str(e))
-                response = f"[ERROR] {e}"
+                deadline_expired = (bool(task.get('deadline'))
+                                    and time.time() > float(task['deadline']))
+            except (TypeError, ValueError):
+                deadline_expired = False
+
+            if deadline_expired:
+                self._log(f"DEADLINE dépassée: task={task.get('task_id')}")
+                self._log_event("verify_escalation",
+                                f"task={task.get('task_id')} motif=deadline")
+                self._wal("verify_escalation", task.get('task_id'),
+                          motif="deadline")
+                response = (f"[VERIFY_FAILED] BLOCKED|task={task.get('task_id')}"
+                            f"|raison=deadline")
+            else:
+                # Run prompt
+                try:
+                    response = self._run_claude(task['prompt'])
+                except Exception as e:
+                    self._log(f"ERROR running Claude: {e}")
+                    if self.metrics:
+                        self.metrics.record_error(self.agent_id, type(e).__name__, str(e))
+                    response = f"[ERROR] {e}"
 
             # API error detection — retry with backoff (max 2 retries)
             # A1: motifs externalisés dans markers.yaml (API_ERROR_PATTERNS)
@@ -945,6 +1001,8 @@ class TmuxAgent:
             if is_api_error and retry_count < 2:
                 self._log(f"API ERROR detected (retry {retry_count+1}/2), re-queuing prompt")
                 self._log_event("api_error_retry", f"retry={retry_count+1}")
+                self._wal("api_error_retry", task.get('task_id'),
+                          retry=retry_count + 1)
                 try:
                     self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", "status", "api_error_retry")
                 except Exception:
@@ -955,6 +1013,11 @@ class TmuxAgent:
                     'msg_id': task.get('msg_id', ''),
                     'ack_id': task.get('ack_id'),
                     'correlation_id': task.get('correlation_id', ''),
+                    # V3 : le retry API ne doit pas faire perdre le gate verify
+                    'verify_cmd': task.get('verify_cmd', ''),
+                    'task_id': task.get('task_id', ''),
+                    'deadline': task.get('deadline', ''),
+                    '_verify_retry': task.get('_verify_retry', 0),
                     '_retry_count': retry_count + 1,
                     'source': task.get('source', 'retry')
                 })
@@ -1032,6 +1095,11 @@ class TmuxAgent:
                     'msg_id': f"resume2_{int(time.time())}",
                     'ack_id': task.get('ack_id'),
                     'correlation_id': task.get('correlation_id', ''),
+                    # V3 : la reprise post-compaction conserve le gate verify
+                    'verify_cmd': task.get('verify_cmd', ''),
+                    'task_id': task.get('task_id', ''),
+                    'deadline': task.get('deadline', ''),
+                    '_verify_retry': task.get('_verify_retry', 0),
                 })
 
                 with self.state_lock:
@@ -1039,6 +1107,51 @@ class TmuxAgent:
                     self.state = State.IDLE
                 self._set_redis_status()
                 continue
+
+            # === V3/C1 : verify gate ===
+            # DONE candidat = fin de réponse d'une tâche portant verify_cmd.
+            # Sans verify_cmd : flux v2 inchangé (rétrocompatibilité).
+            if task.get('verify_cmd') and not deadline_expired:
+                green, hacked, rapport = verifier.run(
+                    task, self.redis, MA_PREFIX, self.agent_id, PROJECT_DIR)
+                if green:
+                    response += "\n[VERIFY_GREEN]"
+                    self._log_event("verify_green", f"task={task.get('task_id')}")
+                    self._wal("verify_green", task.get('task_id'))
+                else:
+                    n = int(task.get('_verify_retry', 0))
+                    if not hacked and n < VERIFY_MAX_RETRIES:
+                        self._log_event("verify_red",
+                                        f"task={task.get('task_id')} retry={n+1}")
+                        self._wal("verify_red", task.get('task_id'), retry=n + 1)
+                        self.prompt_queue.put({
+                            'prompt': (f"FROM:verify|FAIL (tentative {n+1}/"
+                                       f"{VERIFY_MAX_RETRIES})\n{rapport}\n"
+                                       "Lis l'erreur, répare, le verify sera relancé."),
+                            'from_agent': 'verify',
+                            'msg_id': task.get('msg_id', ''),
+                            'ack_id': task.get('ack_id'),
+                            'correlation_id': task.get('correlation_id', ''),
+                            'verify_cmd': task['verify_cmd'],
+                            'task_id': task.get('task_id', ''),
+                            'deadline': task.get('deadline', ''),
+                            '_verify_retry': n + 1,
+                            'source': 'verify_retry'
+                        })
+                        self._wal("verify_retry", task.get('task_id'), retry=n + 1)
+                        with self.state_lock:
+                            self.current_task = None
+                            self.state = State.IDLE
+                        self._set_redis_status()
+                        continue  # l'ack_id reste porté par le retry (A4)
+                    # Budget épuisé ou hacking : échec explicite, escalade
+                    motif = "hacking" if hacked else "budget_retries"
+                    self._log_event("verify_escalation",
+                                    f"task={task.get('task_id')} motif={motif}")
+                    self._wal("verify_escalation", task.get('task_id'),
+                              motif=motif)
+                    response = (f"[VERIFY_FAILED] BLOCKED|task={task.get('task_id')}"
+                                f"|raison={motif}\n{rapport}")
 
             # R-INTEGRATE: record task end
             if self.metrics:
@@ -1083,7 +1196,7 @@ class TmuxAgent:
             # Notify sender if it was another agent
             from_agent = task.get('from_agent')
 
-            if from_agent and from_agent not in ['manual', 'cli', 'auto_init', 'unknown', 'legacy', 'compaction_reload', 'compaction_resume']:
+            if from_agent and from_agent not in ['manual', 'cli', 'auto_init', 'unknown', 'legacy', 'compaction_reload', 'compaction_resume', 'verify', 'watchdog']:
                 if not self._agent_alive(from_agent):
                     self._log(f"ko response routing: '{from_agent}' not alive or invalid format — skipping")
                 else:

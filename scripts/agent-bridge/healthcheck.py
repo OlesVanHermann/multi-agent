@@ -27,6 +27,9 @@ from urllib.error import URLError
 # A6 : source unique du format d'ID agent
 from ids import is_valid_agent_id
 
+# V3/C2 : détection de stall via le WAL
+import wal
+
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
@@ -40,7 +43,10 @@ WATCHDOG_FAIL_THRESHOLD = int(os.environ.get("WATCHDOG_FAIL_THRESHOLD", 3))
 WATCHDOG_HEALTH_TIMEOUT = int(os.environ.get("WATCHDOG_HEALTH_TIMEOUT", 2))
 CIRCUIT_BREAKER_MAX_RESTARTS = int(os.environ.get("CIRCUIT_BREAKER_MAX_RESTARTS", 3))
 CIRCUIT_BREAKER_WINDOW = int(os.environ.get("CIRCUIT_BREAKER_WINDOW", 300))
+# V3/C2 : agent busy sans événement WAL au-delà de ce seuil → nudge puis escalade
+WATCHDOG_STALL_THRESHOLD = int(os.environ.get("WATCHDOG_STALL_THRESHOLD", 600))
 STREAM_MAXLEN = 1000  # CT-009
+IO_STREAM_MAXLEN = int(os.environ.get("IO_STREAM_MAXLEN", 10000))
 
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD or None, decode_responses=True)
 
@@ -153,7 +159,7 @@ class AgentWatchdog:
 
     def __init__(self, redis_client, prefix=None, health_port_base=None,
                  poll_interval=None, fail_threshold=None, health_timeout=None,
-                 max_restarts=None, breaker_window=None):
+                 max_restarts=None, breaker_window=None, stall_threshold=None):
         """EF-002 : Initialise le watchdog avec seuils configurables."""
         self.redis = redis_client
         self.prefix = prefix or MONITORING_PREFIX
@@ -163,9 +169,11 @@ class AgentWatchdog:
         self.health_timeout = health_timeout or WATCHDOG_HEALTH_TIMEOUT
         self.max_restarts = max_restarts or CIRCUIT_BREAKER_MAX_RESTARTS
         self.breaker_window = breaker_window or CIRCUIT_BREAKER_WINDOW
+        self.stall_threshold = stall_threshold or WATCHDOG_STALL_THRESHOLD
         self._fail_counts = {}       # agent_id → consecutive failures
         self._restart_history = {}   # agent_id → [timestamps]
         self._circuit_open = {}      # agent_id → bool
+        self._nudged = {}            # V3/C2 : agent_id → 'nudged'|'escalated'
 
     def discover_agents(self):
         """Découvre les agents actifs via Redis heartbeat streams (EF-002).
@@ -292,11 +300,69 @@ class AgentWatchdog:
         self.redis.xadd(stream, alert, maxlen=STREAM_MAXLEN, approximate=True)
         return alert
 
+    def _check_stall(self, agent_id):
+        """V3/C2 : agent busy sans événement WAL depuis stall_threshold.
+
+        1er dépassement → alerte warning + nudge dans l'inbox. Le nudge est
+        lui-même un événement WAL : il remet le compteur à zéro, l'agent a
+        donc une fenêtre COMPLÈTE pour montrer de l'activité.
+        2e dépassement → alerte critique + WAL escalation (motif=stall),
+        puis silence (état 'escalated' — pas de spam d'alertes).
+        Toute activité WAL réelle (hors nudge/escalation) réarme la machine.
+
+        Le WAL et le hash de statut vivent sous MA_PREFIX (écrits par le
+        bridge), PAS sous self.prefix (préfixe monitoring).
+        """
+        try:
+            status = self.redis.hget(f"{MA_PREFIX}:agent:{agent_id}", "status")
+            if status != "busy":
+                self._nudged.pop(agent_id, None)
+                return None
+            last = wal.last_event(self.redis, MA_PREFIX, agent_id)
+            if not last:
+                return None  # bridge sans WAL (v2) : pas de faux positif
+            data = last[1]
+            age = time.time() - int(data.get("ts", 0))
+            if age < self.stall_threshold:
+                if data.get("event") not in ("nudge", "escalation"):
+                    self._nudged.pop(agent_id, None)  # activité réelle
+                return None
+            state = self._nudged.get(agent_id)
+            if state == "escalated":
+                return "stalled"
+            if state == "nudged":
+                self._publish_alert(
+                    "critical", agent_id,
+                    f"Agent {agent_id} toujours silencieux {int(age)}s après nudge",
+                    {"age_seconds": int(age), "motif": "stall"})
+                wal.emit(self.redis, MA_PREFIX, "escalation", agent_id,
+                         motif="stall", age_seconds=int(age))
+                self._nudged[agent_id] = "escalated"
+                return "stalled"
+            self._publish_alert(
+                "warning", agent_id,
+                f"Agent {agent_id} busy sans activité WAL depuis {int(age)}s — nudge",
+                {"age_seconds": int(age)})
+            self.redis.xadd(
+                f"{MA_PREFIX}:agent:{agent_id}:inbox",
+                {"prompt": ("FROM:watchdog|Où en es-tu ? Si tu es bloqué, "
+                            "émets BLOCKED|task|raison|question."),
+                 "from_agent": "watchdog",
+                 "timestamp": int(time.time())},
+                maxlen=IO_STREAM_MAXLEN, approximate=True)
+            wal.emit(self.redis, MA_PREFIX, "nudge", agent_id)
+            self._nudged[agent_id] = "nudged"
+            return "stalled"
+        except Exception as exc:
+            # la détection de stall ne doit jamais casser le watchdog restart
+            logger.warning("stall check error for %s: %s", agent_id, exc)
+            return None
+
     def process_agent(self, agent_id):
         """Traite un agent: check health → restart si nécessaire (EF-002).
 
         Returns:
-            str: 'healthy', 'restarted', 'circuit_open', 'failed'
+            str: 'healthy', 'stalled', 'restarted', 'circuit_open', 'failed'
         """
         health = self.check_health(agent_id)
 
@@ -307,6 +373,10 @@ class AgentWatchdog:
             self._fail_counts[agent_id] = 0
             if self._circuit_open.get(agent_id):
                 self._circuit_open[agent_id] = False
+            # V3/C2 : le process est vivant, mais l'agent avance-t-il ?
+            stall = self._check_stall(agent_id)
+            if stall:
+                return stall
             return "healthy"
 
         # Health check failed
