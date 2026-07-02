@@ -38,14 +38,25 @@ UPGRADE.md               # Ce fichier
 Ces fichiers sont spécifiques à votre projet :
 
 ```
-prompts/                  # Vos prompts personnalisés
+prompts/                  # Vos prompts personnalisés (répertoires d'agents,
+                          # *.model, *.login) — SEULS les 5 .md canoniques
+                          # (RULES, CONVENTIONS, PATHS, AGENT, CHROME) sont
+                          # synchronisés, avec backup dans removed/
 pool-requests/           # Données runtime
 ├── knowledge/           # Vos inventaires
 project/                 # Votre code source
 project-config.md        # Votre configuration
+login/                   # Credentials des profils Claude — jamais synchronisé
+                          # (seules les règles permissions.deny sont fusionnées)
+bench/results/           # Résultats de banc locaux — jamais touchés
+bench/heldout.txt        # Split held-out du site — préservé s'il existe
 logs/                    # Logs (peuvent être supprimés)
 sessions/                # Sessions (peuvent être supprimés)
 ```
+
+`bench/` est un cas hybride : le squelette (run.sh, collect.py, oracles des
+tâches synthétiques…) est mis à jour en **fusion, jamais de suppression** —
+les tâches importées depuis votre historique et vos résultats survivent.
 
 ---
 
@@ -100,50 +111,43 @@ python3 scripts/agent-bridge/healthcheck.py
 
 ---
 
-## Script de mise à jour automatique
+## Ce que fait upgrade.sh
+
+1. Clone la release depuis GitHub (surchargeable : `MA_UPGRADE_REPO_URL=file:///miroir`).
+2. Vérifie l'intégrité (manifest de checksums + signature GPG du tag, voir C3).
+3. Affiche le plan (répertoires, fichiers, migrations) — `--dry-run` s'arrête là.
+4. Archive l'état courant dans `removed/<horodatage>_upgrade_backup/`.
+5. Synchronise les répertoires framework (`rsync --delete`), en préservant
+   `setup/secrets.cfg`.
+6. **Migrations idempotentes** (v2→v3 comme v3.X→v3.X+1) :
+   - `bench/` en fusion (jamais de suppression ; `results/` et `heldout.txt`
+     locaux préservés) ;
+   - synchronisation des 5 `.md` canoniques de `prompts/` (backup préalable ;
+     les liens symboliques locaux ne sont pas touchés) ;
+   - fusion des règles `permissions.deny` (protection oracle V3) dans les
+     `login/claude*/settings.json` existants via `patch/merge-deny-rules.py`
+     — union des règles uniquement, le reste du fichier ne bouge pas.
+7. Installe les dépendances Python.
+
+---
+
+## Migration v2.X → v3.X : lancer l'upgrade DEUX FOIS
+
+L'upgrade.sh **déjà présent** sur une machine v2 ne connaît pas les
+migrations v3 (bench/, deny, prompts canoniques) :
 
 ```bash
-#!/bin/bash
-# upgrade.sh
-
-set -e
-REPO_URL="https://github.com/OlesVanHermann/multi-agent.git"
-BRANCH="${1:-main}"
-
-echo "=== Multi-Agent Upgrade ==="
-
-# Backup
-BACKUP_DIR="../multi-agent-backup-$(date +%Y%m%d-%H%M%S)"
-mkdir -p $BACKUP_DIR
-cp -r prompts/ $BACKUP_DIR/
-cp -r pool-requests/knowledge/ $BACKUP_DIR/ 2>/dev/null || true
-cp project-config.md $BACKUP_DIR/ 2>/dev/null || true
-echo "Backup: $BACKUP_DIR"
-
-# Stop agents
-./scripts/infra.sh stop 2>/dev/null || true
-
-# Download & update framework only
-TEMP_DIR=$(mktemp -d)
-git clone --depth 1 --branch $BRANCH $REPO_URL $TEMP_DIR
-
-rsync -av --delete $TEMP_DIR/scripts/ ./scripts/
-rsync -av --delete $TEMP_DIR/patch/ ./patch/
-rsync -av --delete $TEMP_DIR/docs/ ./docs/
-cp $TEMP_DIR/requirements.txt ./
-cp $TEMP_DIR/CLAUDE.md ./
-cp $TEMP_DIR/UPGRADE.md ./
-cp $TEMP_DIR/README.md ./
-
-mkdir -p ./removed && mv $TEMP_DIR ./removed/temp-upgrade-$(date +%s)
-
-# Install deps
-pip install -r requirements.txt
-
-echo ""
-echo "=== Mise à jour terminée ==="
-echo "Consultez patch/ pour les scripts de gestion des patches"
+./patch/upgrade.sh          # passe 1 : installe le nouvel outillage (patch/, scripts/, tests/…)
+./patch/upgrade.sh --dry-run   # contrôle : la section Migrations doit apparaître
+./patch/upgrade.sh          # passe 2 : applique les migrations v3
+python -m pytest tests/ -q  # 559+ tests attendus verts
 ```
+
+Les migrations étant idempotentes, relancer une passe de trop est sans effet.
+
+**Note descendante** : cet upgrade.sh (≥ v3.0.1) refuse les releases plus
+anciennes que sa liste de manifest (écart « fichiers hors manifest ») —
+c'est l'abandon sûr attendu, rien n'est modifié.
 
 ---
 
@@ -211,6 +215,7 @@ docker inspect quay.io/keycloak/keycloak:<TAG> --format '{{index .RepoDigests 0}
 
 | Version | Date | Changements majeurs |
 |---------|------|---------------------|
+| v3.0 | 2026-07 | Boucle verify au bridge (C1), WAL/budgets/stall (C2), banc bench/ (C0), migrations upgrade.sh |
 | v2.5 | 2026-03 | Effort selector, usage bars, agents 310/311/312, keepalive panel, Keycloak proxy-edge |
 | v2.4 | 2026-02 | Format mono/x45/z21, Chrome Bridge extension, agent 150, patch/ dir |
 | v2.3 | 2026-02 | Dashboard web React+FastAPI, Keycloak auth, proxy.sh |

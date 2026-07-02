@@ -103,8 +103,13 @@ CHANGES=$(git log --oneline -n 10 "${CURRENT_TAG}..HEAD" 2>/dev/null || true)
 
 # C3 : manifest d'intégrité des fichiers framework (vérifié par upgrade.sh).
 # Basé sur les fichiers trackés git → identique au contenu d'un clone frais.
+# Miroir exact de MANIFEST_PATHS dans upgrade.sh — verrouillé par
+# tests/test_upgrade_manifest_sync.py, modifier les deux ensemble.
 echo -e "${CYAN}Generating patch/checksums.sha256 (C3)...${NC}"
-FRAMEWORK_PATHS=(scripts web docs patch setup tests templates examples framework
+FRAMEWORK_PATHS=(scripts web docs patch setup tests templates examples framework bench
+                 'login/*/settings.json'
+                 prompts/RULES.md prompts/CONVENTIONS.md prompts/PATHS.md
+                 prompts/AGENT.md prompts/CHROME.md
                  requirements.txt CLAUDE.md README.md LICENSE .gitignore)
 # ':!...' = pathspec git d'exclusion (le manifest ne peut pas se contenir lui-même)
 git ls-files -z -- "${FRAMEWORK_PATHS[@]}" ':!patch/checksums.sha256' \

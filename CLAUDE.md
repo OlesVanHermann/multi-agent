@@ -161,6 +161,7 @@ multi-agent/
 │
 ├── patch/                       # Hub pipeline tools (opérateur)
 │   ├── upgrade.sh               # Mise à jour framework depuis GitHub
+│   ├── merge-deny-rules.py      # Fusion permissions.deny (migration V3)
 │   ├── sync-to-git.sh           # Sync projet → git
 │   ├── hub-receive.sh           # Lister patches en attente
 │   ├── hub-cherry-pick.sh       # Cherry-pick un patch
@@ -395,9 +396,17 @@ Voir `examples/` et `docs/AGENT_X45-*.md`.
 ./patch/upgrade.sh              # Appliquer
 ```
 
-Le script met à jour les répertoires framework (`scripts/`, `web/`, `docs/`, `patch/`, `setup/`, `templates/`, `examples/`, `framework/`, `tests/`) et préserve les données projet (`prompts/`, `pool-requests/`, `project/`, `sessions/`, `logs/`).
+Le script met à jour les répertoires framework (`scripts/`, `web/`, `docs/`, `patch/`, `setup/`, `templates/`, `examples/`, `framework/`, `tests/`) et préserve les données projet (`pool-requests/`, `project/`, `sessions/`, `logs/`).
+
+Migrations idempotentes (v2→v3 comme v3.X→v3.X+1) :
+
+- `bench/` en **fusion** — jamais de suppression ; `results/` et `heldout.txt` locaux préservés ;
+- les 5 `.md` canoniques de `prompts/` (RULES, CONVENTIONS, PATHS, AGENT, CHROME) sont synchronisés avec backup dans `removed/` — le reste de `prompts/` (agents, `*.model`, `*.login`) n'est pas touché ;
+- les règles `permissions.deny` (protection oracle V3) sont fusionnées dans les `login/claude*/settings.json` existants (`patch/merge-deny-rules.py`) — `login/` n'est jamais synchronisé (credentials).
 
 `setup/secrets.cfg` n'est jamais écrasé.
+
+**v2.X → v3.X : lancer l'upgrade deux fois** (la 1re passe installe le nouvel outillage `patch/`, la 2de applique les migrations).
 
 ### Via git pull (machines avec accès GitHub)
 
