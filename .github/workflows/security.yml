@@ -1,0 +1,29 @@
+# D3 — Anti-fuite de secrets : la CI échoue si un secret est détecté
+# dans l'historique (gitleaks) ou si un secrets.cfg est tracké.
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # scan de tout l'historique
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  secret-guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Aucun secrets.cfg tracké, pas de valeurs par défaut
+        run: ./patch/check-secrets.sh
