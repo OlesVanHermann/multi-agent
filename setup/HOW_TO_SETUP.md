@@ -154,7 +154,7 @@ ln -sf fable-5.model default.model      # → claude-fable-5
 
 Convention par classe d'agents (x45/z21) : **fable-5** pour 1XX (masters),
 3XX (developers), 9XX (architects) et le dev `{ID}-{ID}` ; **sonnet-5** pour
-5XX (testers), 6XX (releasers), 7XX (reviewers).
+5XX (testers), 6XX (releasers), 7XX (reviewers), 8XX (coachs).
 
 Vérifier :
 
