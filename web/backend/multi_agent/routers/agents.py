@@ -514,7 +514,7 @@ async def send_keys_to_agent(data: SendKeys, agent_id: str = ValidAgentId):
 
 
 @router.get("/api/agent/{agent_id}/output")
-async def get_agent_output(agent_id: str = ValidAgentId, lines: int = 500):
+async def get_agent_output(agent_id: str = ValidAgentId, lines: int = 3000):
     """Capture tmux pane output for an agent (remote-aware via SSH)."""
     base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
     if base_id == "000":

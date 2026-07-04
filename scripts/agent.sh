@@ -222,7 +222,8 @@ start_single() {
         return 1
     fi
 
-    tmux new-session -d -s "$SESSION_NAME" -x "${TMUX_COLS:-80}" -y 24
+    tmux new-session -d -s "$SESSION_NAME" -x "${TMUX_COLS:-110}" -y 54
+    tmux set-option -t "$SESSION_NAME" history-limit 10000
     # CLAUDE_WRAPPER (optional): isolation prefix, e.g. "sudo -u agent-worker" or "firejail --profile=..."
     tmux send-keys -t "$SESSION_NAME" "cd '$BASE_DIR' && unset CLAUDECODE && ${CLAUDE_WRAPPER:-} $CLAUDE_CMD --dangerously-skip-permissions" Enter
     sleep 4
@@ -358,7 +359,8 @@ start_all() {
             fi
 
             # Launch Claude (CLAUDE_WRAPPER: optional isolation prefix, cf. README Sécurité)
-            tmux new-session -d -s "$SESSION" -x "${TMUX_COLS:-80}" -y 24
+            tmux new-session -d -s "$SESSION" -x "${TMUX_COLS:-110}" -y 54
+            tmux set-option -t "$SESSION" history-limit 10000
             tmux send-keys -t "$SESSION" "cd '$BASE_DIR' && unset CLAUDECODE && ${CLAUDE_WRAPPER:-} $CLAUDE_CMD --dangerously-skip-permissions" Enter
 
             # Wait for Claude to be ready

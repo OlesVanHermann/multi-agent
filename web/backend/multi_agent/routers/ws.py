@@ -193,7 +193,7 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
             if ping_task.done():
                 break
 
-            result = await _capture_agent_pane(agent_id, lines=500, ansi=False)
+            result = await _capture_agent_pane(agent_id, lines=3000, ansi=False)
 
             if result.returncode != 0:
                 await safe_send({
