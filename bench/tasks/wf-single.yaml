@@ -1,0 +1,23 @@
+# V3/C0 — Workflow d'une tâche de banc (une étape, un agent).
+#
+# Substitutions ({{...}} via orchestrator --var) :
+#   task     : identifiant de la tâche (= task_id dans le WAL, via le nom d'étape)
+#   taskfile : chemin absolu du task.md visible par l'agent
+#   verify   : chemin de l'oracle (mode v3) ou chaîne vide (mode v2 baseline —
+#              verify: "" est falsy, l'étape traverse le bridge à l'identique v2)
+#
+# Lancé par bench/run.sh — ne pas exécuter directement.
+name: bench-single
+description: "Tâche de banc {{task}} (mode verify: '{{verify}}')"
+steps:
+  - name: "{{task}}"
+    agent: 300
+    prompt: |
+      FROM:bench|Tâche de banc {{task}}.
+      Lis le fichier {{taskfile}} et exécute la tâche décrite, dans ton
+      répertoire de travail projet. Quand tu as terminé, signale la fin
+      avec done.sh (DONE). Ne modifie AUCUN fichier hors du périmètre
+      décrit dans la tâche.
+    verify: "{{verify}}"
+    timeout: 3600
+    on_failure: continue
