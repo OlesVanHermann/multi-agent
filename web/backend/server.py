@@ -221,30 +221,58 @@ app.include_router(ws.router)
 # === Static Files (Frontend) ===
 
 # Serve static assets (JS, CSS, etc.)
+# Montage inconditionnel (check_dir=False) : dist/ peut être absent ou partiel
+# pendant un rebuild du frontend — toute résolution se fait à la requête,
+# jamais à l'import (un restart en plein rebuild ne doit ni planter ni
+# laisser un backend sans routes frontend).
 frontend_path = os.path.join(os.path.dirname(__file__), cfg.FRONTEND_DIR)
-if os.path.exists(frontend_path):
-    app.mount("/assets", StaticFiles(directory=os.path.join(frontend_path, "assets")), name="assets")
 
-    @app.get("/")
-    async def serve_index():
-        """Serve frontend index.html (no-cache to pick up new builds)"""
-        return FileResponse(
-            os.path.join(frontend_path, "index.html"),
-            headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"},
+
+class _LazyStaticFiles(StaticFiles):
+    async def check_config(self):
+        # starlette re-vérifie le directory à la 1re requête même avec
+        # check_dir=False (RuntimeError → 500) ; absent pendant un rebuild,
+        # on veut un 404 qui s'auto-répare à la requête suivante.
+        pass
+
+
+app.mount("/assets", _LazyStaticFiles(directory=os.path.join(frontend_path, "assets"), check_dir=False), name="assets")
+
+
+def _index_response():
+    """index.html à la requête — 503 Retry-After pendant la fenêtre de rebuild"""
+    index = os.path.join(frontend_path, "index.html")
+    if not os.path.isfile(index):
+        return Response(
+            "Frontend en cours de build — réessayer dans quelques secondes.",
+            status_code=503,
+            media_type="text/plain",
+            headers={"Retry-After": "5"},
         )
+    return FileResponse(
+        index,
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"},
+    )
 
-    @app.get("/{path:path}")
-    async def serve_spa(path: str):
-        """Catch-all for SPA routing — path-traversal hardened"""
-        if not path or path.startswith("/") or ".." in path or "\\" in path:
-            return FileResponse(os.path.join(frontend_path, "index.html"))
-        candidate = os.path.normpath(os.path.join(frontend_path, path))
-        fp_abs = os.path.abspath(frontend_path)
-        if not (candidate == fp_abs or candidate.startswith(fp_abs + os.sep)):
-            return FileResponse(os.path.join(frontend_path, "index.html"))
-        if os.path.isfile(candidate):
-            return FileResponse(candidate)
-        return FileResponse(os.path.join(frontend_path, "index.html"))
+
+@app.get("/")
+async def serve_index():
+    """Serve frontend index.html (no-cache to pick up new builds)"""
+    return _index_response()
+
+
+@app.get("/{path:path}")
+async def serve_spa(path: str):
+    """Catch-all for SPA routing — path-traversal hardened"""
+    if not path or path.startswith("/") or ".." in path or "\\" in path:
+        return _index_response()
+    candidate = os.path.normpath(os.path.join(frontend_path, path))
+    fp_abs = os.path.abspath(frontend_path)
+    if not (candidate == fp_abs or candidate.startswith(fp_abs + os.sep)):
+        return _index_response()
+    if os.path.isfile(candidate):
+        return FileResponse(candidate)
+    return _index_response()
 
 
 # === Main ===
