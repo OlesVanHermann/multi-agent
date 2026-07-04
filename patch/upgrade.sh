@@ -59,7 +59,7 @@ version_of() {
 # ============================================================
 # FRAMEWORK = mis à jour | PROJET = préservé
 # ============================================================
-FRAMEWORK_DIRS=(scripts web docs patch setup tests templates examples framework)
+FRAMEWORK_DIRS=(scripts web docs patch setup tests templates examples framework .github)
 FRAMEWORK_FILES=(requirements.txt CLAUDE.md README.md LICENSE .gitignore)
 
 # Fichiers canoniques de prompts/ (contrat framework — RULES.md §10 verify…).
@@ -68,7 +68,7 @@ PROMPTS_CANONICAL=(RULES.md CONVENTIONS.md PATHS.md AGENT.md CHROME.md)
 
 # Miroir exact de FRAMEWORK_PATHS dans hub-release.sh (manifest de checksums).
 # Verrouillé par tests/test_upgrade_manifest_sync.py — modifier les deux ensemble.
-MANIFEST_PATHS=(scripts web docs patch setup tests templates examples framework bench
+MANIFEST_PATHS=(scripts web docs patch setup tests templates examples framework .github bench
                 'login/*/settings.json'
                 prompts/RULES.md prompts/CONVENTIONS.md prompts/PATHS.md
                 prompts/AGENT.md prompts/CHROME.md

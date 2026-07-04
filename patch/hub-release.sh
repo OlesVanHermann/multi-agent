@@ -106,7 +106,7 @@ CHANGES=$(git log --oneline -n 10 "${CURRENT_TAG}..HEAD" 2>/dev/null || true)
 # Miroir exact de MANIFEST_PATHS dans upgrade.sh — verrouillé par
 # tests/test_upgrade_manifest_sync.py, modifier les deux ensemble.
 echo -e "${CYAN}Generating patch/checksums.sha256 (C3)...${NC}"
-FRAMEWORK_PATHS=(scripts web docs patch setup tests templates examples framework bench
+FRAMEWORK_PATHS=(scripts web docs patch setup tests templates examples framework .github bench
                  'login/*/settings.json'
                  prompts/RULES.md prompts/CONVENTIONS.md prompts/PATHS.md
                  prompts/AGENT.md prompts/CHROME.md

@@ -18,15 +18,22 @@ if [ -n "${REDIS_PASSWORD:-}" ]; then
 fi
 
 # Build redis-cli command (fallback to docker exec if not installed)
+# NB : $REDIS_CLI est expansé SANS quotes par les consommateurs (word splitting).
+# Aucune valeur ne doit donc être incrustée dans la chaîne : le mot de passe
+# passe uniquement par l'env exporté REDISCLI_AUTH — `docker exec -e VAR`
+# (sans valeur) le propage, et sudo le préserve via --preserve-env.
+_docker_redis_cli() {
+    if docker info &>/dev/null 2>&1; then
+        echo "docker exec -e REDISCLI_AUTH ma-redis redis-cli"
+    else
+        echo "sudo --preserve-env=REDISCLI_AUTH docker exec -e REDISCLI_AUTH ma-redis redis-cli"
+    fi
+}
+
 if command -v redis-cli &>/dev/null; then
     REDIS_CLI="redis-cli"
 else
-    # Detect if sudo is needed for docker
-    _DOCKER="docker"
-    if ! docker info &>/dev/null 2>&1 && sudo docker info &>/dev/null 2>&1; then
-        _DOCKER="sudo docker"
-    fi
-    REDIS_CLI="$_DOCKER exec -e REDISCLI_AUTH='$REDIS_PASSWORD' ma-redis redis-cli"
+    REDIS_CLI="$(_docker_redis_cli)"
 fi
 export REDIS_CLI
 
@@ -37,11 +44,7 @@ _redis_validate() {
 
 if ! _redis_validate; then
     # Current method failed, try docker fallback
-    _DOCKER="docker"
-    if ! docker info &>/dev/null 2>&1 && sudo docker info &>/dev/null 2>&1; then
-        _DOCKER="sudo docker"
-    fi
-    REDIS_CLI="$_DOCKER exec -e REDISCLI_AUTH='$REDIS_PASSWORD' ma-redis redis-cli"
+    REDIS_CLI="$(_docker_redis_cli)"
     export REDIS_CLI
 
     if ! _redis_validate; then
