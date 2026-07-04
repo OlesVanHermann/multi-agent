@@ -111,3 +111,13 @@ setup/secrets.cfg
 
 # Claude Code session history
 history.txt
+
+# Runtime local des profils Claude (jamais versionné)
+login/*/.claude.json
+login/*/backups/*
+!login/*/backups/.gitkeep
+login/*/cache/*
+!login/*/cache/.gitkeep
+
+# Runtime hub — history de l'agent 000
+prompts/000-hub-master/000.history
