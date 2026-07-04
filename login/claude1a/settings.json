@@ -3,6 +3,9 @@
   "effortLevel": "high",
   "skipDangerousModePermissionPrompt": true,
   "theme": "dark",
+  "env": {
+    "CLAUDE_CODE_DISABLE_MOUSE": "1"
+  },
   "permissions": {
     "deny": [
       "Read(./setup/secrets.cfg)",
