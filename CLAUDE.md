@@ -1,4 +1,4 @@
-# Multi-Agent System v3.0.3
+# Multi-Agent System v3.0.4
 
 Système d'orchestration multi-agents pour projets de développement complexes avec Claude Code.
 
@@ -530,4 +530,4 @@ git push origin main --tags
 
 ---
 
-*Multi-Agent System v3.0.3 - Mars 2026*
+*Multi-Agent System v3.0.4 - Mars 2026*
