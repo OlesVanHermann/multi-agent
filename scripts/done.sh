@@ -83,15 +83,8 @@ if [ "$FROM_AGENT" = "$TO_AGENT" ]; then
     exit 1
 fi
 
-# Triangle auto-resolve (same rule as send.sh)
-if [[ "$FROM_AGENT" =~ ^([0-9]+)-[0-9]+$ ]]; then
-    TRIANGLE="${BASH_REMATCH[1]}"
-    if [[ "$TO_AGENT" =~ ^[0-9]+$ ]] && [[ ! "$TO_AGENT" =~ - ]]; then
-        RESOLVED="${TRIANGLE}-${TO_AGENT}"
-        echo "[done.sh] WARNING: auto-resolved $TO_AGENT -> $RESOLVED (sender $FROM_AGENT is in triangle $TRIANGLE)" >&2
-        TO_AGENT="$RESOLVED"
-    fi
-fi
+# Triangle auto-resolve (règle partagée : resolve_triangle_target, lib.sh)
+TO_AGENT=$(resolve_triangle_target "$FROM_AGENT" "$TO_AGENT" "$MA_PREFIX" "done.sh")
 
 TIMESTAMP=$(date +%s)
 
