@@ -1,0 +1,26 @@
+# F1 — Équivalent YAML de l'ancien workflow_review :
+# Developer (300) code -> Reviewer (301) review -> Developer (300) améliore.
+name: review
+defaults:
+  from_agent: 100
+  timeout: 120
+steps:
+  - name: code
+    agent: 300
+    prompt: "Ecris une fonction Python fibonacci(n) recursive"
+
+  - name: review
+    agent: 301
+    depends_on: [code]
+    prompt: |-
+      Review ce code et suggere des ameliorations:
+      ```python
+      {code}
+      ```
+
+  - name: improve
+    agent: 300
+    depends_on: [review]
+    prompt: |-
+      Ameliore ton code base sur ce review:
+      {review}
