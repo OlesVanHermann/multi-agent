@@ -211,6 +211,13 @@ Frontend → Backend (+ JWT) → Validation locale (clé publique)
 
 ## Lancement
 
+**Rebuild à chaud** : le backend monte les routes statiques
+inconditionnellement et résout les fichiers à la requête
+(`web/backend/server.py`). Pendant un `npm run build` / `web.sh rebuild`,
+`/` répond `503 Retry-After: 5` et les assets `404`, puis tout revient en
+`200` dès que `dist/` est reconstruit — sans redémarrage du backend, même
+si systemd le relance en plein rebuild.
+
 ```bash
 # 1. Build frontend
 cd web/frontend

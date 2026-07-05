@@ -215,6 +215,7 @@ docker inspect quay.io/keycloak/keycloak:<TAG> --format '{{index .RepoDigests 0}
 
 | Version | Date | Changements majeurs |
 |---------|------|---------------------|
+| v3.0.4–v3.0.7 | 2026-07 | redis.sh mot de passe env-only, `.github/` dans les manifests, scroll tmux (DISABLE_MOUSE dans les profils), défaut opus-4-8, dashboard résilient aux rebuilds frontend, triangle auto-resolve par vivacité (send.sh/done.sh), sessions Keycloak 7 j — les instances existantes appliquent les durées via kcadm (`docs/AUTH.md`) |
 | v3.0 | 2026-07 | Boucle verify au bridge (C1), WAL/budgets/stall (C2), banc bench/ (C0), migrations upgrade.sh |
 | v2.5 | 2026-03 | Effort selector, usage bars, agents 310/311/312, keepalive panel, Keycloak proxy-edge |
 | v2.4 | 2026-02 | Format mono/x45/z21, Chrome Bridge extension, agent 150, patch/ dir |

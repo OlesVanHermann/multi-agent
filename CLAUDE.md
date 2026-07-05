@@ -291,6 +291,17 @@ redis-cli RPUSH "ma:inject:300" "go"
 
 Voir `docs/BRIDGE.md` pour la documentation complète du bridge.
 
+### Triangle auto-resolve (send.sh / done.sh)
+
+Depuis un agent de triangle (`NNN-XXX`), une cible nue `YYY` est résolue
+selon la vivacité tmux (règle partagée `resolve_triangle_target`,
+`scripts/lib.sh`) :
+
+1. la session `NNN-YYY` tourne → résolu vers le triangle (raccourci) ;
+2. sinon la session `YYY` tourne → cible nue conservée (plan global,
+   ex. signaler au Master 100) ;
+3. sinon → résolu vers le triangle (l'inbox est rejouée au redémarrage).
+
 ### Pool Requests (Git)
 
 ```

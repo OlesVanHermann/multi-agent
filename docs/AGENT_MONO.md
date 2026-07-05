@@ -50,7 +50,7 @@ prompts/
 ├── agent_x45.type     # Vide — cible des agents x45
 ├── agent_z21.type     # Vide — cible des agents z21
 ├── default.login      # Profil Claude par défaut (ex: "claude1a")
-├── default.model      # Modèle par défaut (ex: "claude-opus-4-6")
+├── default.model      # Modèle par défaut (ex: "claude-opus-4-8")
 └── ...
 ```
 
@@ -64,7 +64,7 @@ Ces fichiers contiennent une **chaîne de texte simple** (le nom du profil ou du
 
 ```bash
 cat prompts/default.login   # → "claude1a"
-cat prompts/default.model   # → "claude-opus-4-6"
+cat prompts/default.model   # → "claude-opus-4-8"
 ```
 
 Chaque agent peut avoir son propre login/modèle via symlink :

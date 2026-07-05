@@ -55,10 +55,12 @@ pip install -r requirements.txt
 ## Étape 3 — Configurer les secrets
 
 ```bash
-cp setup/secrets.cfg scripts/secrets.cfg
+cp setup/secrets.cfg.template setup/secrets.cfg
 ```
 
-Le fichier `scripts/secrets.cfg` à remplir :
+Le fichier `setup/secrets.cfg` à remplir (c'est LE chemin sourcé par tous
+les scripts — `infra.sh` refuse de démarrer Keycloak avec les valeurs par
+défaut) :
 
 ```bash
 KEYCLOAK_ADMIN_PASSWORD=changeme   # ← changer (mot de passe Keycloak admin)
@@ -71,7 +73,7 @@ REDIS_PASSWORD=                    # laisser vide si Redis local sans auth
 **[HUMAIN]** Édite le fichier avec tes valeurs :
 
 ```bash
-nano ~/multi-agent/scripts/secrets.cfg
+nano ~/multi-agent/setup/secrets.cfg
 ```
 
 ---
@@ -83,7 +85,7 @@ git config --global user.name  "TonNom"
 git config --global user.email "ton@email.com"
 ```
 
-Les agents commitent avec `Co-Authored-By: Claude Sonnet 4.6` mais l'auteur reste ton identité.
+Les agents commitent avec un trailer `Co-Authored-By: Claude …` mais l'auteur reste ton identité.
 
 ---
 
@@ -143,13 +145,13 @@ cd ~/multi-agent/prompts
 ln -sf claude1a.login default.login
 ```
 
-Le dépôt inclut déjà `default.model -> opus-4-6.model` (Claude Opus 4.6 par défaut).
+Le dépôt inclut déjà `default.model -> opus-4-8.model` (Claude Opus 4.8 par défaut).
 Pour utiliser un autre modèle, mettre à jour le symlink :
 
 ```bash
-# Modèles disponibles : fable-5, sonnet-5, opus-4-7, opus-4-6, sonnet-4-6, sonnet-4-5, haiku-4-5
+# Modèles disponibles : fable-5, sonnet-5, opus-4-8, opus-4-7, opus-4-6, sonnet-4-6, sonnet-4-5, haiku-4-5
 ln -sf fable-5.model default.model      # → claude-fable-5
-# ou garder opus-4-6 (défaut)
+# ou garder opus-4-8 (défaut)
 ```
 
 Convention par classe d'agents (x45/z21) : **fable-5** pour 1XX (masters),
@@ -160,7 +162,7 @@ Vérifier :
 
 ```bash
 ls -la prompts/default.login prompts/default.model
-cat prompts/default.model    # → claude-opus-4-6  (ou le modèle choisi)
+cat prompts/default.model    # → claude-opus-4-8  (ou le modèle choisi)
 ```
 
 ---
@@ -280,6 +282,8 @@ tmux attach -t A-agent-000
 | Dashboard 404 | Voir `web/backend/` — `pip install -r requirements.txt` fait ? |
 | Keycloak 503 | Attendre 2 min — image lente au premier démarrage |
 | `claude: command not found` | Refaire l'étape 0 — Claude Code pas dans le PATH |
+| Pas de scroll dans les panes du dashboard | Vérifier qu'aucun `login/claude*/settings.json` ne contient `"tui": "fullscreen"` (l'écran alternatif vide l'historique tmux) et que `env.CLAUDE_CODE_DISABLE_MOUSE=1` y est présent, puis redémarrer les agents |
+| Re-login demandé plusieurs fois par jour | Realm importé avant v3.0.7 — appliquer les durées via kcadm, voir `docs/AUTH.md` § Durées de session |
 
 ---
 
