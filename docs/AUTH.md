@@ -80,6 +80,38 @@ Quand l'auth provient du cookie (envoyé automatiquement par le navigateur),
 toute requête mutative (`POST/PUT/PATCH/DELETE`) sur `/api/*` doit porter le
 header `X-CSRF-Token` égal au cookie `ma_csrf`, sinon 403.
 
+## Durées de session
+
+Valeurs du realm livré (`web/keycloak/realm-multi-agent.json`),
+verrouillées par `tests/test_realm_sessions.py` :
+
+| Paramètre | Valeur | Effet |
+|-----------|--------|-------|
+| `ssoSessionIdleTimeout` | 604800 (7 j) | Re-login exigé après 7 jours **sans aucune visite** du dashboard |
+| `ssoSessionMaxLifespan` | 2592000 (30 j) | Re-login exigé au plus tard tous les 30 jours |
+| `accessTokenLifespan` | 900 (15 min) | Transparent : le frontend refresh 60 s avant expiration, au chargement et au réveil (`AuthProvider.jsx`) |
+
+L'access token reste volontairement court : la longévité vient du refresh
+token (= idle), jamais d'un JWT longue durée.
+
+### Instances existantes : le realm ne se réimporte pas
+
+`--import-realm` ne joue qu'à la **création** du realm — le volume
+`ma-keycloak-data` persiste l'ancien réglage à travers les upgrades et les
+recréations de conteneur. Pour appliquer les nouvelles durées sur une
+machine déjà installée (mot de passe admin dans `setup/secrets.cfg`) :
+
+```bash
+docker exec ma-keycloak /opt/keycloak/bin/kcadm.sh config credentials \
+  --server http://localhost:8080 --realm master \
+  --user admin --password "$KEYCLOAK_ADMIN_PASSWORD"
+docker exec ma-keycloak /opt/keycloak/bin/kcadm.sh update realms/multi-agent \
+  -s ssoSessionIdleTimeout=604800 -s ssoSessionMaxLifespan=2592000
+```
+
+Effet immédiat sur les nouvelles sessions (les sessions déjà ouvertes
+gardent leur ancienne échéance idle jusqu'au prochain login).
+
 ## Vérification JWT (B2 — stricte)
 
 `_verify_jwt_minimal` (`web/backend/multi_agent/auth.py`), via **PyJWT** +

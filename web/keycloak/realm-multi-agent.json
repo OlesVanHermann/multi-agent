@@ -8,7 +8,7 @@
   "resetPasswordAllowed": true,
   "editUsernameAllowed": false,
   "bruteForceProtected": true,
-  "ssoSessionIdleTimeout": 21600,
+  "ssoSessionIdleTimeout": 604800,
   "ssoSessionMaxLifespan": 2592000,
   "accessTokenLifespan": 900,
   "roles": {
