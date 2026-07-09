@@ -18,6 +18,7 @@ Launch in tmux:
 
 import os
 import re
+import sys
 import json
 import time
 import glob
@@ -762,6 +763,12 @@ def scan_usage(r):
 
 
 def main():
+    # Derrière un pipe (tee), stdout est bufferisé à 8K : les lignes de log
+    # arriveraient avec des heures de retard. Flush à chaque ligne.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
     print(f"Starting scheduler (tick={TICK_INTERVAL}s, dir={CRONTAB_DIR})")
     print(f"Keepalive dir: {KEEPALIVE_DIR}")
     print(f"Redis: {REDIS_HOST}:{REDIS_PORT}, prefix: {MA_PREFIX}")
