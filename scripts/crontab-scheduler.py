@@ -562,6 +562,7 @@ def _sweep_profile(profile):
     _wait_prompt(session, timeout_s=60)
 
     bars, info = _scrape_usage_tab(session)
+    result["status"] = "ok" if bars else "no_bars"
     result["bars"] = len(bars) if bars else 0
     if info:
         result["email"] = info.get("email", "")
