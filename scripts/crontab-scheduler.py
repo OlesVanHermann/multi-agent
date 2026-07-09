@@ -22,6 +22,7 @@ import json
 import time
 import glob
 import subprocess
+import threading
 import concurrent.futures
 import redis
 
@@ -222,7 +223,24 @@ def scan_and_execute(r):
             print(f"ERROR sending to {agent_id}: {e}")
 
 
-KEEPALIVE_USAGE_PERIOD = 10  # minutes — scrape one profile every 10min (round-robin)
+# Round-robin /status : 0 = désactivé (remplacé par le sweep 12h ci-dessous).
+# Réactivable via MA_KEEPALIVE_RR_MIN=10 pour l'ancien comportement.
+KEEPALIVE_USAGE_PERIOD = int(os.environ.get("MA_KEEPALIVE_RR_MIN", "0"))
+
+# Sweep keepalive : toutes les MA_KEEPALIVE_SWEEP_MIN minutes (défaut 12h),
+# lance/réutilise une session tmux par profil login/claude*, envoie un hello
+# (vrai appel API → la session OAuth ne s'endort pas), scrape /status et
+# écrit l'état de chaque login dans keepalive/. 0 = désactivé.
+KEEPALIVE_SWEEP_MIN = int(os.environ.get("MA_KEEPALIVE_SWEEP_MIN", "720"))
+LOGIN_DIR = os.environ.get("LOGIN_DIR", os.path.join(os.path.dirname(__file__), "..", "login"))
+LOGIN_EXPIRED_MARKERS = (
+    "select login method",
+    "run /login",
+    "session has expired",
+    "invalid api key",
+    "sign in to claude",
+)
+_sweep_thread = None
 
 
 def _scrape_usage_tab(session_name):
@@ -388,6 +406,9 @@ def scan_keepalive():
     The /status scrape also serves as keepalive — no separate heartbeat needed.
     With 8 profiles, each is scraped every 80 minutes.
     """
+    if KEEPALIVE_USAGE_PERIOD <= 0:
+        return
+
     now = time.localtime()
     minute = now.tm_min
     hour = now.tm_hour
@@ -455,6 +476,153 @@ def scan_keepalive():
             print(f"{ts} KEEPALIVE usage {profile}: no bars")
 
     _last_fired["keepalive_usage_rr"] = usage_key
+
+
+# --- Sweep keepalive 12h : hello + état de chaque login ---
+
+def _pane_text(session, lines=30):
+    cap = subprocess.run(
+        ["tmux", "capture-pane", "-t", session, "-p", "-S", f"-{lines}"],
+        capture_output=True, text=True, timeout=5
+    )
+    return cap.stdout
+
+
+def _ensure_profile_session(profile):
+    """Return (session, created). Start Claude with the profile if not running."""
+    session = f"{MA_PREFIX}-agent-002-{profile}"
+    check = subprocess.run(
+        ["tmux", "has-session", "-t", session],
+        capture_output=True, timeout=5
+    )
+    if check.returncode == 0:
+        return session, False
+    base = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    profile_dir = os.path.join(os.path.abspath(LOGIN_DIR), profile)
+    cmd = (f"cd '{base}' && CLAUDE_CONFIG_DIR='{profile_dir}' "
+           f"claude --dangerously-skip-permissions")
+    subprocess.run(["tmux", "new-session", "-d", "-s", session, cmd], timeout=10)
+    return session, True
+
+
+def _wait_prompt(session, timeout_s=90):
+    """Wait for a clean prompt. Returns 'ready', 'login_required' or 'timeout'."""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        try:
+            text = _pane_text(session)
+        except Exception:
+            text = ""
+        low = text.lower()
+        if any(m in low for m in LOGIN_EXPIRED_MARKERS):
+            return "login_required"
+        last_lines = [l for l in text.strip().split("\n") if l.strip()][-3:]
+        if any("❯" in l for l in last_lines):
+            return "ready"
+        time.sleep(3)
+    return "timeout"
+
+
+def _sweep_profile(profile):
+    """Hello + /status scrape for one profile. Returns a status dict."""
+    session, created = _ensure_profile_session(profile)
+    if created:
+        time.sleep(5)
+    state = _wait_prompt(session)
+    result = {"profile": profile, "session": session, "status": state,
+              "created": created, "ts": int(time.time())}
+    if state != "ready":
+        # Publie quand même l'état pour le dashboard (bars vides + status)
+        usage_data = {"profile": profile, "bars": [], "status": state,
+                      "last_scan": int(time.time())}
+        with open(os.path.join(KEEPALIVE_DIR, f"usage_{profile}.json"), "w") as f:
+            json.dump(usage_data, f, indent=2)
+        return result
+
+    # Hello : un vrai échange API rafraîchit la session OAuth
+    subprocess.run(
+        ["tmux", "send-keys", "-t", session, "hello (keepalive) - reponds en un mot", "Enter"],
+        timeout=5
+    )
+    time.sleep(30)
+    _wait_prompt(session, timeout_s=60)
+
+    bars, info = _scrape_usage_tab(session)
+    result["bars"] = len(bars) if bars else 0
+    if info:
+        result["email"] = info.get("email", "")
+        with open(os.path.join(KEEPALIVE_DIR, f"info_{profile}.json"), "w") as f:
+            json.dump(info, f, indent=2)
+    usage_data = {"profile": profile, "bars": bars or [], "status": "ok" if bars else "no_bars",
+                  "last_scan": int(time.time())}
+    with open(os.path.join(KEEPALIVE_DIR, f"usage_{profile}.json"), "w") as f:
+        json.dump(usage_data, f, indent=2)
+    # .active : la session reste vivante entre deux sweeps (modèle existant)
+    active = os.path.join(KEEPALIVE_DIR, f"{profile}.active")
+    if not os.path.exists(active):
+        with open(active, "w") as f:
+            f.write("keepalive sweep\n")
+    return result
+
+
+def _run_sweep():
+    """Sequential sweep over all login/claude* profiles."""
+    report = {"started": int(time.time()), "profiles": {}}
+    try:
+        profiles = sorted(
+            d for d in os.listdir(LOGIN_DIR)
+            if re.match(r'^claude\d[ab]$', d)
+            and os.path.isdir(os.path.join(LOGIN_DIR, d))
+            and not os.path.exists(os.path.join(KEEPALIVE_DIR, f"{d}.suspended"))
+        )
+    except OSError as e:
+        print(f"{time.strftime('%H:%M:%S')} KEEPALIVE sweep: login dir error: {e}")
+        return
+    print(f"{time.strftime('%H:%M:%S')} KEEPALIVE sweep start: {', '.join(profiles) or 'aucun profil'}")
+    for profile in profiles:
+        try:
+            res = _sweep_profile(profile)
+        except Exception as e:
+            res = {"profile": profile, "status": f"error: {e}", "ts": int(time.time())}
+        report["profiles"][profile] = res
+        ts = time.strftime("%H:%M:%S")
+        print(f"{ts} KEEPALIVE sweep {profile}: {res.get('status')}"
+              + (f" ({res.get('bars')} bars)" if res.get('bars') else ""))
+    report["finished"] = int(time.time())
+    try:
+        with open(os.path.join(KEEPALIVE_DIR, "sweep_report.json"), "w") as f:
+            json.dump(report, f, indent=2)
+    except Exception as e:
+        print(f"KEEPALIVE sweep report write error: {e}")
+    bad = [p for p, r in report["profiles"].items() if r.get("status") != "ok"]
+    print(f"{time.strftime('%H:%M:%S')} KEEPALIVE sweep done: "
+          f"{len(report['profiles']) - len(bad)}/{len(report['profiles'])} ok"
+          + (f" — à vérifier: {', '.join(bad)}" if bad else ""))
+
+
+def scan_keepalive_sweep():
+    """Fire the sweep in a background thread when the last one is older
+    than KEEPALIVE_SWEEP_MIN. Timestamp-based (reboot-safe), not clock-aligned.
+    The stamp is written at start so a crashing sweep doesn't refire each tick."""
+    global _sweep_thread
+    if KEEPALIVE_SWEEP_MIN <= 0:
+        return
+    if _sweep_thread and _sweep_thread.is_alive():
+        return
+    os.makedirs(KEEPALIVE_DIR, exist_ok=True)
+    stamp = os.path.join(KEEPALIVE_DIR, "last_sweep.txt")
+    last = 0
+    try:
+        with open(stamp) as f:
+            last = int(f.read().strip())
+    except (OSError, ValueError):
+        pass
+    if time.time() - last < KEEPALIVE_SWEEP_MIN * 60:
+        return
+    with open(stamp, "w") as f:
+        f.write(str(int(time.time())))
+    _sweep_thread = threading.Thread(target=_run_sweep, daemon=True)
+    _sweep_thread.start()
 
 
 def scan_usage(r):
@@ -611,6 +779,7 @@ def main():
         try:
             scan_and_execute(r)
             scan_keepalive()
+            scan_keepalive_sweep()
             scan_usage(r)
         except redis.ConnectionError as e:
             print(f"Redis connection lost: {e}, retrying...")

@@ -177,6 +177,30 @@ Boucle verify, WAL et détection de stall : voir `docs/V3.md`.
 
 ---
 
+## Keepalive des logins (crontab-scheduler)
+
+Le scheduler (`scripts/crontab-scheduler.py`, session tmux
+`{MA_PREFIX}-agent-001`) balaie tous les profils `login/claude*` :
+
+- **Sweep** toutes les `MA_KEEPALIVE_SWEEP_MIN` minutes (défaut `720` = 12 h,
+  `0` = désactivé) : pour chaque profil, démarre (ou réutilise) la session
+  tmux `{MA_PREFIX}-agent-002-{profil}`, envoie un « hello » (vrai appel API
+  → la session OAuth ne s'endort pas), scrape `/status` (usage + identité)
+  et écrit `keepalive/usage_{profil}.json`, `info_{profil}.json` et un
+  récapitulatif `keepalive/sweep_report.json`.
+- **États** par profil : `ok`, `no_bars`, `login_required` (re-login à
+  faire), `timeout`. Visible dans le panneau « Login Keep Alive » du
+  dashboard et dans `logs/crontab-scheduler.log`.
+- Le sweep est horodaté (`keepalive/last_sweep.txt`), pas aligné sur
+  l'horloge : au (re)démarrage, si le dernier sweep date de plus de 12 h,
+  il part immédiatement.
+- `{profil}.suspended` dans `keepalive/` exclut un profil du sweep ;
+  `LOGIN_DIR` change le répertoire des profils.
+- L'ancien round-robin `/status` (10 min) est désactivé par défaut ;
+  `MA_KEEPALIVE_RR_MIN=10` le réactive.
+
+---
+
 ## Monitoring
 
 - **Heartbeat** : `mi:agent:{id}:heartbeat` toutes les 10 s (statut, mémoire,
