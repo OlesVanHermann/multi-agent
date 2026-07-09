@@ -517,6 +517,11 @@ def _wait_prompt(session, timeout_s=90):
         low = text.lower()
         if any(m in low for m in LOGIN_EXPIRED_MARKERS):
             return "login_required"
+        # Écrans d'onboarding (thème, notes) : valider le défaut et continuer
+        if "choose the text style" in low or "press enter to continue" in low:
+            subprocess.run(["tmux", "send-keys", "-t", session, "Enter"], timeout=5)
+            time.sleep(2)
+            continue
         last_lines = [l for l in text.strip().split("\n") if l.strip()][-3:]
         if any("❯" in l for l in last_lines):
             return "ready"
@@ -526,6 +531,14 @@ def _wait_prompt(session, timeout_s=90):
 
 def _sweep_profile(profile):
     """Hello + /status scrape for one profile. Returns a status dict."""
+    # Profil template jamais loggé : ne pas démarrer de session pour rien
+    creds = os.path.join(os.path.abspath(LOGIN_DIR), profile, ".credentials.json")
+    if not os.path.exists(creds):
+        usage_data = {"profile": profile, "bars": [], "status": "no_credentials",
+                      "last_scan": int(time.time())}
+        with open(os.path.join(KEEPALIVE_DIR, f"usage_{profile}.json"), "w") as f:
+            json.dump(usage_data, f, indent=2)
+        return {"profile": profile, "status": "no_credentials", "ts": int(time.time())}
     session, created = _ensure_profile_session(profile)
     if created:
         time.sleep(5)
