@@ -89,10 +89,12 @@ NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH_NUM}"
 echo -e "${CYAN}[3/6] Version: ${YELLOW}$CURRENT_TAG${NC} → ${GREEN}$NEW_VERSION${NC}"
 echo ""
 
-# 5. Update version in CLAUDE.md
-echo -e "${CYAN}[4/6] Updating version in CLAUDE.md...${NC}"
-sed -i "s/Multi-Agent System v[0-9]*\.[0-9]*/Multi-Agent System v${MAJOR}.${MINOR}/" CLAUDE.md 2>/dev/null || true
-sed -i "s/Multi-Agent System v[0-9]*\.[0-9]*\.[0-9]*/Multi-Agent System v${MAJOR}.${MINOR}.${PATCH_NUM}/" CLAUDE.md 2>/dev/null || true
+# 5. Update version in CLAUDE.md + README.md
+echo -e "${CYAN}[4/6] Updating version in CLAUDE.md + README.md...${NC}"
+for DOC in CLAUDE.md README.md; do
+    sed -i "s/Multi-Agent System v[0-9]*\.[0-9]*/Multi-Agent System v${MAJOR}.${MINOR}/" "$DOC" 2>/dev/null || true
+    sed -i "s/Multi-Agent System v[0-9]*\.[0-9]*\.[0-9]*/Multi-Agent System v${MAJOR}.${MINOR}.${PATCH_NUM}/" "$DOC" 2>/dev/null || true
+done
 
 # Count changes since last tag
 # NB : les tags release sont des commits orphelins → la plage couvre tout
@@ -118,7 +120,7 @@ git ls-files -z -- "${FRAMEWORK_PATHS[@]}" ':!patch/checksums.sha256' \
 git add patch/checksums.sha256
 
 # Commit version bump
-git add CLAUDE.md
+git add CLAUDE.md README.md
 git commit -m "release: $NEW_VERSION" --allow-empty 2>/dev/null || true
 echo ""
 
