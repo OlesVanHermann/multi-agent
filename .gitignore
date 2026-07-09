@@ -106,6 +106,9 @@ bench/results/*
 # Uploads runtime (destination /api/upload)
 uploads/
 
+# Keepalive runtime (sweep 12h : états logins, usage, horodatage)
+keepalive/
+
 # Secrets (real passwords — never commit)
 setup/secrets.cfg
 
