@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react'
 import { api } from '../basePath'
+import { apiFetch } from '../apiFetch'
 import { createLogger } from '../lib/logger'
 import { useAuth } from '../AuthProvider'
 import { useAgentWebSocket } from './terminal/useAgentWebSocket'
@@ -324,7 +325,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       for (const file of files) {
         const form = new FormData()
         form.append('file', file)
-        const res = await fetch(api('api/upload'), { method: 'POST', body: form })
+        const res = await apiFetch('api/upload', { method: 'POST', body: form })
         if (!res.ok) {
           const err = await res.json().catch(() => ({}))
           alert(`Upload failed: ${err.detail || res.statusText}`)
