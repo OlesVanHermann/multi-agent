@@ -233,6 +233,34 @@ docker-compose up -d
 # → Login: admin / changeme (changer au premier login)
 ```
 
+### Durcissement systemd : ReadWritePaths obligatoires
+
+Si le backend tourne sous une unité systemd durcie (`ProtectHome=read-only`
+ou `ProtectSystem=strict`), il faut autoriser explicitement **tous** les
+répertoires que le backend écrit — sinon les endpoints échouent en 500
+silencieux (`[Errno 30] Read-only file system`), vécu sur l'upload :
+
+```ini
+[Service]
+EnvironmentFile=%h/multi-agent/setup/secrets.cfg
+ReadWritePaths=%h/multi-agent/logs
+ReadWritePaths=%h/multi-agent/uploads
+ReadWritePaths=%h/multi-agent/crontab
+ReadWritePaths=%h/multi-agent/keepalive
+ReadWritePaths=%h/multi-agent/prompts
+```
+
+Écritures du backend par répertoire : `logs/` (logs frontend B7),
+`uploads/` (`/api/upload`), `crontab/` (prompts planifiés),
+`keepalive/` (`.active`/`.suspended` + fichiers du sweep),
+`prompts/` (`tmux.width`, `favoris-*.json`, `*.effort`, `*.notes`).
+Vérifier après déploiement depuis le namespace réel du service :
+
+```bash
+sudo systemd-run -p JoinsNamespaceOf=multiagent-dashboard.service -p ProtectHome=read-only \
+  --wait -P touch ~/multi-agent/uploads/.rw-test
+```
+
 ---
 
 ## Intégration avec multi-agent existant
