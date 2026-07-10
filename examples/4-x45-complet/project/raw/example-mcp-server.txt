@@ -1,0 +1,71 @@
+Example MCP Server: filesystem-server (reference implementation)
+
+File: server.py
+
+import asyncio
+from pathlib import Path
+from mcp.server import Server
+from mcp.types import Tool, TextContent
+from mcp.server.stdio import stdio_server
+
+app = Server("filesystem-server")
+
+@app.list_tools()
+async def list_tools() -> list[Tool]:
+    return [
+        Tool(
+            name="read_file",
+            description="Read the contents of a file",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to the file"}
+                },
+                "required": ["path"]
+            }
+        ),
+        Tool(
+            name="write_file",
+            description="Write content to a file",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to the file"},
+                    "content": {"type": "string", "description": "Content to write"}
+                },
+                "required": ["path", "content"]
+            }
+        )
+    ]
+
+@app.call_tool()
+async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+    match name:
+        case "read_file":
+            path = Path(arguments["path"])
+            if not path.exists():
+                return [TextContent(type="text", text=f"Error: file not found: {path}")]
+            content = path.read_text()
+            return [TextContent(type="text", text=content)]
+        case "write_file":
+            path = Path(arguments["path"])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(arguments["content"])
+            return [TextContent(type="text", text=f"OK: written {len(arguments['content'])} chars to {path}")]
+        case _:
+            return [TextContent(type="text", text=f"Error: unknown tool {name}")]
+
+async def main():
+    async with stdio_server() as (read, write):
+        await app.run(read, write, app.create_initialization_options())
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+Pattern observations:
+- One @app.list_tools() that returns all Tool objects
+- One @app.call_tool() with match/case dispatch
+- Each tool returns list[TextContent]
+- Error handling via TextContent (not exceptions) for user-visible errors
+- Server initialization via stdio_server context manager
+- asyncio.run(main()) entry point
