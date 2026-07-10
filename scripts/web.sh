@@ -12,6 +12,13 @@ if [ -f "$BASE_DIR/setup/secrets.cfg" ]; then
     set -a
     eval "$(grep -E '^[A-Z_]+=' "$BASE_DIR/setup/secrets.cfg" | grep -v '^#')"
     set +a
+else
+    # Garde-fou : sans secrets.cfg le backend démarre mais rien ne marche
+    # (Redis NOAUTH, ws-ticket 503). Cas typique : lancé depuis un clone
+    # patch (~/multi-agent-git) au lieu du working copy (~/multi-agent).
+    echo -e "\033[0;31m[ERROR]\033[0m $BASE_DIR/setup/secrets.cfg absent — mauvais répertoire ?" >&2
+    echo "        Lancer depuis le working copy : cd ~/multi-agent && ./scripts/web.sh $1" >&2
+    exit 1
 fi
 WEB_DIR="$BASE_DIR/web"
 LOG_DIR="$BASE_DIR/logs/000"
