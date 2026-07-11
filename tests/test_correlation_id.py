@@ -41,6 +41,8 @@ class TestBridgePropagation:
         agent.group = "bridge"
         agent.consumer = "agent-300"
         agent.prompt_queue = Queue()
+        agent._inflight_ids = set()
+        agent._inflight_lock = __import__("threading").Lock()
         agent.metrics = None
         agent.redis = MagicMock()
         agent._log = MagicMock()
@@ -60,6 +62,8 @@ class TestBridgePropagation:
         agent.group = "bridge"
         agent.consumer = "agent-300"
         agent.prompt_queue = Queue()
+        agent._inflight_ids = set()
+        agent._inflight_lock = __import__("threading").Lock()
         agent.metrics = None
         agent.redis = MagicMock()
         agent._log = MagicMock()

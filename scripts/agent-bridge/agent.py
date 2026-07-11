@@ -294,6 +294,13 @@ class TmuxAgent:
         self.current_task = None
         self.history = deque(maxlen=MAX_HISTORY)
 
+        # A5 (fix re-injection 11/07) : ids inbox en vol — un message Redis
+        # deja mis en queue ne doit JAMAIS y retourner tant qu'il n'est pas
+        # XACK (une injection = un ack). Protege contre toute re-livraison
+        # (drain pending, XAUTOCLAIM futur, bug de boucle).
+        self._inflight_ids = set()
+        self._inflight_lock = Lock()
+
         # Logging
         self.log_dir = Path(LOG_DIR) / self.agent_id
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -494,6 +501,7 @@ class TmuxAgent:
         response_started = False
         last_printed = 0
         poll = POLL_MIN
+        queued_logged = False
 
         while time.time() - start_time < timeout:
             time.sleep(poll)
@@ -502,10 +510,17 @@ class TmuxAgent:
             # A2: poll court tant que le pane change, allongé dès stabilité
             poll = _next_poll_interval(poll, current != last_content)
 
-            # Detect queued message (Claude busy with bashes, prompt not processed)
+            # Detect queued message (Claude busy, prompt queued by the TUI).
+            # A5 : NE PAS retourner — l'ancien code renvoyait le pane comme
+            # "reponse" (publiee + ack) pendant que la TUI gardait le prompt
+            # en file ; combine aux re-livraisons, ca floodait la TUI. Le
+            # prompt EST pris en compte (file TUI) : on attend l'idle, la TUI
+            # le soumettra elle-meme ; RESPONSE_TIMEOUT borne l'attente.
             if QUEUED_MSG in current:
-                self._log("QUEUED MESSAGE detected — prompt not processed, returning")
-                return current
+                if not queued_logged:
+                    self._log("QUEUED MESSAGE detected — Claude busy, waiting for idle (no re-send)")
+                    queued_logged = True
+                continue
 
             # Detect plan mode approval prompt — signal blue, wait for user
             if APPROVAL_PROMPT in current:
@@ -775,6 +790,10 @@ class TmuxAgent:
             self.redis.xack(self.inbox, self.group, msg_id)
         except Exception as e:
             self._log(f"XACK error for {msg_id}: {e}")
+        # A5 : l'id n'est plus en vol — une eventuelle nouvelle livraison
+        # (impossible apres XACK en temps normal) redeviendrait acceptable.
+        with self._inflight_lock:
+            self._inflight_ids.discard(msg_id)
 
     def _handle_inbox_message(self, msg_id, data):
         """Handle one inbox stream message.
@@ -794,6 +813,14 @@ class TmuxAgent:
         msg_type = data.get('type', 'prompt')
 
         if msg_type == 'prompt' or 'prompt' in data:
+            # A5 : dedup en vol — le drain pending (ou toute re-livraison)
+            # peut representer un message pas encore XACK ; il est deja en
+            # queue ou en cours d'execution, ne pas le re-queuer.
+            with self._inflight_lock:
+                if msg_id in self._inflight_ids:
+                    self._log(f"DUPLICATE delivery {msg_id} ignored (in-flight, not re-queued)")
+                    return
+                self._inflight_ids.add(msg_id)
             raw_from = data.get('from_agent', 'unknown')
             safe_from = raw_from if re.fullmatch(
                 rf'{AGENT_ID_PATTERN}|cli|manual|legacy|unknown|auto_init'
@@ -858,15 +885,24 @@ class TmuxAgent:
                     group_ready = True
 
                 if not pending_drained:
+                    # A5 (fix re-injection 11/07) : curseur AVANCANT. L'ancien
+                    # code relisait la PEL depuis '0' a chaque tour — un prompt
+                    # reste pending jusqu'a son XACK (apres traitement), donc
+                    # la boucle re-queuait LE MEME message en continu (19393
+                    # "Recovering" constates, 130 injections du meme dispatch).
+                    # Avec le curseur, chaque entree pending est livree UNE
+                    # fois par demarrage ; le rejeu au restart est preserve.
+                    cursor = '0'
                     while self.running:
                         result = self.redis.xreadgroup(
-                            self.group, self.consumer, {self.inbox: '0'}, count=10)
+                            self.group, self.consumer, {self.inbox: cursor}, count=10)
                         messages = result[0][1] if result else []
                         if not messages:
                             break
                         self._log(f"Recovering {len(messages)} pending message(s) from previous run")
                         for msg_id, data in messages:
                             self._handle_inbox_message(msg_id, data)
+                            cursor = msg_id
                     pending_drained = True
 
                 result = self.redis.xreadgroup(
@@ -948,6 +984,21 @@ class TmuxAgent:
                 task = self.prompt_queue.get(timeout=1)
             except Empty:
                 continue
+
+            # A5 : l'etat de verite est Redis — un message XDEL/trim de
+            # l'inbox pendant qu'il attendait en queue memoire ne doit PAS
+            # etre injecte (l'operateur l'a annule). Coherent avec le drain
+            # (entry trimmed while pending -> ack, nothing to replay).
+            if task.get('ack_id') and task.get('source') == 'redis':
+                try:
+                    still_there = self.redis.xrange(
+                        self.inbox, task['ack_id'], task['ack_id'])
+                except Exception:
+                    still_there = [True]  # Redis KO : ne pas perdre la tache
+                if not still_there:
+                    self._log(f"Message {task['ack_id']} deleted from inbox (XDEL) — dropping, not injecting")
+                    self._ack_inbox(task['ack_id'])
+                    continue
 
             with self.state_lock:
                 self.state = State.BUSY

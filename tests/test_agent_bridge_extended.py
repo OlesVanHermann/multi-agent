@@ -201,6 +201,8 @@ class TestRedisConnectionLoss:
         agent.agent_id = "401"
         agent.state = State.IDLE
         agent.prompt_queue = Queue()
+        agent._inflight_ids = set()
+        agent._inflight_lock = __import__("threading").Lock()
         agent.tasks_completed = 0
         agent.messages_since_reload = 0
         agent.redis = MagicMock()
@@ -220,6 +222,8 @@ class TestRedisConnectionLoss:
         agent.consumer = "agent-402"
         agent.running = True
         agent.prompt_queue = Queue()
+        agent._inflight_ids = set()
+        agent._inflight_lock = __import__("threading").Lock()
         agent.logfile = MagicMock()
         agent.metrics = None
 
@@ -299,6 +303,8 @@ class TestCommandErrors:
         agent = object.__new__(TmuxAgent)
         agent.state = State.IDLE
         agent.prompt_queue = Queue()
+        agent._inflight_ids = set()
+        agent._inflight_lock = __import__("threading").Lock()
         agent.tasks_completed = 5
         agent._log = MagicMock()
 
@@ -350,6 +356,8 @@ class TestCommandErrors:
 
         agent = object.__new__(TmuxAgent)
         agent.prompt_queue = Queue()
+        agent._inflight_ids = set()
+        agent._inflight_lock = __import__("threading").Lock()
         agent.prompt_queue.put("task1")
         agent.prompt_queue.put("task2")
         agent._log = MagicMock()
@@ -370,6 +378,8 @@ class TestCommandErrors:
         agent.state_lock = Lock()
         agent.running = True
         agent.prompt_queue = Queue()
+        agent._inflight_ids = set()
+        agent._inflight_lock = __import__("threading").Lock()
         agent.history = deque(maxlen=50)
         agent.tasks_completed = 0
         agent.messages_since_reload = 0

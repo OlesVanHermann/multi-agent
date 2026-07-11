@@ -222,6 +222,8 @@ class TestPromptReload:
         agent.agent_id = "300"
         agent.messages_since_reload = 15
         agent.prompt_queue = Queue()
+        agent._inflight_ids = set()
+        agent._inflight_lock = __import__("threading").Lock()
         agent._log = MagicMock()
         agent._send_keys = MagicMock()
         agent._set_redis_status = MagicMock()
@@ -241,6 +243,8 @@ class TestPromptReload:
         agent.agent_id = "300"
         agent.messages_since_reload = 5
         agent.prompt_queue = Queue()
+        agent._inflight_ids = set()
+        agent._inflight_lock = __import__("threading").Lock()
         agent._log = MagicMock()
         agent._send_keys = MagicMock()
         agent._set_redis_status = MagicMock()

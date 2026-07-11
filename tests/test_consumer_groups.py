@@ -36,6 +36,8 @@ def _make_agent():
     agent.consumer = "agent-300"
     agent.running = True
     agent.prompt_queue = Queue()
+    agent._inflight_ids = set()
+    agent._inflight_lock = __import__("threading").Lock()
     agent.metrics = None
     agent.redis = MagicMock()
     agent._log = MagicMock()

@@ -32,6 +32,8 @@ def _make_agent(agent_id="999"):
     agent.messages_since_reload = 0
     agent.last_output_lines = 0
     agent.prompt_queue = Queue()
+    agent._inflight_ids = set()
+    agent._inflight_lock = __import__("threading").Lock()
     agent.current_task = None
     agent.history = deque(maxlen=MAX_HISTORY)
     agent.log_dir = Path("/tmp/test-agent-345-logs")
