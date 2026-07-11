@@ -51,6 +51,15 @@ export function useAgentWebSocket({ agentId, pollInterval, ensureFreshToken, han
 
     // Connect WebSocket (pauses when tab is hidden)
     let intentionalClose = false
+    // cancelled: set by the effect cleanup. A connect() past its awaits when the
+    // agent switches would otherwise reset intentionalClose, open a socket for
+    // the OLD agent and overwrite wsRef — the old agent's output then flows into
+    // the new agent's terminal (334-334/334-934 flip-flop).
+    let cancelled = false
+    // Backoff exponentiel : 2s, 4s, 8s… plafonné à 30s, remis à zéro à
+    // l'ouverture. Un retry fixe à 2s pendant un incident brûle un ticket
+    // + une requête par terminal toutes les 2s et entretient la saturation.
+    let reconnectAttempts = 0
     let pingTimer = null
     let pongTimer = null
 
@@ -73,8 +82,9 @@ export function useAgentWebSocket({ agentId, pollInterval, ensureFreshToken, han
     }
 
     const connect = async () => {
-      if (document.hidden) return  // Don't connect if tab is hidden
+      if (cancelled || document.hidden) return  // Don't connect if cleaned up or tab is hidden
       const token = await ensureFreshToken()
+      if (cancelled) return
       if (!token) {
         reconnectTimeoutRef.current = setTimeout(() => {
           reconnectTimeoutRef.current = null  // clear fired timer so scheduleReconnect/visibility/online aren't blocked
@@ -85,10 +95,15 @@ export function useAgentWebSocket({ agentId, pollInterval, ensureFreshToken, han
       // B4 : ticket à usage unique demandé à chaque (re)connexion ;
       // en cas d'échec le cookie HttpOnly authentifie encore le handshake.
       const ticket = await getWsTicket()
+      if (cancelled) return
       intentionalClose = false
       const freshWsUrl = wsUrl(`ws/agent/${agentId}?poll=${pollInterval}${ticket ? `&ticket=${ticket}` : ''}`)
       const ws = new WebSocket(freshWsUrl)
       wsRef.current = ws
+      // État local du protocole delta : le serveur envoie un snapshot complet
+      // ({type:'output'}) puis des deltas {keep, append} (new = old[:keep] + append).
+      // La reconstruction vit ici — le Terminal reçoit toujours le texte complet.
+      let outputLines = null
 
       ws.onopen = () => {
         if (wsRef.current !== ws) {
@@ -98,18 +113,32 @@ export function useAgentWebSocket({ agentId, pollInterval, ensureFreshToken, han
         }
         applyWsState('live')
         log.ws('open', { agentId })
+        reconnectAttempts = 0
         startHeartbeat(ws)
       }
 
       ws.onmessage = (event) => {
+        // Stale socket (agent switched while this one lived): drop its messages
+        // and close it — never let another agent's output reach this terminal.
+        if (wsRef.current !== ws) {
+          try { ws.close() } catch {}
+          return
+        }
         const data = JSON.parse(event.data)
+        if (data.agent_id && data.agent_id !== agentId) return
 
         if (data.type === 'pong') {
           if (pongTimer) { clearTimeout(pongTimer); pongTimer = null }
           return
         }
         if (data.type === 'output') {
+          outputLines = (data.output || '').split('\n')
           handlersRef.current.onOutput(data.output || '')
+        }
+        else if (data.type === 'output_delta') {
+          if (outputLines === null) return  // delta avant snapshot : ignorer
+          outputLines = outputLines.slice(0, data.keep).concat(data.append || [])
+          handlersRef.current.onOutput(outputLines.join('\n'))
         }
         else if (data.type === 'input_sync') {
           handlersRef.current.onInputSync(data.current_input || '')
@@ -123,10 +152,12 @@ export function useAgentWebSocket({ agentId, pollInterval, ensureFreshToken, han
         clearHeartbeat()
         if (intentionalClose) return  // prevent zombie reconnects after cleanup
         if (reconnectTimeoutRef.current) return  // already scheduled, avoid double-fire
+        const delay = Math.min(2000 * 2 ** reconnectAttempts, 30000)
+        reconnectAttempts += 1
         reconnectTimeoutRef.current = setTimeout(() => {
           reconnectTimeoutRef.current = null
           connect()
-        }, 2000)
+        }, delay)
       }
 
       ws.onclose = (event) => {
@@ -205,6 +236,7 @@ export function useAgentWebSocket({ agentId, pollInterval, ensureFreshToken, han
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current)
       clearDisconnectTimer()
       intentionalClose = true
+      cancelled = true
       clearHeartbeat()
       wakeReconnectRef.current = null
       if (wsRef.current) {

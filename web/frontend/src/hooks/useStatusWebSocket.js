@@ -19,6 +19,9 @@ export function useStatusWebSocket({ statusPoll, ensureFreshToken, applyUpdate, 
   // WebSocket for real-time status (pauses when tab is hidden)
   useEffect(() => {
     let intentionalClose = false
+    // Backoff exponentiel : 3s, 6s, 12s… plafonné à 60s, remis à zéro à
+    // l'ouverture — un retry fixe entretient la charge pendant un incident.
+    let reconnectAttempts = 0
     let pingTimer = null
     let pongTimer = null
 
@@ -71,6 +74,7 @@ export function useStatusWebSocket({ statusPoll, ensureFreshToken, applyUpdate, 
       ws.onopen = () => {
         log.ws('open', { endpoint: 'ws/status' })
         setWsLive(true)
+        reconnectAttempts = 0
         startHeartbeat(ws)
       }
 
@@ -78,10 +82,12 @@ export function useStatusWebSocket({ statusPoll, ensureFreshToken, applyUpdate, 
         clearHeartbeat()
         if (intentionalClose) return
         if (reconnectTimer.current) return  // already scheduled
+        const delay = Math.min(3000 * 2 ** reconnectAttempts, 60000)
+        reconnectAttempts += 1
         reconnectTimer.current = setTimeout(() => {
           reconnectTimer.current = null
           connect()
-        }, 3000)
+        }, delay)
       }
 
       ws.onclose = () => {

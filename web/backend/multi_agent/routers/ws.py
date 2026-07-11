@@ -1,4 +1,4 @@
-"""Endpoints WebSocket : /ws/agent, /ws/messages, /ws/status (B1)."""
+"""Endpoints WebSocket : /ws/agent (fan-out par agent + deltas), /ws/status (B1)."""
 
 import asyncio
 import json
@@ -83,38 +83,138 @@ async def _reject(websocket: WebSocket, code: int) -> None:
         pass
 
 
-class ConnectionManager:
-    """Manage WebSocket connections"""
-
-    MAX_CONNECTIONS = 200
-
-    def __init__(self):
-        self.active_connections: list[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket) -> bool:
-        if len(self.active_connections) >= self.MAX_CONNECTIONS:
-            await websocket.close(code=1013)
-            return False
-        await websocket.accept()
-        self.active_connections.append(websocket)
-        return True
-
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-
-    async def broadcast(self, message: dict):
-        for connection in self.active_connections:
-            try:
-                await connection.send_json(message)
-            except Exception:
-                pass
-
-
-manager = ConnectionManager()
-
 _ws_agent_connections: list[WebSocket] = []
 _WS_AGENT_MAX = 100
+
+# ────────────────────────────────────────────────────────────────────
+# Fan-out par agent : UNE boucle de capture tmux par agent observé,
+# partagée par tous les WS abonnés — le coût serveur est proportionnel
+# aux agents regardés, plus au nombre de navigateurs.
+#
+# Protocole : premier message d'un abonné = snapshot complet {type:
+# "output"} ; ensuite des deltas {type: "output_delta", keep, append} où
+# keep = nombre de lignes du préfixe commun conservées et append = lignes
+# qui remplacent la suite (new == old[:keep] + append). Un redraw du bas
+# d'écran coûte ainsi ~1-4 Ko par tick au lieu du buffer complet (~200 Ko).
+# ────────────────────────────────────────────────────────────────────
+
+_CAPTURE_LINES = 3000
+
+
+def _line_delta(old: list, new: list):
+    """(keep, append) tel que new == old[:keep] + append."""
+    keep = 0
+    limit = min(len(old), len(new))
+    while keep < limit and old[keep] == new[keep]:
+        keep += 1
+    return keep, new[keep:]
+
+
+class _AgentWatcher:
+    """Boucle de capture unique pour un agent, diffusée à N abonnés."""
+
+    GRACE_EMPTY = 5.0   # survie sans abonné (couvre les reconnexions rapides)
+    QUEUE_MAX = 20      # client lent → purge + resync par snapshot complet
+
+    def __init__(self, agent_id: str):
+        self.agent_id = agent_id
+        self.queues = set()
+        self.lines = None          # dernier output capturé (liste de lignes)
+        self.last_input = ""
+        self.poll = 10.0           # l'abonné le plus rapide donne la cadence
+        self.task = None
+
+    def _snapshot(self) -> dict:
+        return {
+            "type": "output",
+            "agent_id": self.agent_id,
+            "output": "\n".join(self.lines or []),
+            "timestamp": int(time.time()),
+        }
+
+    def subscribe(self, poll: float):
+        q = asyncio.Queue(maxsize=self.QUEUE_MAX)
+        self.queues.add(q)
+        self.poll = min(self.poll, poll)
+        if self.lines is not None:
+            q.put_nowait(self._snapshot())
+            if self.last_input:
+                q.put_nowait({"type": "input_sync", "agent_id": self.agent_id,
+                              "current_input": self.last_input,
+                              "timestamp": int(time.time())})
+        return q
+
+    def unsubscribe(self, q) -> None:
+        self.queues.discard(q)
+
+    def _broadcast(self, payload: dict) -> None:
+        for q in list(self.queues):
+            try:
+                q.put_nowait(payload)
+            except asyncio.QueueFull:
+                # Client trop lent pour suivre les deltas : purge de sa file
+                # puis resynchronisation sur un snapshot complet.
+                while True:
+                    try:
+                        q.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                q.put_nowait(self._snapshot())
+
+    async def run(self) -> None:
+        empty_since = None
+        try:
+            while True:
+                if not self.queues:
+                    if empty_since is None:
+                        empty_since = time.time()
+                    elif time.time() - empty_since > self.GRACE_EMPTY:
+                        return
+                    await asyncio.sleep(0.5)
+                    continue
+                empty_since = None
+
+                result = await _capture_agent_pane(self.agent_id, lines=_CAPTURE_LINES, ansi=False)
+                if result.returncode != 0:
+                    self._broadcast({"type": "error",
+                                     "message": f"Agent {self.agent_id} session not found"})
+                    return
+
+                current = result.stdout.rstrip("\n ").split("\n")
+                now = int(time.time())
+                if self.lines is None:
+                    self.lines = current
+                    self._broadcast(self._snapshot())
+                elif current != self.lines:
+                    keep, append = _line_delta(self.lines, current)
+                    self.lines = current
+                    self._broadcast({"type": "output_delta", "agent_id": self.agent_id,
+                                     "keep": keep, "append": append, "timestamp": now})
+
+                # Capture ANSI courte (20 lignes) pour détecter l'input tapé
+                result_ansi = await _capture_agent_pane(self.agent_id, ansi=True)
+                current_input = _extract_current_input(result_ansi.stdout)
+                if current_input != self.last_input:
+                    self.last_input = current_input
+                    self._broadcast({"type": "input_sync", "agent_id": self.agent_id,
+                                     "current_input": current_input, "timestamp": now})
+
+                await asyncio.sleep(self.poll)
+        finally:
+            if _watchers.get(self.agent_id) is self:
+                del _watchers[self.agent_id]
+
+
+_watchers: dict = {}
+
+
+def _get_watcher(agent_id: str) -> _AgentWatcher:
+    w = _watchers.get(agent_id)
+    if w is None or (w.task and w.task.done()):
+        w = _AgentWatcher(agent_id)
+        w.task = asyncio.create_task(w.run())
+        _watchers[agent_id] = w
+    return w
 
 
 @router.websocket("/ws/agent/{agent_id}")
@@ -130,7 +230,11 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
       1013 = server overloaded (max connections)
     """
     client_ip = websocket.headers.get("x-real-ip") or (websocket.client.host if websocket.client else "unknown")
-    if not await _check_rate_limit(client_ip):
+    # Auth évaluée une seule fois (le ticket est à usage unique) ; les sessions
+    # authentifiées sont exemptes du rate limit par IP (navigateurs multiples
+    # derrière une même IP publique).
+    authenticated = await _ws_authenticated(websocket)
+    if not authenticated and not await _check_rate_limit(client_ip):
         await _reject(websocket, 4002)
         return
     if not _ws_origin_ok(websocket):
@@ -139,7 +243,7 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
     if not cfg.AGENT_ID_RE.match(agent_id):
         await websocket.close(code=1008)
         return
-    if not await _ws_authenticated(websocket):
+    if not authenticated:
         print(f"[ws] REJECTED agent={agent_id} from={websocket.client}")
         await _reject(websocket, 4001)
         return
@@ -162,10 +266,7 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
         poll = 2.0
     poll = max(0.5, min(poll, 10.0))
 
-    last_output = ""
-    last_input = ""
-
-    # Serialize sends so the heartbeat reader and the main poll loop
+    # Serialize sends so the heartbeat reader and the fan-out forwarder
     # do not interleave bytes on the ASGI send channel.
     send_lock = asyncio.Lock()
 
@@ -187,48 +288,23 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
             pass
 
     ping_task = asyncio.create_task(heartbeat_reader())
+    watcher = _get_watcher(agent_id)
+    queue = watcher.subscribe(poll)
 
     try:
         while True:
-            if ping_task.done():
+            get_task = asyncio.create_task(queue.get())
+            done, _ = await asyncio.wait(
+                {get_task, ping_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if get_task not in done:
+                # heartbeat_reader terminé = client ou proxy parti
+                get_task.cancel()
                 break
-
-            result = await _capture_agent_pane(agent_id, lines=3000, ansi=False)
-
-            if result.returncode != 0:
-                await safe_send({
-                    "type": "error",
-                    "message": f"Agent {agent_id} session not found"
-                })
+            payload = get_task.result()
+            await safe_send(payload)
+            if payload.get("type") == "error":
                 break
-
-            current_output = result.stdout.rstrip('\n ')
-
-            # Capture with ANSI for input detection (suggestion vs typed)
-            result_ansi = await _capture_agent_pane(agent_id, ansi=True)
-            current_input = _extract_current_input(result_ansi.stdout)
-
-            # Send output if changed
-            if current_output != last_output:
-                await safe_send({
-                    "type": "output",
-                    "agent_id": agent_id,
-                    "output": current_output,
-                    "timestamp": int(time.time())
-                })
-                last_output = current_output
-
-            # Send input if changed (separate message for input sync)
-            if current_input != last_input:
-                await safe_send({
-                    "type": "input_sync",
-                    "agent_id": agent_id,
-                    "current_input": current_input,
-                    "timestamp": int(time.time())
-                })
-                last_input = current_input
-
-            await asyncio.sleep(poll)
 
     except Exception as exc:
         # Any disconnect (WebSocketDisconnect, ConnectionResetError,
@@ -236,6 +312,7 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
         # is normal — the client or proxy closed the connection.
         _ws_close_reason = f"{type(exc).__name__}: {getattr(exc, 'code', '') or str(exc)[:80]}"
     finally:
+        watcher.unsubscribe(queue)
         if websocket in _ws_agent_connections:
             _ws_agent_connections.remove(websocket)
         ping_task.cancel()
@@ -243,87 +320,24 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
         print(f"[ws] CLOSED agent={agent_id} from={websocket.client} duration={_ws_duration:.1f}s reason={_ws_close_reason}")
 
 
-@router.websocket("/ws/messages")
-async def websocket_messages(websocket: WebSocket):
-    """WebSocket endpoint for real-time agent messages"""
-    client_ip = websocket.headers.get("x-real-ip") or (websocket.client.host if websocket.client else "unknown")
-    if not await _check_rate_limit(client_ip):
-        await websocket.close(code=1008)
-        return
-    if not _ws_origin_ok(websocket):
-        await websocket.close(code=1008)
-        return
-    if not await _ws_authenticated(websocket):
-        await websocket.close(code=1008)
-        return
-    if not await manager.connect(websocket):
-        return
-
-    try:
-        # Track last seen message IDs per stream
-        last_ids = {}
-
-        while True:
-            if not state.redis_pool:
-                await asyncio.sleep(1)
-                continue
-
-            # Get all agent outbox streams
-            cursor = 0
-            streams = {}
-            while True:
-                cursor, keys = await state.redis_pool.scan(cursor, match=f"{cfg.MA_PREFIX}:agent:*:outbox", count=100)
-                for key in keys:
-                    stream_id = last_ids.get(key, "$")
-                    streams[key] = stream_id
-                if cursor == 0:
-                    break
-
-            if not streams:
-                await asyncio.sleep(0.5)
-                continue
-
-            # Read from all streams
-            try:
-                result = await state.redis_pool.xread(streams, block=1000, count=10)
-
-                for stream_name, messages in result:
-                    for msg_id, data in messages:
-                        last_ids[stream_name] = msg_id
-
-                        # Extract agent ID from stream name
-                        parts = stream_name.split(":")
-                        raw_aid = parts[2] if len(parts) >= 3 else "unknown"
-                        agent_id = raw_aid if cfg.AGENT_ID_RE.match(raw_aid) else "unknown"
-
-                        _WS_ALLOWED_KEYS = {"prompt", "response", "from_agent", "to_agent", "timestamp", "type", "status", "chunk", "text"}
-                        safe_data = {k: v for k, v in data.items() if isinstance(k, str) and k in _WS_ALLOWED_KEYS and len(str(v)) < 10000}
-                        await manager.broadcast({
-                            "type": "message",
-                            "agent_id": agent_id,
-                            "msg_id": msg_id,
-                            "data": safe_data,
-                            "timestamp": int(time.time())
-                        })
-            except Exception as e:
-                print(f"WebSocket stream error: {e}")
-                await asyncio.sleep(0.5)
-
-    except Exception:
-        manager.disconnect(websocket)
+# NOTE : l'endpoint /ws/messages a été supprimé — plus utilisé par le
+# frontend, et sa boucle ne détectait jamais la déconnexion du client
+# (le broadcast avalait les erreurs d'envoi) : chaque connexion morte
+# continuait de SCANner Redis indéfiniment.
 
 
 @router.websocket("/ws/status")
 async def websocket_status(websocket: WebSocket):
     """WebSocket endpoint for agent status updates — reads from background cache"""
     client_ip = websocket.headers.get("x-real-ip") or (websocket.client.host if websocket.client else "unknown")
-    if not await _check_rate_limit(client_ip):
+    authenticated = await _ws_authenticated(websocket)
+    if not authenticated and not await _check_rate_limit(client_ip):
         await websocket.close(code=1008)
         return
     if not _ws_origin_ok(websocket):
         await websocket.close(code=1008)
         return
-    if not await _ws_authenticated(websocket):
+    if not authenticated:
         await websocket.close(code=1008)
         return
     await websocket.accept()

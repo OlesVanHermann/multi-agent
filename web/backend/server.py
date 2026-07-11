@@ -155,15 +155,23 @@ async def security_headers(request: Request, call_next):
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
 
-    # Rate limit all API requests
+    # Rate limit all API requests — authenticated sessions are exempt.
+    # Plusieurs navigateurs d'un même opérateur partagent une seule IP publique :
+    # sans exemption, le quota commun produit des 429 sur /api/ws-ticket qui
+    # cassent les reconnexions WS et déclenchent le polling de secours (tempête
+    # auto-entretenue). Le JWT n'est vérifié ici QUE dans le cas déjà en
+    # dépassement — le chemin nominal reste inchangé.
     if path.startswith("/api/"):
         client_ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "unknown")
         if not await _check_rate_limit(client_ip):
-            return Response(
-                content=json.dumps({"detail": "Rate limit exceeded"}),
-                status_code=429,
-                media_type="application/json",
-            )
+            auth_header = request.headers.get("authorization", "")
+            token = auth_header[7:] if auth_header.startswith("Bearer ") else request.cookies.get(ACCESS_COOKIE, "")
+            if not (token and _verify_jwt_minimal(token)):
+                return Response(
+                    content=json.dumps({"detail": "Rate limit exceeded"}),
+                    status_code=429,
+                    media_type="application/json",
+                )
 
     # Skip auth for public paths, static files, and WebSocket upgrades (handled separately)
     if path in _PUBLIC_PATHS or any(path.startswith(p) for p in _PUBLIC_PREFIXES):
