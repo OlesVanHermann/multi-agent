@@ -1,0 +1,126 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+.venv/
+
+# Logs
+logs/*
+!logs/.gitkeep
+*.log
+
+# Sessions (runtime)
+sessions/*
+!sessions/.gitkeep
+
+# State files (runtime)
+pool-requests/state/*
+!pool-requests/state/.gitkeep
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Project specific (user code)
+project/*
+!project/.gitkeep
+!project/README.md
+
+# Redis
+dump.rdb
+
+# Node / Frontend build
+node_modules/
+web/frontend/dist/
+
+# Temp
+*.tmp
+*.temp
+.cache/
+
+# Config locale (créé par 900)
+project-config.md
+
+# Config panel locale (overrides agent panel types)
+web/panel-config.json
+
+# Checksum local (généré à la main — voir patch/README.md / SETUP-CLIENT.md)
+file.md5
+
+# Pipeline output (project-specific)
+pipeline/
+
+# Project-specific test subdirs
+tests/messaging/
+tests/mail/
+
+# Pool requests runtime (garder la structure vide)
+pool-requests/pending/*
+pool-requests/assigned/*
+pool-requests/done/*
+pool-requests/specs/*
+pool-requests/tests/*
+!pool-requests/*/.gitkeep
+# Claude profiles (API credentials)
+login/*
+!login/.gitkeep
+!login/claude1a/
+!login/claude1a/**
+!login/claude1b/
+!login/claude1b/**
+!login/claude2a/
+!login/claude2a/**
+!login/claude2b/
+!login/claude2b/**
+!login/claude3a/
+!login/claude3a/**
+!login/claude3b/
+!login/claude3b/**
+!login/claude4a/
+!login/claude4a/**
+!login/claude4b/
+!login/claude4b/**
+
+web/backend/.pytest_cache/
+web/backend/venv/
+
+# Safe-delete archive
+removed/
+
+# Bench V3 — mesures locales (le rapport final se commit à la main)
+bench/results/*
+!bench/results/.gitkeep
+
+# Uploads runtime (destination /api/upload)
+uploads/
+
+# Keepalive runtime (sweep 12h : états logins, usage, horodatage)
+keepalive/
+
+# Secrets (real passwords — never commit)
+setup/secrets.cfg
+
+# Claude Code session history
+history.txt
+
+# Runtime local des profils Claude (jamais versionné)
+login/*/.claude.json
+login/*/backups/*
+!login/*/backups/.gitkeep
+login/*/cache/*
+!login/*/cache/.gitkeep
+
+# Runtime hub — history de l'agent 000
+prompts/000-hub-master/000.history
