@@ -352,10 +352,19 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
     base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
     if base_id == "000":
         raise HTTPException(status_code=403, detail="Cannot control architect agent")
-    if data.text and len(data.text) > 5000:
-        raise HTTPException(status_code=400, detail="input too long")
-    if data.text and any(ord(c) < 32 and c not in ('\t', '\n') for c in data.text):
-        raise HTTPException(status_code=400, detail="invalid characters")
+    # Normaliser plutot que rejeter : les copier-coller reels contiennent des \r
+    # (CRLF) et parfois d'autres caracteres de controle — on les retire. La
+    # protection anti-injection tmux est conservee : aucun char < 32 hors \t\n
+    # n'atteint send-keys.
+    def _sanitize(t: str) -> str:
+        t = (t or "").replace("\r\n", "\n").replace("\r", "\n")
+        return "".join(c for c in t if ord(c) >= 32 or c in ("\t", "\n"))
+    if data.text:
+        data.text = _sanitize(data.text)
+    if data.previous:
+        data.previous = _sanitize(data.previous)
+    if data.text and len(data.text) > 20000:
+        raise HTTPException(status_code=400, detail="input too long (max 20000)")
     session_name = f"{cfg.MA_PREFIX}-agent-{agent_id}"
     target = f"{session_name}:0.0"
 
