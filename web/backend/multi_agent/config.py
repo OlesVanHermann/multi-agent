@@ -41,7 +41,11 @@ if not re.match(r'^[A-Za-z0-9]+$', MA_PREFIX):
     raise ValueError(f"Invalid MA_PREFIX: {MA_PREFIX}")
 
 BASE_DIR = Path(os.environ.get("MA_BASE", Path.home() / "multi-agent"))
-PANEL_CONFIG_PATH = BASE_DIR / "web" / "panel-config.json"
+# sessions/ est un repertoire PROJET (jamais touche par upgrade.sh) — l'ancien
+# emplacement web/panel-config.json etait efface par le rsync --delete de web/
+# a chaque upgrade (overrides M/D perdus). Migration lazy dans _read_panel_config.
+PANEL_CONFIG_PATH = BASE_DIR / "sessions" / "panel-config.json"
+PANEL_CONFIG_PATH_LEGACY = BASE_DIR / "web" / "panel-config.json"
 
 PROMPT_HISTORY_STREAM = f"{MA_PREFIX}:prompt:history"
 CHAT_STREAM = f"{MA_PREFIX}:devchat"

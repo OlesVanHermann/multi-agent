@@ -75,8 +75,8 @@ function App() {
     const num = parseInt(agentId)
     // For compound IDs (341-141), use suffix to determine role
     const suffixNum = agentId.includes('-') ? parseInt(agentId.split('-')[1]) : num
-    // x45: 0xx/1xx go to control (incl. master satellites); pipeline: 0xx/1xx + 900+
-    const isControl = mode === 'x45' ? (suffixNum < 200) : (num < 200 || num >= 900)
+    // x45: 0xx/1xx + 9xx go to control (masters + tri-architects); pipeline: 0xx/1xx + 900+
+    const isControl = mode === 'x45' ? (suffixNum < 200 || suffixNum >= 900) : (num < 200 || num >= 900)
     if (isControl) {
       setControlPlane(agentId)
       setActivePanel('control')

@@ -7,7 +7,8 @@ const TMUX_WIDTH_OPTIONS = [80, 90, 100, 110, 120, 132, 180, 220, 280]
 function getDefaultPanel(agentId, mode) {
   const num = parseInt(agentId)
   const suffixNum = agentId.includes('-') ? parseInt(agentId.split('-')[1]) : num
-  const isControl = mode === 'x45' ? (suffixNum < 200) : (num < 200 || num >= 900)
+  // x45 : les 9XX (tri-architects) sont du plan de controle, comme les 1XX
+  const isControl = mode === 'x45' ? (suffixNum < 200 || suffixNum >= 900) : (num < 200 || num >= 900)
   return isControl ? 'control' : 'agent'
 }
 

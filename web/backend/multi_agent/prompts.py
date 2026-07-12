@@ -12,15 +12,26 @@ from . import state
 
 
 def _read_panel_config() -> dict:
-    """Read panel-config.json, return {"overrides": {}} if missing/corrupt."""
+    """Read panel-config.json, return {"overrides": {}} if missing/corrupt.
+
+    Migration lazy : si le nouveau chemin (sessions/, preserve par upgrade)
+    n'existe pas encore, reprendre l'ancien (web/, efface par chaque upgrade).
+    """
     try:
         return json.loads(cfg.PANEL_CONFIG_PATH.read_text())
+    except Exception:
+        pass
+    try:
+        data = json.loads(cfg.PANEL_CONFIG_PATH_LEGACY.read_text())
+        _write_panel_config(data)  # migre vers sessions/ au premier acces
+        return data
     except Exception:
         return {"overrides": {}}
 
 
 def _write_panel_config(data: dict):
     """Atomic write: .tmp + rename."""
+    cfg.PANEL_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = cfg.PANEL_CONFIG_PATH.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2) + "\n")
     tmp.rename(cfg.PANEL_CONFIG_PATH)
