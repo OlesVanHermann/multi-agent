@@ -1,4 +1,4 @@
-# Multi-Agent System v3.0.14
+# Multi-Agent System v3.0.15
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Claude](https://img.shields.io/badge/Powered%20by-Claude-blueviolet)](https://claude.ai)
@@ -311,4 +311,4 @@ MIT - voir [LICENSE](LICENSE)
 
 ---
 
-*Multi-Agent System v3.0.14 - 2026*
+*Multi-Agent System v3.0.15 - 2026*
