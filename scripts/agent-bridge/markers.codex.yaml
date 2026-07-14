@@ -54,13 +54,17 @@ busy_markers: ['to interrupt']
 
 # ── [D] Ligne de statut permanente ──────────────────────────────────────────
 # Footer replié, affiché idle ET pendant le travail :
-#   «   ? for shortcuts                              100% context left  »
-#   «   ? for shortcuts                               72% context left  »
+#   «   gpt-5.6-sol default · ~/multi-agent  »
 # Sert de sonde de vie : ligne absente + process vivant = erreur.
-# [Source: tui/src/bottom_pane/footer.rs:1011 — format!("{percent}% context left")]
-# [Snapshot: bottom_pane__footer__tests__footer_shortcuts_default.snap]
-# [Snapshot: bottom_pane__footer__tests__footer_shortcuts_context_running.snap]
-status_line: 'context left'
+# [Source: capture-pane sur session réelle codex-cli 0.144.4 — footer
+#  « gpt-5.6-sol default · ~/multi-agent » (scripts/agent-bridge/capture-markers.sh)]
+# [Vérifié: codex-cli 0.144.4, session réelle — « context left » N'APPARAÎT PAS
+#  tant que le compteur de contexte n'est pas rendu ; le footer permanent est
+#  « <model> <effort> · <dir> ». Le séparateur « · » (U+00B7) est l'invariant
+#  des deux états du footer. L'ancien marqueur 'context left' (déduit des
+#  snapshots footer.rs) laissait bp_line vide sur session fraîche → la sonde
+#  de vie concluait api_error=true en permanence.]
+status_line: ' · '
 
 # ── [D] Composer ────────────────────────────────────────────────────────────
 # Préfixe du composer : « › » (U+203A). Les marqueurs génériques sont conservés

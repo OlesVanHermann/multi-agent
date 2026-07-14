@@ -232,7 +232,10 @@ class TestCodexMarkersAreCaptured:
     def test_codex_loads(self):
         m = engines.load_markers('codex')
         assert m['busy_markers'] == ['to interrupt']
-        assert m['status_line'] == 'context left'
+        # « · » : séparateur du footer permanent « <model> <effort> · <dir> » —
+        # 'context left' n'apparaît pas sur session fraîche (vérifié 0.144.4),
+        # ce qui déclenchait la sonde de vie (api_error) à tort.
+        assert m['status_line'] == ' · '
 
     def test_codex_busy_scope_differs_from_claude(self):
         """LA différence structurelle. Si elle disparaît, un agent codex serait
