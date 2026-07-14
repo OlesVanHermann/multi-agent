@@ -58,12 +58,28 @@ sans `maxlen` n'est introduit.
 
 ---
 
-## Détection de fin de réponse (A1)
+## Détection de fin de réponse (A1 / E1)
 
 Le bridge ne lit pas un flux structuré : il **parse le rendu du terminal**
-(`tmux capture-pane -S -200`). Tous les marqueurs UI du CLI Claude sont
-externalisés dans `scripts/agent-bridge/markers.yaml` — si un libellé du CLI
-change, c'est ce fichier qu'on corrige, pas le code.
+(`tmux capture-pane -S -200`). Tous les marqueurs UI sont externalisés dans
+`scripts/agent-bridge/markers.<moteur>.yaml` — si un libellé du CLI change,
+c'est ce fichier qu'on corrige, pas le code.
+
+**E1 — un fichier de marqueurs par moteur.** Le moteur du bridge est choisi par
+la variable d'environnement `AGENT_CLI`, posée par `agent.sh` / `infra.sh`
+après inférence depuis le modèle effectif (`claude-*` ou `gpt-*`) :
+
+| `AGENT_CLI` | Fichier chargé |
+|---|---|
+| absent / `claude` (défaut) | `markers.claude.yaml` |
+| `codex` | `markers.codex.yaml` |
+
+`markers.yaml` est un lien symbolique vers `markers.claude.yaml`
+(rétro-compatibilité). Le chargement et la validation passent par
+`engines.load_markers()`, qui **échoue immédiatement** si un marqueur porte
+encore le sentinelle `__A_RENSEIGNER__` : des marqueurs devinés casseraient la
+détection busy/ready **sans aucune erreur visible**. Voir
+[ENGINES.md](ENGINES.md).
 
 Logique de `_wait_for_response` :
 
@@ -78,13 +94,39 @@ Logique de `_wait_for_response` :
 
 ### Cas particuliers gérés pendant l'attente
 
-| Détection (markers.yaml) | Réaction du bridge |
+| Détection (markers.<moteur>.yaml) | Réaction du bridge |
 |--------------------------|--------------------|
 | `Conversation compacted` (nouvelle occurrence) | Re-met en queue : msg 1 `deviens agent <prompt>` (ré-injection identité) + msg 2 rappel du contexte (dernière ligne `.history` + prompt d'origine), qui porte l'`ack_id` et le `correlation_id` d'origine. Statut transitoire `context_compacted`. |
 | `API Error:` / `rate_limit` / `overloaded_error`… (`api_error_patterns`) | Re-queue du prompt avec backoff `RETRY_BACKOFF_SECS` (max 2 retries). Événement `api_error_retry` dans `events.jsonl`, statut transitoire `api_error_retry`. |
 | `How is Claude doing` (sondage de session) | Auto-rejet : envoi de `0`, puis reprise de l'attente. |
 | `Would you like to proceed` (plan mode) | Statut Redis `waiting_approval` tant que la demande est visible ; l'utilisateur approuve directement dans le pane tmux. |
 | `Press up to edit queued messages` | Le prompt n'a pas été traité (Claude occupé) : retour immédiat. |
+
+*(Les libellés ci-dessus sont ceux du moteur `claude`. Pour un autre moteur, ce
+sont les valeurs de son propre `markers.<moteur>.yaml`.)*
+
+### Une seule implémentation du parsing de pane (E1)
+
+Trois composants déduisent l'état d'un agent depuis son pane : le bridge
+(`agent.py`), le dashboard (`cache.py`) et l'outil de diagnostic
+(`debug-color.py`). Les deux derniers portaient une **copie manuelle** du même
+parsing, en bash, avec les chaînes d'UI en dur — et ces copies avaient dérivé.
+
+Le corps du parsing est désormais **généré** depuis les marqueurs :
+
+```python
+engines.build_pane_eval(markers)              # $out, $pane_cmd → 14 champs
+engines.build_pane_scan(markers, MA_PREFIX)   # + capture tmux, 1 fork pour N agents
+```
+
+`tests/test_pane_scan.py` exécute le bash généré **et** `_parse_pane_state()` sur
+17 panes réels × 3 process, et compare les 14 champs un à un. Toute divergence
+future casse le test.
+
+Le scan tmux du dashboard n'est qu'un **repli** (quand le `pane_state` publié par
+le bridge est absent ou périmé dans Redis). Un agent dont les marqueurs ne sont
+pas relevés y est **ignoré** : son état viendra de Redis. Un état absent est
+rafraîchi ; un état faux est simplement affiché.
 
 ---
 

@@ -5,6 +5,25 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$SCRIPT_DIR/.."
+source "$SCRIPT_DIR/engines.sh"   # E1 : moteurs CLI
+
+# Moteur d'un agent : délègue à engines.py (même cascade que agent.sh).
+resolve_engine_for() {
+    python3 "$ENGINES_PY" engine-of-agent "$1" 2>/dev/null || printf '%s\n' "$ENGINE_DEFAULT"
+}
+
+# Motif ERE « occupé » du moteur, mis en cache (status.sh boucle sur N agents).
+declare -A _BUSY_RE_CACHE
+busy_regex_for() {
+    local cli="$1"
+    if [ -z "${_BUSY_RE_CACHE[$cli]:-}" ]; then
+        local m
+        m=$(engine_marker_get "$cli" busy_markers | paste -sd'|' -)
+        _BUSY_RE_CACHE[$cli]="${m:-__none__}"
+    fi
+    [ "${_BUSY_RE_CACHE[$cli]}" = "__none__" ] && return 1
+    printf '%s\n' "${_BUSY_RE_CACHE[$cli]}"
+}
 LOG_DIR="$BASE_DIR/logs"
 source "$SCRIPT_DIR/redis.sh"
 source "$SCRIPT_DIR/lib.sh"
@@ -90,7 +109,10 @@ do_quick() {
             TOTAL=$((TOTAL + 1))
             STATUS="idle"
             CAPTURE=$(tmux capture-pane -t "${session}:0.0" -p -S -5 2>/dev/null || true)
-            if echo "$CAPTURE" | grep -q "esc to interrupt"; then
+            # E1 : marqueur « occupé » du moteur de CET agent (markers.<cli>.yaml)
+            AGENT_CLI=$(resolve_engine_for "$ID")
+            BUSY_RE=$(busy_regex_for "$AGENT_CLI")
+            if [ -n "$BUSY_RE" ] && echo "$CAPTURE" | grep -qE "$BUSY_RE"; then
                 STATUS="busy"; BUSY=$((BUSY + 1))
             fi
             NUM=${ID#0}; NUM=${NUM:-0}

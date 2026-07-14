@@ -21,8 +21,20 @@ class SendMessage(BaseModel):
 
 class LoginModelUpdate(BaseModel):
     agent_id: str      # "300" or "default"
-    type: str          # "login" or "model"
-    value: str         # "claude2a" or "" to remove override
+    type: str          # "login" or "model"; engine is inferred from model
+    value: str         # "claude2a", "gpt-5-6-sol", "codex"... or "" to remove override
+
+
+class AgentEngineUpdate(BaseModel):
+    """E1 — Bascule ATOMIQUE moteur + modèle (+ profil) d'un agent.
+
+    Indispensable : le garde-fou de compatibilité rend toute bascule en deux
+    POST séparés impossible (chaque étape isolée est incohérente, donc rejetée).
+    """
+    agent_id: str                    # "301" ou "default"
+    cli: str                         # "claude" | "codex"
+    model: str                       # nom de fichier .model (ex. "gpt-5-6-sol")
+    login: Optional[str] = None      # nom de fichier .login ; None = inchangé
 
 
 class EffortUpdate(BaseModel):

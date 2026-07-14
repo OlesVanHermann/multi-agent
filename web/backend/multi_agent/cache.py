@@ -16,6 +16,39 @@ import redis.asyncio as redis
 from . import config as cfg
 from . import state
 from .events import _log_event
+
+# E1 : couche moteur — cfg a déjà inséré scripts/agent-bridge dans sys.path.
+# Le scan de pane est GÉNÉRÉ depuis markers.<cli>.yaml : plus aucune chaîne
+# d'UI en dur ici (c'était la 2e des trois copies du même parsing).
+import engines  # noqa: E402
+
+
+# Cache moteur/agent : la résolution lit prompts/ sur disque ; la boucle du
+# dashboard tourne en continu. Invalidé par TTL court (un changement de modèle
+# n'a d'effet qu'au redémarrage de l'agent, de toute façon).
+_ENGINE_CACHE = {}
+_ENGINE_CACHE_TS = 0.0
+_ENGINE_CACHE_TTL = 30.0
+
+# Un seul avertissement par moteur non relevé (sinon la boucle spamme les logs)
+_MARKERS_WARNED = {}
+
+
+def _agent_engine(agent_id):
+    """Moteur d'un agent (inféré du modèle). Repli sur le défaut si prompts/ est
+    illisible : mieux vaut le comportement historique qu'une exception dans la
+    boucle de rafraîchissement du dashboard."""
+    global _ENGINE_CACHE_TS
+    now = time.time()
+    if now - _ENGINE_CACHE_TS > _ENGINE_CACHE_TTL:
+        _ENGINE_CACHE.clear()
+        _ENGINE_CACHE_TS = now
+    if agent_id not in _ENGINE_CACHE:
+        try:
+            _ENGINE_CACHE[agent_id] = engines.agent_engine(cfg.BASE_DIR / "prompts", agent_id)
+        except Exception:
+            _ENGINE_CACHE[agent_id] = engines.ENGINE_DEFAULT
+    return _ENGINE_CACHE[agent_id]
 from .prompts import _find_agent_prompt
 from .tmuxio import _run_subprocess
 
@@ -116,8 +149,13 @@ async def _send_reload_context(session: str, agent_id: str, last_history: str):
                 continue
             tail = pane.stdout.strip().split('\n')
             tail3 = ' '.join(line.strip() for line in tail[-3:] if line.strip())
-            if 'bypass permissions' in tail3 or 'plan mode on' in tail3:
-                # Claude is at prompt — send context reminder
+            try:
+                _m = engines.load_markers(_agent_engine(aid))
+                _at_prompt = _m['status_line'] in tail3 or _m['plan_mode'] in tail3
+            except RuntimeError:
+                _at_prompt = False   # marqueurs du moteur non relevés → on s'abstient
+            if _at_prompt:
+                # Le CLI est au prompt — envoi du rappel de contexte
                 reminder = f'Dernière ligne de ton historique : "{last_history}"\nContinue.'
                 await _run_subprocess(
                     ["tmux", "send-keys", "-t", target, "C-u"],
@@ -353,69 +391,51 @@ async def _refresh_cache_once():
     agent_states, stale_ids = _pane_states_from_redis(agent_ids, agent_redis_data, now)
     if stale_ids:
       try:
-        # Single capture -S -30 per agent (not 2x -S -200) = 30x less data.
-        script = (
-            'for s in "$@"; do '
-            'id="${s#' + cfg.MA_PREFIX + '-agent-}"; '
-            'out=$(tmux capture-pane -t "$s:0.0" -p -J -S -30 2>/dev/null); '
-            'pane_cmd=$(tmux display-message -t "$s:0.0" -p "#{pane_current_command}" 2>/dev/null || echo ""); '
-            'claude_alive=0; if [[ "$pane_cmd" == "claude" || "$pane_cmd" == "node" ]]; then claude_alive=1; fi; '
-            'busy=0; has_bashes=0; has_down=0; plan_mode=0; compacted=0; ctx=-1; done_compacting=0; prompt_loaded=0; ctx_limit=0; api_error=0; model_change=0; '
-            'bp_line=$(echo "$out" | grep "bypass permissions" | tail -1); '
-            'if echo "$bp_line" | grep -qE "bashes|shell"; then has_bashes=1; fi; '
-            'if [ "$claude_alive" -eq 0 ]; then busy=0; elif echo "$bp_line" | grep -q "esc to interrupt"; then busy=1; elif echo "$out" | tail -10 | grep -q "❯"; then busy=0; else busy=1; fi; '
-            'if echo "$bp_line" | grep -q "↓"; then has_down=1; fi; '
-            'if echo "$out" | grep -q "plan mode on"; then plan_mode=1; fi; '
-            'waiting_approval=0; '
-            'if echo "$out" | grep -q "Enter to select"; then waiting_approval=1; fi; '
-            'if echo "$out" | grep -qiE "compacting conversation"; then compacted=1; fi; '
-            'if echo "$out" | grep -qi "Conversation compacted"; then done_compacting=1; fi; '
-            'pid="${id%%-*}"; '
-            'if [ "$done_compacting" -eq 1 ] && echo "$out" | grep -qE "prompts/${pid}[^ ]*/${id}[.-]|prompts/${id}-"; then prompt_loaded=1; fi; '
-            'pct=$(echo "$out" | grep -oE "[0-9]+% until auto-compact|auto-compact: [0-9]+%" | grep -oE "[0-9]+" | tail -1); '
-            'if [ -n "$pct" ]; then ctx=$pct; fi; '
-            'if echo "$out" | grep -q "Context limit reached"; then ctx_limit=1; fi; '
-            'api_err_count=$(echo "$out" | grep -c "API Error:" 2>/dev/null || echo 0); '
-            'if [ "$api_err_count" -ge 3 ]; then api_error=1; fi; '
-            'if [ "$claude_alive" -eq 1 ] && [ -z "$bp_line" ]; then api_error=1; fi; '
-            'if echo "$out" | grep -q "/model "; then model_change=1; fi; '
-            'echo "$id:$busy:$compacted:$ctx:$done_compacting:$prompt_loaded:$ctx_limit:$api_error:$model_change:$has_bashes:$plan_mode:$has_down:$waiting_approval:$claude_alive"; '
-            'done'
-        )
-        stale_sessions = [f"{cfg.MA_PREFIX}-agent-{aid}" for aid in stale_ids]
-        result = await _run_subprocess(
-            ["bash", "-c", script, "_", *stale_sessions], text=True, timeout=60
-        )
-        for line in result.stdout.strip().split('\n'):
-            if ':' not in line:
+        # E1 : scan GÉNÉRÉ depuis markers.<cli>.yaml, groupé par moteur.
+        # Un agent dont les marqueurs UI ne sont pas relevés est ignoré ici :
+        # son état viendra de Redis dès que son bridge aura publié (B6). Le
+        # deviner produirait un état FAUX, et un faux état est pire qu'un état
+        # absent (le dashboard le rafraîchit, il ne le corrige pas).
+        by_engine = {}
+        for aid in stale_ids:
+            by_engine.setdefault(_agent_engine(aid), []).append(aid)
+
+        for cli, ids in by_engine.items():
+            try:
+                markers = engines.load_markers(cli)
+            except RuntimeError as e:
+                if not _MARKERS_WARNED.get(cli):
+                    print(f"[cache] moteur '{cli}' : scan tmux désactivé — {e}")
+                    _MARKERS_WARNED[cli] = True
                 continue
-            parts = line.split(':')
-            if len(parts) >= 4:
-                ctx_pct = int(parts[3]) if parts[3].lstrip('-').isdigit() else -1
-                done_compacting = parts[4] == '1' if len(parts) >= 5 else False
-                prompt_loaded = parts[5] == '1' if len(parts) >= 6 else False
-                ctx_limit = parts[6] == '1' if len(parts) >= 7 else False
-                api_error = parts[7] == '1' if len(parts) >= 8 else False
-                model_change = parts[8] == '1' if len(parts) >= 9 else False
-                has_bashes = parts[9] == '1' if len(parts) >= 10 else False
-                plan_mode = parts[10] == '1' if len(parts) >= 11 else False
-                has_down = parts[11] == '1' if len(parts) >= 12 else False
-                waiting_approval = parts[12] == '1' if len(parts) >= 13 else False
-                claude_alive = parts[13] == '1' if len(parts) >= 14 else True
-                agent_states[parts[0]] = {
-                    'busy': parts[1] == '1',
-                    'has_bashes': has_bashes,
-                    'has_down': has_down,
-                    'plan_mode': plan_mode,
-                    'waiting_approval': waiting_approval,
-                    'compacted': parts[2] == '1',
-                    'context_pct': ctx_pct,  # -1 = not visible, 0-5 = shown by Claude
-                    'done_compacting': done_compacting,
-                    'prompt_loaded': prompt_loaded,
-                    'context_limit': ctx_limit,
-                    'api_error': api_error,
-                    'model_change': model_change,
-                    'claude_alive': claude_alive,
+
+            script = engines.build_pane_scan(markers, cfg.MA_PREFIX)
+            sessions = [f"{cfg.MA_PREFIX}-agent-{aid}" for aid in ids]
+            result = await _run_subprocess(
+                ["bash", "-c", script, "_", *sessions], text=True, timeout=60
+            )
+            for line in result.stdout.strip().split('\n'):
+                if ':' not in line:
+                    continue
+                parts = line.split(':')
+                if len(parts) < len(engines.PANE_FIELDS):
+                    continue
+                f = dict(zip(engines.PANE_FIELDS, parts))
+                ctx_pct = int(f['context_pct']) if f['context_pct'].lstrip('-').isdigit() else -1
+                agent_states[f['id']] = {
+                    'busy': f['busy'] == '1',
+                    'has_bashes': f['has_bashes'] == '1',
+                    'has_down': f['has_down'] == '1',
+                    'plan_mode': f['plan_mode'] == '1',
+                    'waiting_approval': f['waiting_approval'] == '1',
+                    'compacted': f['compacted'] == '1',
+                    'context_pct': ctx_pct,   # -1 = non affiché par le CLI
+                    'done_compacting': f['done_compacting'] == '1',
+                    'prompt_loaded': f['prompt_loaded'] == '1',
+                    'context_limit': f['context_limit'] == '1',
+                    'api_error': f['api_error'] == '1',
+                    'model_change': f['model_change'] == '1',
+                    'claude_alive': f['claude_alive'] == '1',
                 }
       except Exception as e:
         print(f"[cache] tmux states error: {e}")

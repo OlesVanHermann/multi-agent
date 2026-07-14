@@ -60,11 +60,12 @@ version_of() {
 # FRAMEWORK = mis à jour | PROJET = préservé
 # ============================================================
 FRAMEWORK_DIRS=(scripts web docs patch setup tests templates examples framework .github)
-FRAMEWORK_FILES=(requirements.txt CLAUDE.md README.md LICENSE .gitignore)
+FRAMEWORK_FILES=(requirements.txt CLAUDE.md AGENTS.md README.md LICENSE .gitignore)
 
 # Fichiers canoniques de prompts/ (contrat framework — RULES.md §10 verify…).
 # Tout le reste de prompts/ (répertoires d'agents, *.model, *.login) est projet.
 PROMPTS_CANONICAL=(RULES.md CONVENTIONS.md PATHS.md AGENT.md CHROME.md)
+MODEL_CATALOG=(gpt-5-6-sol.model gpt-5-6-terra.model gpt-5-6-luna.model)
 
 # Miroir exact de FRAMEWORK_PATHS dans hub-release.sh (manifest de checksums).
 # Verrouillé par tests/test_upgrade_manifest_sync.py — modifier les deux ensemble.
@@ -72,7 +73,9 @@ MANIFEST_PATHS=(scripts web docs patch setup tests templates examples framework 
                 'login/*/settings.json'
                 prompts/RULES.md prompts/CONVENTIONS.md prompts/PATHS.md
                 prompts/AGENT.md prompts/CHROME.md
-                requirements.txt CLAUDE.md README.md LICENSE .gitignore)
+                prompts/gpt-5-6-sol.model prompts/gpt-5-6-terra.model
+                prompts/gpt-5-6-luna.model
+                requirements.txt CLAUDE.md AGENTS.md README.md LICENSE .gitignore)
 
 echo ""
 echo "╔════════════════════════════════════════════╗"
@@ -296,10 +299,20 @@ elif [ ! -f "./setup/secrets.cfg" ] && [ -f "./setup/secrets.cfg.example" ]; the
 fi
 
 for file in "${FRAMEWORK_FILES[@]}"; do
-    if [ -f "$TEMP_DIR/$file" ]; then
-        cp "$TEMP_DIR/$file" "./"
+    if [ -f "$TEMP_DIR/$file" ] || [ -L "$TEMP_DIR/$file" ]; then
+        cp -a --remove-destination "$TEMP_DIR/$file" "./$file"
         log_ok "$file"
     fi
+done
+
+# 6b2. Catalogue de modèles livré par le framework. Seuls ces noms réservés
+# sont synchronisés ; tous les autres *.model locaux restent des données projet.
+for f in "${MODEL_CATALOG[@]}"; do
+    [ -f "$TEMP_DIR/prompts/$f" ] || continue
+    mkdir -p ./prompts "$BACKUP_DIR/prompts"
+    [ -f "./prompts/$f" ] && cp "./prompts/$f" "$BACKUP_DIR/prompts/$f"
+    cp "$TEMP_DIR/prompts/$f" "./prompts/$f"
+    log_ok "prompts/$f"
 done
 
 # ============================================================

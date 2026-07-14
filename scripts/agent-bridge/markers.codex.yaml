@@ -1,0 +1,182 @@
+# E1 — Marqueurs UI du MOTEUR `codex` (OpenAI Codex CLI).
+# Sélectionné via AGENT_CLI=codex (déduit par agent.sh depuis le modèle).
+#
+# ┌───────────────────────────────────────────────────────────────────────────┐
+# │  PROVENANCE — aucune valeur n'est devinée.                                 │
+# │                                                                           │
+# │  Codex CLI est open source : github.com/openai/codex (Rust, crate `tui`). │
+# │  Chaque marqueur ci-dessous est relevé soit dans le code de rendu, soit   │
+# │  dans un SNAPSHOT de test (`*.snap`) — c'est-à-dire le pane RÉELLEMENT    │
+# │  rendu par le TUI. Un snapshot est exactement ce que produirait           │
+# │  `tmux capture-pane` : c'est la même preuve que capture-markers.sh.       │
+# │                                                                           │
+# │  Chaque valeur porte sa source. Vérifier avec :                            │
+# │      git clone --depth 1 https://github.com/openai/codex                   │
+# │      grep -rn "<chaîne>" codex/codex-rs/tui/src                            │
+# └───────────────────────────────────────────────────────────────────────────┘
+#
+# Statut : [D] Documenté (source citée) · [NA] Signal inexistant dans ce TUI
+#
+# ⚠ Le source évolue. Après une mise à jour majeure de Codex CLI, revalider
+#   avec ./scripts/agent-bridge/capture-markers.sh codex
+
+# ── [D] Noms de process ─────────────────────────────────────────────────────
+# Binaire natif (installeur standalone). 'node' conservé si l'installation
+# passe par npm (@openai/codex).
+# [Source: codex-cli/package.json — bin: { codex }]
+# [Source: docs/install.md — standalone installer + npm]
+process_names: ['codex', 'node']
+
+# ── [D] Portée de la détection « occupé » — DIFFÉRENCE STRUCTURELLE ─────────
+# Codex affiche son indicateur d'activité dans un widget SÉPARÉ, au-dessus du
+# composer — et le composer « › » reste affiché pendant le travail (on peut y
+# mettre des messages en file d'attente). L'heuristique de Claude Code
+# (« prompt visible = idle ») conclurait donc TOUJOURS idle : agent vu libre en
+# permanence, prompts envoyés par-dessus une réponse en cours.
+# → on cherche les busy_markers dans tout le pane, pas dans la ligne de statut.
+# [Source: tui/src/status_indicator_widget.rs — widget distinct de bottom_pane/footer.rs]
+busy_scope: 'pane'
+
+# ── [D] Portée de la détection des shells en arrière-plan ───────────────────
+# Codex affiche « 123 background terminals running · /ps to view · » sur une
+# LIGNE DISTINCTE du footer, pas dans la ligne de statut.
+# [Snapshot: bottom_pane__unified_exec_footer__tests__render_many_sessions.snap]
+bashes_scope: 'pane'
+
+# ── [D] Indicateur « occupé » ───────────────────────────────────────────────
+# Rendu réel : « • Working (0s • esc to interrupt) »
+# La touche est REMAPPABLE — un snapshot montre « f12 to interrupt ». On ne
+# retient donc que la partie stable, indépendante du keymap.
+# [Source: tui/src/status_indicator_widget.rs:274 — span « to interrupt) »]
+# [Snapshot: status_indicator_widget__tests__renders_with_working_header.snap]
+# [Snapshot: status_indicator_widget__tests__renders_remapped_interrupt_hint.snap]
+busy_markers: ['to interrupt']
+
+# ── [D] Ligne de statut permanente ──────────────────────────────────────────
+# Footer replié, affiché idle ET pendant le travail :
+#   «   ? for shortcuts                              100% context left  »
+#   «   ? for shortcuts                               72% context left  »
+# Sert de sonde de vie : ligne absente + process vivant = erreur.
+# [Source: tui/src/bottom_pane/footer.rs:1011 — format!("{percent}% context left")]
+# [Snapshot: bottom_pane__footer__tests__footer_shortcuts_default.snap]
+# [Snapshot: bottom_pane__footer__tests__footer_shortcuts_context_running.snap]
+status_line: 'context left'
+
+# ── [D] Composer ────────────────────────────────────────────────────────────
+# Préfixe du composer : « › » (U+203A). Les marqueurs génériques sont conservés
+# comme chez claude : repli quand le pane retombe sur un shell.
+# [Snapshot: bottom_pane__chat_composer__tests__footer_mode_ctrl_c_interrupt.snap
+#            → « › Ask Codex to do anything »]
+prompt_markers: ['›', '>', '$', '%']
+
+# ── [D] CLI démarré et prêt ─────────────────────────────────────────────────
+# Le placeholder du composer et le hint du footer n'apparaissent qu'une fois le
+# TUI monté. Deux marqueurs, pour couvrir le cas d'un composer déjà rempli.
+# [Snapshots: chat_composer footer_mode_* / footer__tests__footer_shortcuts_default]
+ready_markers: ['Ask Codex to do anything', 'for shortcuts']
+
+# ── [D] Pourcentage de contexte restant ─────────────────────────────────────
+# « 72% context left ». Quand le pourcentage est inconnu, Codex affiche
+# « 123K used » : aucun pourcentage n'est alors extrait (ctx = -1), ce qui est
+# le comportement voulu.
+# [Source: tui/src/bottom_pane/footer.rs:1011-1019 — context_window_line()]
+context_pct_patterns:
+  - '[0-9]+% context left'
+
+# ── [D] Mode plan ───────────────────────────────────────────────────────────
+# Indicateur de mode de collaboration : « Plan mode ».
+# [Source: tui/src/bottom_pane/footer.rs:149 — CollaborationModeIndicator::Plan]
+plan_mode: 'Plan mode'
+
+# ── [D] Demande d'approbation ───────────────────────────────────────────────
+# « Would you like to run the following command? »
+# « Would you like to grant these permissions? »
+# En principe jamais atteint avec --dangerously-bypass-approvals-and-sandbox ;
+# renseigné comme filet de sécurité.
+# [Snapshots: bottom_pane__approval_overlay__tests__approval_overlay_*.snap]
+approval: 'Would you like to'
+
+# ── [D] Menu de sélection ouvert (attente d'un choix) ───────────────────────
+# « Press enter to confirm or esc to cancel »
+# [Snapshots: approval_overlay_*.snap ; onboarding__trust_directory__tests__*.snap]
+waiting_select: 'Press enter to confirm'
+
+# ── [D] Compaction de contexte ──────────────────────────────────────────────
+# Codex n'affiche AUCUN marqueur distinct PENDANT la compaction : la tâche
+# tourne, l'indicateur d'activité normal est visible. Seule la FIN est signalée,
+# par un message d'info « Context compacted ».
+#
+# → in_progress est [NA]. Inventer une chaîne ici ferait basculer des agents en
+#   statut « compaction en cours » à tort — rouge permanent au dashboard.
+#
+# [Source: tui/src/chatwidget/replay.rs:176 — add_info_message("Context compacted")]
+# [Source: core/src/tasks/compact.rs — CompactTask n'a pas de header de rendu]
+compaction:
+  in_progress: '__NON_APPLICABLE__'
+  done: 'Context compacted'
+
+# ── [D] Messages en file d'attente ──────────────────────────────────────────
+# Sous l'indicateur d'activité : «  ↳ first » puis «    alt + ↑ edit »
+# [Snapshot: status_indicator_widget__tests__renders_with_queued_messages.snap]
+queued: 'alt + ↑ edit'
+
+# ── [D] Shells / terminaux en arrière-plan ──────────────────────────────────
+# «   123 background terminals running · /ps to view · »
+# [Snapshot: bottom_pane__unified_exec_footer__tests__render_many_sessions.snap]
+bashes_pattern: 'background terminals? running'
+
+# ── [D] Slash-command de changement de modèle ───────────────────────────────
+# Le modèle est passé en option de lancement (--model) par agent.sh ; ce
+# marqueur ne sert qu'à détecter un changement manuel dans le pane.
+# [Source: tui/src/bottom_pane/command_popup.rs — commande /model]
+model_change: '/model '
+
+# ── [D] Erreur rendue dans l'historique ─────────────────────────────────────
+# Les cellules d'erreur sont préfixées « ■ » (U+25A0), en rouge.
+# [Source: tui/src/history_cell/notices.rs:213-218 — format!("■ {message}").red()]
+api_error: '■ '
+
+# ── [D] Motifs d'erreur déclenchant un retry du prompt ──────────────────────
+# Erreurs transitoires (fournisseur / réseau) — le bridge remet le prompt en
+# file avec backoff. Les erreurs NON transitoires ne doivent pas matcher, sinon
+# le bridge boucle sur un prompt condamné.
+# [Source: tui/src/history_cell/notices.rs — new_error_event]
+api_error_patterns:
+  - '■ .*[Rr]ate limit'
+  - '■ .*[Uu]sage limit'
+  - '■ .*stream disconnected'
+  - '■ .*request failed'
+  - '■ .*\b429\b'
+  - '■ .*\b5[0-9][0-9]\b'
+
+# ── [D] Session d'authentification expirée / absente ────────────────────────
+# Écran d'onboarding d'authentification, et carte de statut.
+# Comparés en minuscules par le sweep keepalive.
+# [Source: tui/src/onboarding/auth.rs:444,460 — « Sign in with ChatGPT »,
+#          « Sign in with Device Code », « Provide your own API key »]
+# [Source: tui/src/status/card.rs:731 — « run codex login to use ChatGPT »]
+login_expired_markers:
+  - 'sign in with chatgpt'
+  - 'sign in with device code'
+  - 'provide your own api key'
+  - 'run codex login'
+
+# ── [NA] Sondage de session ─────────────────────────────────────────────────
+# Claude Code affiche périodiquement « How is Claude doing » ; le bridge
+# l'auto-rejette. Codex n'a pas d'équivalent.
+# Une chaîne VIDE matcherait TOUS les panes — d'où le sentinelle explicite.
+survey: '__NON_APPLICABLE__'
+
+# ── [NA] Indicateur de scroll dans la ligne de statut ───────────────────────
+# Claude Code affiche « ↓ » dans sa ligne de statut quand le pane est scrollé.
+# Le footer de Codex n'expose pas cet état (« ctrl + t to view transcript » est
+# une action, pas un indicateur d'état).
+scroll_indicator: '__NON_APPLICABLE__'
+
+# ── [NA] Limite de contexte atteinte ────────────────────────────────────────
+# Claude Code affiche « Context limit reached ». Codex compacte automatiquement
+# et n'expose pas de libellé de blocage : le signal utile est « 0% context left »,
+# déjà couvert par context_pct_patterns.
+# [Source: core/src/compact_model_fallback.rs — CompactionReason::ContextLimit
+#          est un code interne, jamais rendu dans le TUI]
+context_limit: '__NON_APPLICABLE__'

@@ -3,7 +3,7 @@
 debug-color.py — détecte la couleur qu'afficherait le dashboard pour un agent
 
 Réplique exacte de la logique server.py :
-  - tmux capture-pane -S -30  (même script bash)
+  - tmux capture-pane -S -30  (MÊME script bash, généré depuis les marqueurs)
   - Redis hgetall + reload_sent flag
   - _resolve_agent_statuses_batch (même priorité)
   - merge Redis vs tmux override (même règle stopped/CRITICAL)
@@ -16,7 +16,14 @@ Exemple: python3 scripts/debug-color.py 334-134
 import sys
 import os
 import subprocess
+from pathlib import Path
 
+# E1 : couche moteur — le script bash est GÉNÉRÉ depuis markers.<cli>.yaml.
+# C'était la 3e copie du même parsing de pane, avec ses chaînes d'UI en dur.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "agent-bridge"))
+import engines  # noqa: E402
+
+BASE_DIR = Path(__file__).resolve().parent.parent
 MA_PREFIX = os.environ.get("MA_PREFIX", "A")
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
@@ -26,8 +33,8 @@ REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
 COLOR_MAP = {
     "has_bashes":        "VERT          (has_bashes)       — bashes arrière-plan",
     "busy":              "VERT CLAIR    (busy)             — Claude traite un prompt",
-    "waiting_approval":  "BLEU          (waiting_approval) — Enter to select",
-    "plan_mode":         "BLEU FONCÉ   (plan_mode)        — plan mode on",
+    "waiting_approval":  "BLEU          (waiting_approval) — menu de sélection ouvert",
+    "plan_mode":         "BLEU FONCÉ   (plan_mode)        — mode plan actif",
     "context_warning":   "ORANGE        (context_warning)  — contexte 1-10%",
     "context_compacted": "ROUGE         (context_compacted)— compaction en cours / ctx 0%",
     "needs_clear":       "ROUGE FONCÉ  (needs_clear)      — /clear auto déclenché",
@@ -42,66 +49,41 @@ COLOR_MAP = {
 
 
 def detect_tmux(agent_id):
-    """Réplique exacte du script bash inline de server.py."""
-    session = f"{MA_PREFIX}-agent-{agent_id}"
-    script = f"""
-s="{session}"
-id="{agent_id}"
-out=$(tmux capture-pane -t "$s:0.0" -p -J -S -30 2>/dev/null)
-pane_cmd=$(tmux display-message -t "$s:0.0" -p "#{{pane_current_command}}" 2>/dev/null || echo "")
-claude_alive=0
-if [[ "$pane_cmd" == "claude" || "$pane_cmd" == "node" ]]; then claude_alive=1; fi
-busy=0; has_bashes=0; has_down=0; plan_mode=0; compacted=0; ctx=-1
-done_compacting=0; prompt_loaded=0; ctx_limit=0; api_error=0; model_change=0; waiting_approval=0
-bp_line=$(echo "$out" | grep "bypass permissions" | tail -1)
-if echo "$bp_line" | grep -qE "bashes|shell"; then has_bashes=1; fi
-if [ "$claude_alive" -eq 0 ]; then
-    busy=0
-elif echo "$bp_line" | grep -q "esc to interrupt"; then
-    busy=1  # Claude runs subagents: ❯ visible but "esc to interrupt" = busy
-elif echo "$out" | tail -10 | grep -q "❯"; then
-    busy=0
-else
-    busy=1
-fi
-if echo "$bp_line" | grep -q "↓"; then has_down=1; fi
-if echo "$out" | grep -q "plan mode on"; then plan_mode=1; fi
-if echo "$out" | grep -q "Enter to select"; then waiting_approval=1; fi
-if echo "$out" | grep -qiE "compacting conversation"; then compacted=1; fi
-if echo "$out" | grep -qi "Conversation compacted"; then done_compacting=1; fi
-if [ "$done_compacting" -eq 1 ] && echo "$out" | grep -qE "prompts/[0-9]+/${{id}}[.-]|prompts/${{id}}-"; then prompt_loaded=1; fi
-pct=$(echo "$out" | grep -oE "[0-9]+% until auto-compact|auto-compact: [0-9]+%" | grep -oE "[0-9]+" | tail -1)
-if [ -n "$pct" ]; then ctx=$pct; fi
-if echo "$out" | grep -q "Context limit reached"; then ctx_limit=1; fi
-api_err_count=$(echo "$out" | grep -c "API Error:" 2>/dev/null || echo 0)
-if [ "$api_err_count" -ge 3 ]; then api_error=1; fi
-if [ "$claude_alive" -eq 1 ] && [ -z "$bp_line" ]; then api_error=1; fi
-if echo "$out" | grep -q "/model "; then model_change=1; fi
+    """Réplique EXACTE du scan du dashboard : même générateur, mêmes marqueurs.
 
-printf "===RAW===\\n"
-echo "$out" | tail -20
-printf "===SIGNALS===\\n"
-echo "pane_cmd=$pane_cmd"
-echo "claude_alive=$claude_alive"
-echo "busy=$busy"
-echo "has_bashes=$has_bashes"
-echo "has_down=$has_down"
-echo "plan_mode=$plan_mode"
-echo "waiting_approval=$waiting_approval"
-echo "compacted=$compacted"
-echo "done_compacting=$done_compacting"
-echo "prompt_loaded=$prompt_loaded"
-echo "ctx=$ctx"
-echo "ctx_limit=$ctx_limit"
-echo "api_error=$api_error"
-echo "model_change=$model_change"
-echo "bp_line=$bp_line"
-"""
+    Avant E1, cette fonction recopiait à la main le blob bash de cache.py. Les
+    deux ont dérivé — c'est ainsi qu'un outil de diagnostic finit par mentir.
+    Elles partagent désormais engines.build_pane_eval().
+    """
+    session = f"{MA_PREFIX}-agent-{agent_id}"
+    cli = engines.agent_engine(BASE_DIR / "prompts", agent_id)
+    markers = engines.load_markers(cli)   # fail-fast si non relevés
+
+    script = (
+        f's="{session}"; id="{agent_id}"; '
+        'out=$(tmux capture-pane -t "$s:0.0" -p -J -S -30 2>/dev/null); '
+        'pane_cmd=$(tmux display-message -t "$s:0.0" -p "#{pane_current_command}" '
+        '2>/dev/null || echo ""); '
+        'printf "===RAW===\\n"; printf "%s\\n" "$out" | tail -20; '
+        'printf "===META===\\n"; '
+        f'echo "cli={cli}"; echo "pane_cmd=$pane_cmd"; echo "bp_line=$bp_line"; '
+        'printf "===STATE===\\n"; '
+        + engines.build_pane_eval(markers)
+    )
     r = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
     return r.stdout
 
 
+# Alias : noms de champs du générateur → noms attendus par classify()
+_FIELD_ALIAS = {"context_pct": "ctx", "context_limit": "ctx_limit"}
+
+
 def parse_output(output):
+    """Découpe la sortie de detect_tmux en (lignes brutes, signaux).
+
+    La section ===STATE=== porte la ligne compacte à 14 champs produite par
+    engines.build_pane_eval() — la MÊME que celle consommée par cache.py.
+    """
     raw_lines = []
     signals = {}
     section = None
@@ -109,14 +91,23 @@ def parse_output(output):
         if line == "===RAW===":
             section = "raw"
             continue
-        if line == "===SIGNALS===":
-            section = "signals"
+        if line == "===META===":
+            section = "meta"
+            continue
+        if line == "===STATE===":
+            section = "state"
             continue
         if section == "raw":
             raw_lines.append(line)
-        elif section == "signals" and "=" in line:
+        elif section == "meta" and "=" in line:
             k, _, v = line.partition("=")
             signals[k.strip()] = v.strip()
+        elif section == "state" and ":" in line:
+            parts = line.split(":")
+            if len(parts) < len(engines.PANE_FIELDS):
+                continue
+            for name, value in zip(engines.PANE_FIELDS, parts):
+                signals[_FIELD_ALIAS.get(name, name)] = value
     return raw_lines, signals
 
 

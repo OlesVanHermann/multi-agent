@@ -17,6 +17,7 @@ if [ -f "$BASE_DIR/setup/secrets.cfg" ]; then
 fi
 source "$SCRIPT_DIR/redis.sh"
 source "$SCRIPT_DIR/lib.sh"
+source "$SCRIPT_DIR/engines.sh"   # E1 : moteurs CLI (claude | codex)
 BRIDGE_SCRIPT="$BASE_DIR/scripts/agent-bridge/agent.py"
 LOG_DIR="$BASE_DIR/logs"
 PROMPTS_DIR="$BASE_DIR/prompts"
@@ -132,6 +133,57 @@ resolve_config() {
     fi
 }
 
+# The engine is inferred from the effective model; users only change .model.
+resolve_engine() {
+    local agent_id="$1"
+    engine_for_model "$(resolve_config "$agent_id" "model")"
+}
+
+# E1 : construit la commande de lancement du CLI pour un agent.
+# Écrit la commande sur stdout, ou logue l'erreur et retourne 1.
+build_launch_cmd() {
+    local agent_id="$1"
+    local cli model login effort cmd
+    cli=$(resolve_engine "$agent_id")
+
+    if ! engine_is_valid "$cli"; then
+        log_error "$agent_id: moteur inconnu '$cli' (attendu: ${ENGINES[*]})"
+        return 1
+    fi
+
+    model=$(resolve_config "$agent_id" "model")
+    login=$(resolve_config "$agent_id" "login")
+    effort=$(resolve_config "$agent_id" "effort")
+
+    if [ -n "$login" ]; then
+        if ! engine_from_profile "$login" >/dev/null; then
+            log_error "$agent_id: profil '$login' — moteur indéterminable (préfixe attendu: ${ENGINES[*]})"
+            return 1
+        fi
+        login=$(engine_effective_profile "$cli" "$login")
+    fi
+
+    if ! engine_model_is_compatible "$cli" "$model"; then
+        log_error "$agent_id: modèle '$model' incompatible avec le moteur '$cli'"
+        log_error "  (attendu: identifiant préfixé '$(engine_model_prefix "$cli")')"
+        return 1
+    fi
+
+    # VERROU a — facturation. Un profil Codex authentifié par CLÉ API facturerait
+    # au token, hors forfait. Sur un parc d'agents en continu, la note grimpe
+    # avant qu'on s'en aperçoive : on refuse de démarrer.
+    if [ "$cli" = "codex" ] && ! engine_codex_preflight "$PROFILES_DIR" "$login"; then
+        log_error "$agent_id: préflight Codex refusé (voir ci-dessus)"
+        return 1
+    fi
+
+    if ! cmd=$(engine_launch_cmd "$cli" "$PROFILES_DIR" "$login" "$model" "$effort"); then
+        log_error "$agent_id: paramètres invalides (cli=$cli login=$login model=$model)"
+        return 1
+    fi
+    printf '%s\n' "$cmd"
+}
+
 # ── Remote ──
 
 start_remote() {
@@ -204,31 +256,24 @@ start_single() {
     log_info "Starting agent $agent_id..."
     mkdir -p "$LOG_DIR/$agent_id"
 
-    # Read model & login (searches agent subdir then default)
+    # E1 : moteur + modèle + login (résolution: subdir agent → prompts/ → default)
+    local CLI=$(resolve_engine "$agent_id")
     local MODEL=$(resolve_config "$agent_id" "model")
-    local LOGIN_PROFILE=$(resolve_config "$agent_id" "login")
-
-    local CLAUDE_CMD="claude"
-    if [ -n "$LOGIN_PROFILE" ]; then
-        if [[ ! "$LOGIN_PROFILE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-            log_error "Invalid LOGIN_PROFILE: $LOGIN_PROFILE"
-            return 1
-        fi
-        CLAUDE_CMD="CLAUDE_CONFIG_DIR=$PROFILES_DIR/$LOGIN_PROFILE claude"
-    fi
-
-    if [ -n "$MODEL" ] && [[ ! "$MODEL" =~ ^[a-zA-Z0-9_.:-]+$ ]]; then
-        log_error "Invalid MODEL: $MODEL"
-        return 1
-    fi
+    local LAUNCH_CMD
+    LAUNCH_CMD=$(build_launch_cmd "$agent_id") || return 1
 
     tmux new-session -d -s "$SESSION_NAME" -x "${TMUX_COLS:-110}" -y 54
     tmux set-option -t "$SESSION_NAME" history-limit 10000
     # CLAUDE_WRAPPER (optional): isolation prefix, e.g. "sudo -u agent-worker" or "firejail --profile=..."
-    tmux send-keys -t "$SESSION_NAME" "cd '$BASE_DIR' && unset CLAUDECODE && ${CLAUDE_WRAPPER:-} $CLAUDE_CMD --dangerously-skip-permissions" Enter
-    sleep 4
+    tmux send-keys -t "$SESSION_NAME" "cd '$BASE_DIR' && unset CLAUDECODE && ${CLAUDE_WRAPPER:-} $LAUNCH_CMD" Enter
 
-    # Select model (Enter to type, sleep, Enter to confirm menu)
+    if ! wait_cli_ready "$SESSION_NAME" "$CLI" 30; then
+        log_error "Agent $agent_id: $CLI did not start within 30s"
+        tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
+        return 1
+    fi
+
+    # Same interactive sequence for both CLIs.
     if [ -n "$MODEL" ]; then
         tmux send-keys -t "$SESSION_NAME" "/model $MODEL" Enter
         sleep 1
@@ -239,28 +284,65 @@ start_single() {
     # Prompt injection is handled by the bridge (agent.py auto-init)
 
     tmux new-window -t "$SESSION_NAME" -n bridge
-    tmux send-keys -t "$SESSION_NAME:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX='$MA_PREFIX' REDIS_PASSWORD='${REDIS_PASSWORD:-}' REDIS_PORT='${REDIS_PORT:-6379}' HEALTH_TOKEN='${HEALTH_TOKEN:-}' python3 '$BRIDGE_SCRIPT' '$agent_id' 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
+    tmux send-keys -t "$SESSION_NAME:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX='$MA_PREFIX' AGENT_CLI='$CLI' REDIS_PASSWORD='${REDIS_PASSWORD:-}' REDIS_PORT='${REDIS_PORT:-6379}' HEALTH_TOKEN='${HEALTH_TOKEN:-}' python3 '$BRIDGE_SCRIPT' '$agent_id' 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
     tmux select-window -t "$SESSION_NAME:0"
 
-    log_ok "Agent $agent_id started: $SESSION_NAME"
+    log_ok "Agent $agent_id started: $SESSION_NAME ($CLI)"
 }
 
-wait_claude_ready() {
-    # Wait until Claude CLI is ready in a tmux session (shows ❯ prompt)
+# E1 : marqueurs de « CLI démarré et prêt », lus dans markers.<cli>.yaml
+# (clé ready_markers) — jamais codés en dur ici. Le cache évite un fork python3
+# par tour de boucle de scrutation.
+declare -A _READY_MARKERS_CACHE
+
+cli_ready_markers() {
+    local cli="$1"
+    if [ -z "${_READY_MARKERS_CACHE[$cli]:-}" ]; then
+        local m
+        m=$(engine_marker_get "$cli" ready_markers) || return 1
+        [ -z "$m" ] && return 1
+        _READY_MARKERS_CACHE[$cli]="$m"
+    fi
+    printf '%s\n' "${_READY_MARKERS_CACHE[$cli]}"
+}
+
+wait_cli_ready() {
+    # Wait until the CLI has finished booting in a tmux session.
     local session=$1
-    local max_wait=${2:-30}  # max seconds to wait
+    local cli=${2:-$ENGINE_DEFAULT}
+    local max_wait=${3:-30}  # max seconds to wait
     local elapsed=0
+
+    # grep -F -e <m1> -e <m2> …  : équivaut au motif historique '❯|Try "'
+    local -a grep_args=(-q -F)
+    local marker found=0
+    while IFS= read -r marker; do
+        [ -n "$marker" ] || continue
+        grep_args+=(-e "$marker")
+        found=1
+    done < <(cli_ready_markers "$cli")
+
+    if [ "$found" -eq 0 ]; then
+        log_error "Aucun ready_marker pour le moteur '$cli' — marqueurs non relevés ?"
+        log_error "  → ./scripts/agent-bridge/capture-markers.sh $cli"
+        return 1
+    fi
+
     while [ $elapsed -lt $max_wait ]; do
         local pane_content
         pane_content=$(tmux capture-pane -t "$session:0" -p 2>/dev/null)
-        # Claude is ready when we see the input prompt marker
-        if echo "$pane_content" | grep -qE '❯|Try "'; then
+        if printf '%s' "$pane_content" | grep "${grep_args[@]}"; then
             return 0
         fi
         sleep 1
         elapsed=$((elapsed + 1))
     done
     return 1  # timeout
+}
+
+# Rétro-compat : ancien nom conservé (appelants externes éventuels)
+wait_claude_ready() {
+    wait_cli_ready "$1" "$ENGINE_DEFAULT" "${2:-30}"
 }
 
 start_all() {
@@ -350,25 +432,25 @@ start_all() {
             local SESSION="${MA_PREFIX}-agent-$agent_id"
             mkdir -p "$LOG_DIR/$agent_id"
 
-            # Read login (searches agent subdir then default)
-            local LOGIN_PROFILE=$(resolve_config "$agent_id" "login")
-
-            local CLAUDE_CMD="claude"
-            if [ -n "$LOGIN_PROFILE" ]; then
-                CLAUDE_CMD="CLAUDE_CONFIG_DIR=$PROFILES_DIR/$LOGIN_PROFILE claude"
+            # E1 : moteur + commande de lancement (cf. build_launch_cmd)
+            local CLI=$(resolve_engine "$agent_id")
+            local LAUNCH_CMD
+            if ! LAUNCH_CMD=$(build_launch_cmd "$agent_id"); then
+                log_error "  Agent $agent_id: configuration invalide, non démarré"
+                agent_count=$((agent_count + 1))
+                continue
             fi
 
-            # Launch Claude (CLAUDE_WRAPPER: optional isolation prefix, cf. README Sécurité)
+            # Launch CLI (CLAUDE_WRAPPER: optional isolation prefix, cf. README Sécurité)
             tmux new-session -d -s "$SESSION" -x "${TMUX_COLS:-110}" -y 54
             tmux set-option -t "$SESSION" history-limit 10000
-            tmux send-keys -t "$SESSION" "cd '$BASE_DIR' && unset CLAUDECODE && ${CLAUDE_WRAPPER:-} $CLAUDE_CMD --dangerously-skip-permissions" Enter
+            tmux send-keys -t "$SESSION" "cd '$BASE_DIR' && unset CLAUDECODE && ${CLAUDE_WRAPPER:-} $LAUNCH_CMD" Enter
 
-            # Wait for Claude to be ready
-            if wait_claude_ready "$SESSION" 30; then
-                # Read model (searches agent subdir then default)
+            # Wait for the CLI to be ready
+            if wait_cli_ready "$SESSION" "$CLI" 30; then
                 local MODEL=$(resolve_config "$agent_id" "model")
 
-                # Send /model if needed
+                # Send /model only for engines without a launch-time option
                 if [ -n "$MODEL" ]; then
                     tmux send-keys -t "$SESSION" "/model $MODEL" Enter
                     sleep 1
@@ -378,12 +460,12 @@ start_all() {
 
                 # Start bridge in second window
                 tmux new-window -t "$SESSION" -n bridge
-                tmux send-keys -t "$SESSION:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX='$MA_PREFIX' REDIS_PASSWORD='${REDIS_PASSWORD:-}' REDIS_PORT='${REDIS_PORT:-6379}' HEALTH_TOKEN='${HEALTH_TOKEN:-}' python3 '$BRIDGE_SCRIPT' '$agent_id' 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
+                tmux send-keys -t "$SESSION:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX='$MA_PREFIX' AGENT_CLI='$CLI' REDIS_PASSWORD='${REDIS_PASSWORD:-}' REDIS_PORT='${REDIS_PORT:-6379}' HEALTH_TOKEN='${HEALTH_TOKEN:-}' python3 '$BRIDGE_SCRIPT' '$agent_id' 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
                 tmux select-window -t "$SESSION:0"
 
-                log_ok "  Agent $agent_id ready"
+                log_ok "  Agent $agent_id ready ($CLI)"
             else
-                log_error "  Agent $agent_id: Claude did not start within 30s"
+                log_error "  Agent $agent_id: $CLI did not start within 30s"
             fi
 
             # Delay between agents (skip after last in batch)

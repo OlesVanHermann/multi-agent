@@ -1,4 +1,22 @@
-"""Routes /api/config : logins/modèles, effort, favoris, tmux, panel, keepalive (B1)."""
+"""Routes /api/config : logins/modèles/CLI, effort, favoris, tmux, panel, keepalive (B1).
+
+E1 : la dimension `cli` (moteur : claude | codex) suit exactement le même
+mécanisme que `login` et `model` — fichiers plats prompts/<nom>.cli, overrides
+par symlink, défaut par prompts/default.cli.
+"""
+
+# E1 : la couche moteur est IMPORTÉE, pas recopiée. cfg a déjà inséré
+# scripts/agent-bridge dans sys.path (même convention que ids.py / A6).
+# Un miroir local aurait exactement le défaut qu'E1 corrige : une hypothèse
+# dupliquée qui dérive.
+import engines  # noqa: E402
+
+ENGINES = engines.ENGINES
+ENGINE_DEFAULT = engines.ENGINE_DEFAULT
+ENGINE_MODEL_PREFIX = engines.ENGINE_MODEL_PREFIX
+ENGINE_CONFIG_ENV = engines.ENGINE_CONFIG_ENV
+ENGINE_BYPASS_FLAG = engines.ENGINE_BYPASS_FLAG
+_model_matches_engine = engines.model_matches_engine
 
 import json
 import logging
@@ -12,7 +30,12 @@ from fastapi import APIRouter, HTTPException, Request
 from .. import config as cfg
 from .. import state
 from ..auth import _get_jwt_username
-from ..models import EffortUpdate, LoginModelUpdate, PanelConfigUpdate
+from ..models import (
+    AgentEngineUpdate,
+    EffortUpdate,
+    LoginModelUpdate,
+    PanelConfigUpdate,
+)
 from ..prompts import (
     _favoris_file,
     _find_agent_config,
@@ -41,6 +64,20 @@ async def get_logins_models():
         f.stem for f in prompts_dir.glob("*.model")
         if not f.is_symlink() and f.stem != "default"
     )
+    # E1 : moteurs disponibles (prompts/*.cli)
+    clis = sorted(
+        f.stem for f in prompts_dir.glob("*.cli")
+        if not f.is_symlink() and f.stem != "default"
+    )
+
+    # Identifiant réel porté par chaque fichier *.model — sert au garde-fou
+    # de compatibilité modèle↔moteur côté UI.
+    model_ids = {}
+    for name in models:
+        try:
+            model_ids[name] = (prompts_dir / f"{name}.model").read_text().strip()
+        except OSError:
+            model_ids[name] = ""
 
     # Read default effort
     default_effort = "H"
@@ -64,6 +101,15 @@ async def get_logins_models():
         default_model = Path(target).stem
     elif dm.exists():
         default_model = models[0] if models else ""
+
+    # E1 : moteur par défaut. Absence de prompts/default.cli = installation
+    # antérieure à E1 → `claude`, comportement historique strictement inchangé.
+    default_cli = ENGINE_DEFAULT
+    dc = prompts_dir / "default.cli"
+    if dc.is_symlink():
+        default_cli = Path(os.readlink(dc)).stem
+    elif dc.exists():
+        default_cli = dc.read_text().strip() or ENGINE_DEFAULT
 
     # Gather agent IDs from cache + directory scan
     agent_ids = set()
@@ -134,6 +180,10 @@ async def get_logins_models():
             agent_model = default_model
             model_source = "default"
 
+        model_id = model_ids.get(agent_model, "")
+        agent_cli = "codex" if model_id.startswith("gpt-") else "claude"
+        cli_source = "model"
+
         effort_file = _find_agent_config(prompts_dir, aid, "effort") or prompts_dir / f"{aid}.effort"
         if effort_file.exists():
             agent_effort = effort_file.read_text().strip()
@@ -151,6 +201,8 @@ async def get_logins_models():
             "login_source": login_source,
             "model": agent_model,
             "model_source": model_source,
+            "cli": agent_cli,
+            "cli_source": cli_source,
             "effort": agent_effort,
             "effort_source": effort_source,
         })
@@ -178,11 +230,203 @@ async def get_logins_models():
     return {
         "logins": logins,
         "models": models,
+        "clis": clis,
+        "model_ids": model_ids,
+        "engine_model_prefix": ENGINE_MODEL_PREFIX,
         "default_login": default_login,
         "default_model": default_model,
+        "default_cli": default_cli,
         "default_effort": default_effort,
         "agents": agents,
         "groups": groups,
+    }
+
+
+def _effective_cli(prompts_dir: Path, agent_id: str) -> str:
+    """Moteur effectif d'un agent (override > parent x45 > default)."""
+    if agent_id != "default":
+        f = _find_agent_config(prompts_dir, agent_id, "cli")
+        if f and f.is_symlink():
+            return Path(os.readlink(f)).stem
+        if "-" in agent_id:
+            parent = prompts_dir / f"{agent_id.split('-')[0]}.cli"
+            if parent.is_symlink():
+                return Path(os.readlink(parent)).stem
+    dc = prompts_dir / "default.cli"
+    if dc.is_symlink():
+        return Path(os.readlink(dc)).stem
+    if dc.exists():
+        return dc.read_text().strip() or ENGINE_DEFAULT
+    return ENGINE_DEFAULT
+
+
+def _effective_model_id(prompts_dir: Path, agent_id: str) -> str:
+    """ID de modèle effectif d'un agent, ou ''.
+
+    Reproduit EXACTEMENT la cascade du GET /api/config/logins-models :
+    override agent → override parent (x45/z21) → default. Une cascade
+    divergente ferait valider une combinaison que agent.sh refuserait ensuite.
+    """
+    f = None
+    if agent_id != "default":
+        f = _find_agent_config(prompts_dir, agent_id, "model")
+        if not (f and f.is_symlink()):
+            f = None
+            if "-" in agent_id:
+                parent = prompts_dir / f"{agent_id.split('-')[0]}.model"
+                if parent.is_symlink():
+                    f = parent
+    if f is None:
+        f = prompts_dir / "default.model"
+    try:
+        return f.resolve().read_text().strip()
+    except OSError:
+        return ""
+
+
+def _guard_engine_model_compat(prompts_dir: Path, data: LoginModelUpdate) -> None:
+    """E1 : refuse toute combinaison modèle ↔ moteur incohérente (HTTP 400)."""
+    if data.type == "model":
+        cli = _effective_cli(prompts_dir, data.agent_id)
+        try:
+            model_id = (prompts_dir / f"{data.value}.model").read_text().strip()
+        except OSError:
+            return
+        if not _model_matches_engine(model_id, cli):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"model '{model_id}' is incompatible with engine '{cli}' "
+                    f"(expected prefix '{ENGINE_MODEL_PREFIX.get(cli, '?')}'). "
+                    f"Use POST /api/config/engine to switch engine and model atomically."
+                ),
+            )
+    elif data.type == "cli":
+        model_id = _effective_model_id(prompts_dir, data.agent_id)
+        if model_id and not _model_matches_engine(model_id, data.value):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"engine '{data.value}' is incompatible with the agent's current "
+                    f"model '{model_id}' (expected prefix "
+                    f"'{ENGINE_MODEL_PREFIX.get(data.value, '?')}'). "
+                    f"Use POST /api/config/engine to switch engine and model atomically."
+                ),
+            )
+    elif data.type == "login":
+        cli = _effective_cli(prompts_dir, data.agent_id)
+        if _profile_engine(data.value) != cli:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"login profile '{data.value}' does not belong to engine '{cli}' "
+                    f"(expected a '{cli}*' profile)"
+                ),
+            )
+
+
+_profile_engine = engines.profile_engine
+PROFILE_RE = re.compile(engines.PROFILE_RE)
+
+
+def _link_path_for(prompts_dir: Path, agent_id: str, ext: str):
+    """Chemin du symlink d'override + cible relative, selon x45 ou plat."""
+    if agent_id != "default" and "-" in agent_id:
+        base_id = agent_id.split("-")[0]
+        x45_dir = _resolve_prompts_dir(prompts_dir, base_id)
+        if x45_dir:
+            return x45_dir / f"{agent_id}.{ext}", "../"
+    return prompts_dir / f"{agent_id}.{ext}", ""
+
+
+def _write_override(prompts_dir: Path, agent_id: str, ext: str, value: str):
+    """Pose (ou remplace) le symlink d'override <agent_id>.<ext> → <value>.<ext>."""
+    link_path, prefix = _link_path_for(prompts_dir, agent_id, ext)
+    target = prompts_dir / f"{value}.{ext}"
+    if not target.exists() or target.is_symlink():
+        raise HTTPException(status_code=400, detail=f"target {value}.{ext} not found")
+    if link_path.is_symlink() or link_path.exists():
+        link_path.unlink()
+    link_path.symlink_to(f"{prefix}{value}.{ext}")
+
+
+@router.post("/api/config/engine")
+async def update_agent_engine(data: AgentEngineUpdate):
+    """E1 — Bascule ATOMIQUE moteur + modèle (+ profil) d'un agent.
+
+    Sans cet endpoint, le garde-fou de compatibilité crée un interblocage :
+    un agent `claude` + modèle `claude-*` ne peut passer à `codex` + `gpt-*`
+    ni en changeant le moteur d'abord (moteur codex sur modèle claude → 400),
+    ni le modèle d'abord (modèle gpt sur moteur claude → 400).
+
+    Ici le TRIPLET est validé d'un bloc, puis écrit. Si une écriture échoue,
+    les précédentes sont annulées (l'état partiel serait pire que l'échec :
+    agent.sh refuserait de démarrer l'agent).
+    """
+    prompts_dir = cfg.BASE_DIR / "prompts"
+
+    if data.agent_id != "default" and not cfg.is_valid_agent_id(data.agent_id):
+        raise HTTPException(status_code=400, detail="invalid agent_id")
+    if data.cli not in ENGINES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown engine '{data.cli}' (expected: {', '.join(ENGINES)})",
+        )
+    for v in (data.model, data.login):
+        if v is not None and not re.match(r"^[a-zA-Z0-9_.-]+$", v):
+            raise HTTPException(status_code=400, detail="invalid value")
+
+    # 1. Cohérence modèle ↔ moteur
+    try:
+        model_id = (prompts_dir / f"{data.model}.model").read_text().strip()
+    except OSError:
+        raise HTTPException(status_code=400, detail=f"target {data.model}.model not found")
+    if not _model_matches_engine(model_id, data.cli):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"model '{model_id}' is incompatible with engine '{data.cli}' "
+                f"(expected prefix '{ENGINE_MODEL_PREFIX.get(data.cli, '?')}')"
+            ),
+        )
+
+    # 2. Cohérence profil ↔ moteur (un profil codex en CLAUDE_CONFIG_DIR = auth cassée)
+    if data.login:
+        if not PROFILE_RE.match(data.login):
+            raise HTTPException(status_code=400, detail="invalid login profile name")
+        if _profile_engine(data.login) != data.cli:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"login profile '{data.login}' does not belong to engine "
+                    f"'{data.cli}' (expected a '{data.cli}*' profile)"
+                ),
+            )
+
+    # 3. Écriture atomique (rollback des symlinks déjà posés en cas d'échec)
+    written = []
+    try:
+        for ext, value in (("cli", data.cli), ("model", data.model), ("login", data.login)):
+            if value is None:
+                continue
+            link_path, _ = _link_path_for(prompts_dir, data.agent_id, ext)
+            previous = os.readlink(link_path) if link_path.is_symlink() else None
+            _write_override(prompts_dir, data.agent_id, ext, value)
+            written.append((link_path, previous))
+    except Exception:
+        for link_path, previous in reversed(written):
+            if link_path.is_symlink() or link_path.exists():
+                link_path.unlink()
+            if previous is not None:
+                link_path.symlink_to(previous)
+        raise
+
+    return {
+        "status": "updated",
+        "agent_id": data.agent_id,
+        "cli": data.cli,
+        "model": data.model,
+        "login": data.login,
     }
 
 
@@ -193,6 +437,13 @@ async def update_login_model(data: LoginModelUpdate):
 
     if data.type not in ("login", "model"):
         raise HTTPException(status_code=400, detail="type must be 'login' or 'model'")
+
+    # E1 : un moteur inconnu ne doit jamais atteindre agent.sh
+    if data.type == "cli" and data.value and data.value not in ENGINES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown engine '{data.value}' (expected: {', '.join(ENGINES)})",
+        )
 
     # Validate agent_id format
     if data.agent_id != "default" and not cfg.is_valid_agent_id(data.agent_id):
@@ -232,6 +483,11 @@ async def update_login_model(data: LoginModelUpdate):
     target_file = prompts_dir / f"{data.value}.{data.type}"
     if not target_file.exists() or target_file.is_symlink():
         raise HTTPException(status_code=400, detail=f"target {data.value}.{data.type} not found")
+
+    # E1 : garde-fou modèle ↔ moteur. Sans lui, l'UI laisse assigner un modèle
+    # OpenAI à un agent Claude Code : la slash-command /model est alors ignorée
+    # par le TUI, l'agent tourne SILENCIEUSEMENT sur son modèle par défaut.
+    _guard_engine_model_compat(prompts_dir, data)
 
     # Create/replace symlink
     if link_path.is_symlink() or link_path.exists():
@@ -467,11 +723,11 @@ async def get_keepalive():
     """List all login profiles with their keepalive and tmux status."""
     cfg.KEEPALIVE_DIR.mkdir(parents=True, exist_ok=True)
 
-    # List profiles from login/ directory
+    # List profiles from login/ directory — E1 : tous les moteurs, pas que claude
     profiles = []
     if cfg.PROFILES_DIR.exists():
         for d in sorted(cfg.PROFILES_DIR.iterdir()):
-            if d.is_dir() and d.name.startswith("claude"):
+            if d.is_dir() and _profile_engine(d.name):
                 profiles.append(d.name)
 
     # Check tmux sessions
@@ -498,6 +754,7 @@ async def get_keepalive():
 
         entries.append({
             "profile": profile,
+            "engine": _profile_engine(profile),
             "running": is_running,
             "keepalive": is_active,
             "suspended": is_suspended,
@@ -511,7 +768,7 @@ async def get_keepalive():
 async def start_keepalive(data: dict):
     """Start a Claude login session with keepalive."""
     profile = data.get("profile", "")
-    if not re.match(r'^claude\d[a-b]$', profile):
+    if not PROFILE_RE.match(profile):
         raise HTTPException(status_code=400, detail="invalid profile")
 
     profile_dir = cfg.PROFILES_DIR / profile
@@ -525,8 +782,15 @@ async def start_keepalive(data: dict):
     if result.returncode == 0:
         raise HTTPException(status_code=409, detail="session already running")
 
-    # Create tmux session with Claude
-    cmd = f"cd '{cfg.BASE_DIR}' && CLAUDE_CONFIG_DIR='{profile_dir}' claude --dangerously-skip-permissions"
+    # E1 : commande de lancement selon le moteur du profil — un profil codex
+    # lancé avec `claude` + CLAUDE_CONFIG_DIR produirait une auth cassée.
+    engine = _profile_engine(profile)
+    if not engine:
+        raise HTTPException(status_code=400, detail="cannot determine engine for profile")
+    cmd = (
+        f"cd '{cfg.BASE_DIR}' && {ENGINE_CONFIG_ENV[engine]}='{profile_dir}' "
+        f"{engine} {ENGINE_BYPASS_FLAG[engine]}"
+    )
     await _run_subprocess([
         "tmux", "new-session", "-d", "-s", session, cmd
     ], text=True)
@@ -544,7 +808,7 @@ async def start_keepalive(data: dict):
 async def stop_keepalive(data: dict):
     """Stop a Claude login session."""
     profile = data.get("profile", "")
-    if not re.match(r'^claude\d[a-b]$', profile):
+    if not PROFILE_RE.match(profile):
         raise HTTPException(status_code=400, detail="invalid profile")
 
     session = f"{cfg.MA_PREFIX}-agent-002-{profile}"
@@ -563,7 +827,7 @@ async def stop_keepalive(data: dict):
 async def probe_keepalive(data: dict):
     """Read cached profile info from static JSON file."""
     profile = data.get("profile", "")
-    if not re.match(r'^claude\d[a-b]$', profile):
+    if not PROFILE_RE.match(profile):
         raise HTTPException(status_code=400, detail="invalid profile")
 
     info_file = cfg.KEEPALIVE_DIR / f"info_{profile}.json"

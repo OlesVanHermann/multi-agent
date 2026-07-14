@@ -26,6 +26,13 @@ import subprocess
 import threading
 import concurrent.futures
 import redis
+from pathlib import Path
+
+BRIDGE_DIR = Path(__file__).resolve().parent / "agent-bridge"
+sys.path.insert(0, str(BRIDGE_DIR))
+import engines  # noqa: E402
+
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 CRONTAB_DIR = os.environ.get("CRONTAB_DIR", os.path.join(os.path.dirname(__file__), "..", "crontab"))
 KEEPALIVE_DIR = os.environ.get("KEEPALIVE_DIR", os.path.join(os.path.dirname(__file__), "..", "keepalive"))
@@ -76,11 +83,7 @@ def fire_key(hour, minute, period):
 
 
 def _agent_is_busy(agent_id):
-    """Check if agent is busy (Claude is generating/reading/executing tools).
-
-    Captures more tmux lines and detects tool execution, not just spinner.
-    Returns True if agent should NOT be interrupted.
-    """
+    """Return the engine-specific busy state read from the interactive TUI."""
     session = f"{MA_PREFIX}-agent-{agent_id}"
     try:
         check = subprocess.run(
@@ -93,33 +96,23 @@ def _agent_is_busy(agent_id):
             ["tmux", "capture-pane", "-t", f"{session}:0", "-p", "-S", "-20"],
             capture_output=True, text=True, timeout=5
         )
-        lines = cap.stdout.strip().split('\n')
-        last_text = '\n'.join(lines[-10:])
-
-        # Busy: spinner/thinking visible
-        if any(s in last_text for s in ['Thinking', 'Brewing', 'Simmering', 'Fermenting',
-                                         'Nucleating', 'Stewing', 'Working', 'Sautéed']):
-            return True
-
-        # Busy: tool in progress (Read, Edit, Write, Bash, Grep, Glob, Agent)
-        if any(s in last_text for s in ['● Read', '● Edit', '● Write', '● Bash(',
-                                         '● Grep', '● Glob', '● Agent(',
-                                         '⎿  Interrupted', 'ctrl+o to expand']):
-            return True
-
-        # Busy: streaming output (progress indicators)
-        if any(s in last_text for s in ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏',
-                                         '↓', '↑', 'tokens']):
-            return True
-
-        # Idle: prompt visible — agent is waiting for input
-        if '❯' in last_text:
+        pane_cmd = subprocess.run(
+            ["tmux", "display-message", "-t", f"{session}:0", "-p",
+             "#{pane_current_command}"], capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+        cli = engines.agent_engine(BASE_DIR / "prompts", agent_id)
+        markers = engines.load_markers(cli)
+        if pane_cmd not in markers["process_names"]:
             return False
-
-        # No prompt visible = probably still generating output
-        return True
+        lines = cap.stdout.splitlines()
+        status_line = next(
+            (line for line in reversed(lines) if markers["status_line"] in line), ""
+        )
+        haystack = status_line if markers["busy_scope"] == "status_line" \
+            else "\n".join(lines[-20:])
+        return any(marker in haystack for marker in markers["busy_markers"])
     except Exception:
-        return False
+        return True
 
 
 def _count_pending_crontab(r, agent_id, max_check=10):
@@ -234,13 +227,47 @@ KEEPALIVE_USAGE_PERIOD = int(os.environ.get("MA_KEEPALIVE_RR_MIN", "0"))
 # écrit l'état de chaque login dans keepalive/. 0 = désactivé.
 KEEPALIVE_SWEEP_MIN = int(os.environ.get("MA_KEEPALIVE_SWEEP_MIN", "720"))
 LOGIN_DIR = os.environ.get("LOGIN_DIR", os.path.join(os.path.dirname(__file__), "..", "login"))
-LOGIN_EXPIRED_MARKERS = (
-    "select login method",
-    "run /login",
-    "session has expired",
-    "invalid api key",
-    "sign in to claude",
-)
+
+# E1 : la couche moteur est IMPORTÉE, pas recopiée.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent-bridge"))
+import engines  # noqa: E402
+
+ENGINES = engines.ENGINES
+ENGINE_CONFIG_ENV = engines.ENGINE_CONFIG_ENV
+ENGINE_BYPASS_FLAG = engines.ENGINE_BYPASS_FLAG
+PROFILE_RE = re.compile(engines.PROFILE_RE)
+_profile_engine = engines.profile_engine
+
+
+def _ready_markers(profile):
+    """Marqueurs de prompt du moteur du profil (prompt_markers)."""
+    cli = _profile_engine(profile)
+    if not cli:
+        return ()
+    try:
+        return tuple(engines.load_markers(cli)["prompt_markers"][:1])
+    except RuntimeError:
+        return ()
+
+
+def _login_expired_markers(profile):
+    """Libellés de session expirée, propres au moteur du profil.
+
+    Étaient codés en dur pour Claude Code. Sans les pendants Codex, une session
+    OAuth morte n'est pas détectée par le sweep — d'où le repli sur une liste
+    VIDE (aucune détection) plutôt que sur celle de Claude Code, qui donnerait
+    des faux négatifs silencieux.
+    """
+    cli = _profile_engine(profile)
+    if not cli:
+        return ()
+    try:
+        return tuple(engines.load_markers(cli)["login_expired_markers"])
+    except RuntimeError:
+        return ()
+
+
+# LOGIN_EXPIRED_MARKERS : voir _login_expired_markers(profile) ci-dessus.
 _sweep_thread = None
 
 
@@ -500,14 +527,28 @@ def _ensure_profile_session(profile):
         return session, False
     base = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     profile_dir = os.path.join(os.path.abspath(LOGIN_DIR), profile)
-    cmd = (f"cd '{base}' && CLAUDE_CONFIG_DIR='{profile_dir}' "
-           f"claude --dangerously-skip-permissions")
+    # E1 : le moteur vient du préfixe du profil (claude1a → claude, codex1a → codex).
+    engine = _profile_engine(profile)
+    if not engine:
+        raise ValueError(f"profil sans moteur identifiable : {profile!r}")
+    cmd = (f"cd '{base}' && {ENGINE_CONFIG_ENV[engine]}='{profile_dir}' "
+           f"{engine} {ENGINE_BYPASS_FLAG[engine]}")
     subprocess.run(["tmux", "new-session", "-d", "-s", session, cmd], timeout=10)
     return session, True
 
 
-def _wait_prompt(session, timeout_s=90):
-    """Wait for a clean prompt. Returns 'ready', 'login_required' or 'timeout'."""
+def _wait_prompt(session, timeout_s=90, profile=None):
+    """Wait for a clean prompt. Returns 'ready', 'login_required' or 'timeout'.
+
+    E1 : les libellés (« session expirée », prompt de saisie) sont propres au
+    moteur du profil. Un profil dont les marqueurs ne sont pas relevés ne peut
+    pas être sondé : on renvoie 'timeout' plutôt qu'un état inventé.
+    """
+    expired = _login_expired_markers(profile) if profile else ()
+    ready = _ready_markers(profile) if profile else ()
+    if not ready:
+        return "timeout"
+
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         try:
@@ -515,7 +556,7 @@ def _wait_prompt(session, timeout_s=90):
         except Exception:
             text = ""
         low = text.lower()
-        if any(m in low for m in LOGIN_EXPIRED_MARKERS):
+        if any(m.lower() in low for m in expired):
             return "login_required"
         # Écrans d'onboarding (thème, notes) : valider le défaut et continuer
         if "choose the text style" in low or "press enter to continue" in low:
@@ -523,7 +564,7 @@ def _wait_prompt(session, timeout_s=90):
             time.sleep(2)
             continue
         last_lines = [l for l in text.strip().split("\n") if l.strip()][-3:]
-        if any("❯" in l for l in last_lines):
+        if any(any(m in l for m in ready) for l in last_lines):
             return "ready"
         time.sleep(3)
     return "timeout"
@@ -542,7 +583,7 @@ def _sweep_profile(profile):
     session, created = _ensure_profile_session(profile)
     if created:
         time.sleep(5)
-    state = _wait_prompt(session)
+    state = _wait_prompt(session, profile=profile)
     result = {"profile": profile, "session": session, "status": state,
               "created": created, "ts": int(time.time())}
     if state != "ready":
@@ -559,7 +600,7 @@ def _sweep_profile(profile):
         timeout=5
     )
     time.sleep(30)
-    _wait_prompt(session, timeout_s=60)
+    _wait_prompt(session, timeout_s=60, profile=profile)
 
     bars, info = _scrape_usage_tab(session)
     result["status"] = "ok" if bars else "no_bars"
@@ -581,12 +622,12 @@ def _sweep_profile(profile):
 
 
 def _run_sweep():
-    """Sequential sweep over all login/claude* profiles."""
+    """Sequential sweep over all login/<moteur>N[a-z] profiles (E1)."""
     report = {"started": int(time.time()), "profiles": {}}
     try:
         profiles = sorted(
             d for d in os.listdir(LOGIN_DIR)
-            if re.match(r'^claude\d[ab]$', d)
+            if PROFILE_RE.match(d)
             and os.path.isdir(os.path.join(LOGIN_DIR, d))
             and not os.path.exists(os.path.join(KEEPALIVE_DIR, f"{d}.suspended"))
         )

@@ -1,4 +1,4 @@
-# Multi-Agent System v3.0.15
+# Multi-Agent System v3.1.0
 
 Système d'orchestration multi-agents pour projets de développement complexes avec Claude Code.
 
@@ -359,6 +359,57 @@ python3 scripts/agent-bridge/healthcheck.py
 | `project-config.md` | Configuration du projet (créé par 000) |
 | `pool-requests/knowledge/*.md` | Inventaires (tracking) |
 | `examples/` | Exemples à suivre |
+| `scripts/engines.sh` | **Couche moteur CLI** — source unique de vérité (shell) |
+| `scripts/agent-bridge/engines.py` | **Couche moteur CLI** — source unique de vérité (Python) |
+| `scripts/agent-bridge/markers.<cli>.yaml` | Marqueurs UI du TUI, par moteur |
+
+---
+
+## Moteurs CLI (E1)
+
+Le framework **ne parle pas à une API** : il pilote un CLI agentique interactif
+dans tmux. Le modèle est l’unique sélecteur de moteur : `claude-*` utilise
+Claude Code et `gpt-*` utilise Codex CLI.
+
+| Extension | Rôle | Exemple |
+|---|---|---|
+| `.login` | profil d'authentification | `prompts/claude1a.login` |
+| `.model` | identifiant de modèle | `prompts/gpt-5-6-sol.model` → `gpt-5.6-sol` |
+| `.effort` | effort de raisonnement (L/M/H) | `prompts/301.effort` |
+
+Même cascade de résolution pour les trois configurations :
+`prompts/<dir-agent>/<id>.<ext>` → `prompts/<id>.<ext>` → `prompts/default.<ext>`.
+
+Moteurs supportés : `claude` (Claude Code) et `codex` (OpenAI Codex CLI).
+
+### Règles absolues
+
+- **Jamais** de binaire, de variable d'auth, de drapeau de bypass ou de **chaîne
+  d'UI** (`esc to interrupt`, `bypass permissions`, `❯`…) codés en dur hors de la
+  couche moteur. `tests/test_no_engine_hardcoding.py` échoue sinon.
+- Les marqueurs UI d'un moteur se **relèvent** — sur un TUI réel
+  (`scripts/agent-bridge/capture-markers.sh <cli>`) ou sur le source du CLI s'il
+  est ouvert. Ils ne se devinent **jamais** : une détection busy/ready fausse
+  produit des agents figés ou des réponses tronquées, **sans aucune erreur
+  visible**. Chaque marqueur porte sa source dans le fichier.
+- Un moteur dont les marqueurs portent encore `__A_RENSEIGNER__` **ne démarre
+  pas** (fail-fast). `__NON_APPLICABLE__` est différent : c'est un signal qui
+  n'existe pas dans ce TUI — autorisé, et rendu inerte.
+- **L'algorithme aussi dépend du moteur**, pas seulement les chaînes. Ex. :
+  `busy_scope` — Claude Code met l'indice « occupé » dans sa ligne de statut ;
+  Codex l'affiche dans un widget séparé, et son composer reste visible pendant
+  le travail. Un portage naïf verrait tout agent codex éternellement libre.
+- Un modèle doit correspondre à son moteur (`claude-*` / `gpt-*`) et un profil
+  aussi (`claude1a` / `codex1a`). Les bascules passent par
+  `POST /api/config/engine`, qui écrit le triplet d'un bloc.
+- **Facturation** : un agent `codex` ne démarre QUE sur un profil authentifié
+  « Sign in with ChatGPT ». Une clé API facturerait au token, hors forfait, sans
+  rien signaler. Trois verrous : préflight par profil, `forced_login_method=chatgpt`,
+  et retrait de `OPENAI_API_KEY` / `CODEX_API_KEY` de l'environnement. Opt-in
+  explicite : `CODEX_ALLOW_API_KEY=1`.
+
+**Documentation complète : [docs/ENGINES.md](docs/ENGINES.md)**
+**Mise en service : [docs/ENGINES-RUNBOOK.md](docs/ENGINES-RUNBOOK.md)**
 
 ---
 
@@ -541,4 +592,4 @@ git push origin main --tags
 
 ---
 
-*Multi-Agent System v3.0.15 - Mars 2026*
+*Multi-Agent System v3.1.0 - Juillet 2026*

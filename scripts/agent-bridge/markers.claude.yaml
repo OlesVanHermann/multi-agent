@@ -1,0 +1,97 @@
+# A1 — Marqueurs UI du CLI Claude Code, externalisés.
+# E1 — Fichier de marqueurs du MOTEUR `claude` (cf. scripts/agent-bridge/engines.py).
+#      Sélectionné via AGENT_CLI=claude (défaut). markers.yaml est un lien
+#      symbolique vers ce fichier (rétro-compatibilité).
+#
+# La détection de fin de réponse et l'état du pane reposent sur le parsing
+# visuel du terminal. Si un libellé / rendu du CLI change, c'est ICI qu'on
+# corrige — agent.py ne contient plus aucune chaîne d'UI en dur.
+
+# Noms de process attendus dans #{pane_current_command} quand le CLI tourne
+process_names: ['claude', 'node']
+
+# E1 — Portée de la détection « occupé ».
+# Claude Code met l'indice « esc to interrupt » DANS sa ligne de statut
+# (« bypass permissions »). Et le prompt ❯ peut rester visible pendant que des
+# sous-agents tournent : sa présence ne prouve donc PAS que l'agent est libre.
+# Seule la ligne de statut fait foi. (Codex, lui, utilise busy_scope: pane.)
+busy_scope: 'status_line'
+
+# Portée de la détection des shells en arrière-plan : « N bashes » est DANS la
+# ligne de statut. Chercher 'bashes|shell' dans tout le pane ferait des faux
+# positifs sur n'importe quel texte contenant « shell ».
+bashes_scope: 'status_line'
+
+# Marqueurs de prompt (Claude prêt, fin de réponse)
+prompt_markers: ['❯', '>', '$', '%']
+
+# E1 — Marqueurs de « CLI démarré et prêt à recevoir » (agent.sh wait_cli_ready).
+# Distincts de prompt_markers : ici on veut la preuve que le TUI a fini de
+# booter, pas la fin d'une réponse. Reprend à l'identique le motif historique
+# `❯|Try "` de wait_claude_ready.
+ready_markers: ['❯', 'Try "']
+
+# Ligne de statut affichée en mode normal (agent prêt ou occupé)
+status_line: 'bypass permissions'
+
+# Indicateurs "occupé" dans la ligne de statut
+busy_markers: ['esc to interrupt']
+
+# Mode plan actif
+plan_mode: 'plan mode on'
+
+# Compaction de contexte
+compaction:
+  in_progress: 'compacting conversation'   # comparé insensible à la casse
+  done: 'Conversation compacted'
+
+# Demande d'approbation (plan mode)
+approval: 'Would you like to proceed'
+
+# Sondage de session Claude (auto-rejeté par le bridge)
+survey: 'How is Claude doing'
+
+# Message mis en file (prompt non traité, Claude occupé)
+queued: 'Press up to edit queued messages'
+
+# Menu de sélection en attente
+waiting_select: 'Enter to select'
+
+# Limite de contexte atteinte
+context_limit: 'Context limit reached'
+
+# Changement de modèle visible dans le pane
+model_change: '/model '
+
+# Marqueur d'erreur API dans le pane
+api_error: 'API Error:'
+
+# Indicateur de scroll (lignes non affichées) dans la ligne de statut
+scroll_indicator: '↓'
+
+# Bashes/shells actifs dans la ligne de statut (regex)
+bashes_pattern: 'bashes|shell'
+
+# Pourcentage de contexte restant (regex, le nombre est extrait)
+context_pct_patterns:
+  - '[0-9]+% until auto-compact'
+  - 'auto-compact: [0-9]+%'
+
+# Motifs d'erreur API qui déclenchent un retry du prompt
+api_error_patterns:
+  - 'API Error: 401'
+  - 'authentication_error'
+  - 'API error'
+  - 'APIError'
+  - 'rate_limit'
+  - 'overloaded_error'
+
+# E1 — Libellés indiquant une session d'authentification expirée / absente.
+# Consommés par le sweep keepalive (scripts/crontab-scheduler.py). Comparés en
+# minuscules. Étaient codés en dur dans LOGIN_EXPIRED_MARKERS.
+login_expired_markers:
+  - 'select login method'
+  - 'run /login'
+  - 'session has expired'
+  - 'invalid api key'
+  - 'sign in to claude'

@@ -16,6 +16,7 @@ if [ -f "$BASE_DIR/setup/secrets.cfg" ]; then
     eval "$(grep -E '^[A-Z_]+=' "$BASE_DIR/setup/secrets.cfg" | grep -v '^#')"
     set +a
 fi
+source "$SCRIPT_DIR/engines.sh"   # E1 : moteurs CLI (claude | codex)
 BRIDGE_SCRIPT="$BASE_DIR/scripts/agent-bridge/agent.py"
 LOG_DIR="$BASE_DIR/logs/000"
 WEB_DIR="$BASE_DIR/web"
@@ -206,42 +207,51 @@ do_start() {
     if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
         log_warn "Session $SESSION_NAME already exists. Attach with: tmux attach -t $SESSION_NAME"
     else
-        # Read model: prompts/000.model > prompts/default.model
+        # E1 : moteur / modèle / login / effort — prompts/000.<ext> > prompts/default.<ext>
         local PROMPTS_DIR="$BASE_DIR/prompts"
-        local MODEL=""
-        if [ -f "$PROMPTS_DIR/000.model" ]; then
-            MODEL=$(cat "$PROMPTS_DIR/000.model" | tr -d '[:space:]')
-        elif [ -f "$PROMPTS_DIR/default.model" ]; then
-            MODEL=$(cat "$PROMPTS_DIR/default.model" | tr -d '[:space:]')
-        fi
-
-        # Read login profile: prompts/000.login > prompts/default.login
-        local LOGIN_PROFILE=""
-        if [ -f "$PROMPTS_DIR/000.login" ]; then
-            LOGIN_PROFILE=$(cat "$PROMPTS_DIR/000.login" | tr -d '[:space:]')
-        elif [ -f "$PROMPTS_DIR/default.login" ]; then
-            LOGIN_PROFILE=$(cat "$PROMPTS_DIR/default.login" | tr -d '[:space:]')
-        fi
-
-        local CLAUDE_CMD="claude"
-        if [ -n "$LOGIN_PROFILE" ]; then
-            if [[ ! "$LOGIN_PROFILE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-                log_error "Invalid LOGIN_PROFILE: $LOGIN_PROFILE"
-                exit 1
+        local CLI="" MODEL="" LOGIN_PROFILE="" EFFORT=""
+        local ext val
+        for ext in cli model login effort; do
+            val=""
+            if [ -f "$PROMPTS_DIR/000.$ext" ]; then
+                val=$(cat "$PROMPTS_DIR/000.$ext" | tr -d '[:space:]')
+            elif [ -f "$PROMPTS_DIR/default.$ext" ]; then
+                val=$(cat "$PROMPTS_DIR/default.$ext" | tr -d '[:space:]')
             fi
-            CLAUDE_CMD="CLAUDE_CONFIG_DIR=$PROFILES_DIR/$LOGIN_PROFILE claude"
+            case "$ext" in
+                cli)    CLI="$val" ;;
+                model)  MODEL="$val" ;;
+                login)  LOGIN_PROFILE="$val" ;;
+                effort) EFFORT="$val" ;;
+            esac
+        done
+        CLI=$(engine_for_model "$MODEL")
+        LOGIN_PROFILE=$(engine_effective_profile "$CLI" "$LOGIN_PROFILE")
+
+        if ! engine_is_valid "$CLI"; then
+            log_error "000: moteur inconnu '$CLI' (attendu: ${ENGINES[*]})"
+            exit 1
+        fi
+        if ! engine_model_is_compatible "$CLI" "$MODEL"; then
+            log_error "000: modèle '$MODEL' incompatible avec le moteur '$CLI'"
+            exit 1
+        fi
+        if [ "$CLI" = "codex" ] && ! engine_codex_preflight "$PROFILES_DIR" "$LOGIN_PROFILE"; then
+            log_error "000: préflight Codex refusé"
+            exit 1
         fi
 
-        if [ -n "$MODEL" ] && [[ ! "$MODEL" =~ ^[a-zA-Z0-9_.:-]+$ ]]; then
-            log_error "Invalid MODEL: $MODEL"
+        local LAUNCH_CMD
+        if ! LAUNCH_CMD=$(engine_launch_cmd "$CLI" "$PROFILES_DIR" "$LOGIN_PROFILE" "$MODEL" "$EFFORT"); then
+            log_error "000: paramètres invalides (cli=$CLI login=$LOGIN_PROFILE model=$MODEL)"
             exit 1
         fi
 
         tmux new-session -d -s "$SESSION_NAME"
-        tmux send-keys -t "$SESSION_NAME" "cd '$BASE_DIR' && unset CLAUDECODE && $CLAUDE_CMD --dangerously-skip-permissions" Enter
+        tmux send-keys -t "$SESSION_NAME" "cd '$BASE_DIR' && unset CLAUDECODE && $LAUNCH_CMD" Enter
         sleep 4
 
-        # Select model (Enter to type, sleep, Enter to confirm menu)
+        # Same interactive model selection for Claude and Codex.
         if [ -n "$MODEL" ]; then
             tmux send-keys -t "$SESSION_NAME" "/model $MODEL" Enter
             sleep 1
@@ -252,9 +262,9 @@ do_start() {
         # Prompt injection is handled by the bridge (agent.py auto-init)
 
         tmux new-window -t "$SESSION_NAME" -n bridge
-        tmux send-keys -t "$SESSION_NAME:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX=$MA_PREFIX REDIS_PASSWORD='${REDIS_PASSWORD:-}' REDIS_PORT='${REDIS_PORT:-6379}' HEALTH_TOKEN='${HEALTH_TOKEN:-}' python3 '$BRIDGE_SCRIPT' 000 2>&1 | tee -a '$LOG_DIR/bridge.log'" Enter
+        tmux send-keys -t "$SESSION_NAME:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX=$MA_PREFIX AGENT_CLI='$CLI' REDIS_PASSWORD='${REDIS_PASSWORD:-}' REDIS_PORT='${REDIS_PORT:-6379}' HEALTH_TOKEN='${HEALTH_TOKEN:-}' python3 '$BRIDGE_SCRIPT' 000 2>&1 | tee -a '$LOG_DIR/bridge.log'" Enter
         tmux select-window -t "$SESSION_NAME:0"
-        log_ok "Agent 000 started in tmux session: $SESSION_NAME"
+        log_ok "Agent 000 started in tmux session: $SESSION_NAME ($CLI)"
     fi
 
     # Summary

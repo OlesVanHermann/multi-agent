@@ -81,7 +81,12 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent_id: agentId, type, value }),
       })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      if (!res.ok) {
+        // E1 : le backend renvoie un detail explicite sur les incompatibilités
+        // modèle ↔ moteur — l'afficher plutôt qu'un « HTTP 400 » opaque.
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.detail || `HTTP ${res.status}`)
+      }
       await fetchData()
     } catch (err) {
       setError(err.message)
@@ -146,7 +151,14 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
   if (error && !data) return <div className="login-model-panel" style={{ display: hidden ? 'none' : undefined }}><p style={{ color: 'var(--red)' }}>Error: {error}</p></div>
   if (!data) return <div className="login-model-panel" style={{ display: hidden ? 'none' : undefined }}><p style={{ color: 'var(--text-secondary)' }}>Loading...</p></div>
 
-  const { logins, models, default_login, default_model, default_effort, agents, groups } = data
+  const {
+    logins, models, default_login, default_model, default_effort, agents, groups,
+  } = data
+
+  // E1 : n'exposer que les modèles compatibles avec le moteur de la ligne.
+  // Sans ce filtre, l'UI laisse choisir gpt-5.6-sol sur un agent Claude Code :
+  // la slash-command /model est alors ignorée par le TUI, sans erreur visible.
+  const accountSlots = (logins || []).filter(l => l.startsWith('claude'))
   const groupMap = {}
   ;(groups || []).forEach(g => { groupMap[g.id] = g })
 
@@ -192,7 +204,7 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
                 value={default_login}
                 onChange={(e) => handleChange('default', 'login', e.target.value)}
               >
-                {logins.map(l => <option key={l} value={l}>{l}</option>)}
+                {accountSlots.map(l => <option key={l} value={l}>{l}</option>)}
               </select>
             </td>
             <td>
@@ -278,7 +290,7 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
                     onChange={(e) => handleChange(agent.id, 'login', e.target.value)}
                   >
                     <option value="">({default_login})</option>
-                    {logins.map(l => <option key={l} value={l}>{l}</option>)}
+                    {accountSlots.map(l => <option key={l} value={l}>{l}</option>)}
                   </select>
                 </td>
                 <td>

@@ -115,12 +115,18 @@ HEARTBEAT_INTERVAL = 10
 # EF-001 : port de base pour health endpoint (port = base + agent_id numérique)
 HEALTH_PORT_BASE = int(os.environ.get("AGENT_HEALTH_PORT_BASE", 9100))
 
-# A1 : marqueurs UI du CLI Claude externalisés dans markers.yaml.
-# Aucune chaîne de rendu CLI ne doit être codée en dur dans ce fichier.
-_MARKERS_PATH = Path(__file__).resolve().parent / "markers.yaml"
-with open(_MARKERS_PATH, encoding="utf-8") as _f:
-    MARKERS = yaml.safe_load(_f)
+# A1 : marqueurs UI du CLI externalisés dans markers.<moteur>.yaml.
+# E1 : le moteur est choisi par AGENT_CLI (claude par défaut) — engines.py
+#      fait le chargement + la validation fail-fast. Aucune chaîne de rendu
+#      CLI ne doit être codée en dur dans ce fichier.
+import engines
 
+AGENT_CLI = engines.current_engine()
+_MARKERS_PATH = engines.markers_path(AGENT_CLI)
+MARKERS = engines.load_markers(AGENT_CLI)
+
+PROCESS_NAMES = MARKERS['process_names']
+BUSY_SCOPE = MARKERS['busy_scope']
 PROMPT_MARKERS = MARKERS['prompt_markers']
 STATUS_LINE = MARKERS['status_line']
 BUSY_MARKERS = MARKERS['busy_markers']
@@ -146,38 +152,69 @@ STREAM_MAXLEN = 1000
 IO_STREAM_MAXLEN = int(os.environ.get("IO_STREAM_MAXLEN", 10000))
 
 
-def _parse_pane_state(out, pane_cmd, agent_id):
-    """B6: derive dashboard agent state from tmux pane content.
+def _parse_pane_state(out, pane_cmd, agent_id, process_names=None, busy_scope=None,
+                      markers=None):
+    """B6 : déduit l'état d'un agent depuis le contenu de son pane tmux.
 
-    Pure function (testable) — mirrors the historical bash multi-grep that
-    the dashboard ran per agent per cycle. Keys match the dashboard cache.
+    Fonction pure (testable). Strictement équivalente au scan bash généré par
+    engines.build_pane_eval() — la parité est PROUVÉE, champ par champ, par
+    tests/test_pane_scan.py, pour les deux moteurs.
+
+    E1 : tous les marqueurs viennent de `markers` (markers.<cli>.yaml). Défaut =
+    ceux du moteur courant, pour que les appelants existants restent inchangés.
+    `process_names` et `busy_scope` restent surchargeables séparément (rétro-
+    compat des tests). La clé de sortie reste 'claude_alive' : c'est le contrat
+    du cache dashboard, elle n'est pas renommée.
     """
-    claude_alive = pane_cmd in ("claude", "node")
+    m = markers if markers is not None else MARKERS
+    if process_names is None:
+        process_names = m['process_names']
+    if busy_scope is None:
+        busy_scope = m['busy_scope']
+
+    prompt_markers = m['prompt_markers']
+    busy_markers = m['busy_markers']
+
+    claude_alive = pane_cmd in tuple(process_names)
     lines = out.split('\n')
 
     bp_line = ""
     for line in lines:
-        if STATUS_LINE in line:
+        if m['status_line'] in line:
             bp_line = line
 
-    has_bashes = bool(re.search(BASHES_PATTERN, bp_line))
+    if m['bashes_scope'] == 'status_line':
+        has_bashes = bool(re.search(m['bashes_pattern'], bp_line))
+    else:
+        has_bashes = bool(re.search(m['bashes_pattern'], '\n'.join(lines[-20:])))
+
     if not claude_alive:
         busy = False
-    elif any(m in bp_line for m in BUSY_MARKERS):
-        busy = True
-    elif any(PROMPT_MARKERS[0] in l for l in lines[-10:]):
-        busy = False
+    elif busy_scope == 'status_line':
+        # Claude Code : l'indice « esc to interrupt » est DANS la ligne de statut.
+        # Le prompt ❯ peut rester visible pendant que des sous-agents tournent :
+        # sa présence ne prouve rien. Seule la ligne de statut fait foi.
+        if any(x in bp_line for x in busy_markers):
+            busy = True
+        elif any(prompt_markers[0] in l for l in lines[-10:]):
+            busy = False
+        else:
+            busy = True
     else:
-        busy = True
+        # Codex : l'indicateur d'activité est un widget SÉPARÉ, au-dessus du
+        # composer — et le composer « › » reste affiché pendant le travail.
+        # L'heuristique ci-dessus conclurait TOUJOURS idle.
+        tail = '\n'.join(lines[-20:])
+        busy = bool(re.search('|'.join(busy_markers), tail))
 
-    done_compacting = bool(re.search(re.escape(COMPACTION_DONE), out, re.IGNORECASE))
+    done_compacting = bool(re.search(re.escape(m['compaction']['done']), out, re.IGNORECASE))
     pid = str(agent_id).split('-')[0]
     prompt_loaded = bool(done_compacting and re.search(
         r'prompts/' + re.escape(pid) + r'[^ ]*/' + re.escape(str(agent_id)) + r'[.-]'
         r'|prompts/' + re.escape(str(agent_id)) + r'-', out))
 
     ctx = -1
-    ctx_matches = re.findall('|'.join(CONTEXT_PCT_PATTERNS), out)
+    ctx_matches = re.findall('|'.join(m['context_pct_patterns']), out)
     if ctx_matches:
         nums = re.findall(r'[0-9]+', ctx_matches[-1])
         if nums:
@@ -186,16 +223,16 @@ def _parse_pane_state(out, pane_cmd, agent_id):
     return {
         'busy': busy,
         'has_bashes': has_bashes,
-        'has_down': SCROLL_INDICATOR in bp_line,
-        'plan_mode': PLAN_MODE in out,
-        'waiting_approval': WAITING_SELECT in out,
-        'compacted': bool(re.search(re.escape(COMPACTION_IN_PROGRESS), out, re.IGNORECASE)),
+        'has_down': m['scroll_indicator'] in bp_line,
+        'plan_mode': m['plan_mode'] in out,
+        'waiting_approval': m['waiting_select'] in out,
+        'compacted': bool(re.search(re.escape(m['compaction']['in_progress']), out, re.IGNORECASE)),
         'context_pct': ctx,
         'done_compacting': done_compacting,
         'prompt_loaded': prompt_loaded,
-        'context_limit': CONTEXT_LIMIT in out,
-        'api_error': out.count(API_ERROR_MARKER) >= 3 or (claude_alive and not bp_line),
-        'model_change': MODEL_CHANGE in out,
+        'context_limit': m['context_limit'] in out,
+        'api_error': out.count(m['api_error']) >= 3 or (claude_alive and not bp_line),
+        'model_change': m['model_change'] in out,
         'claude_alive': claude_alive,
     }
 

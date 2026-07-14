@@ -1,4 +1,11 @@
-# Multi-Agent System v3.0.15
+# Multi-Agent System v3.1.0
+
+La ligne 3.1 ajoute OpenAI Codex CLI en mode interactif, avec authentification
+ChatGPT (forfait, sans API) et trois modèles : `gpt-5.6-sol`,
+`gpt-5.6-terra` et `gpt-5.6-luna`. Le moteur est déduit du modèle : choisir un
+modèle `gpt-*` utilise Codex, choisir un modèle `claude-*` utilise Claude Code.
+Les prompts, fichiers mémoire, historique et canaux Redis restent ceux de
+l'agent, quel que soit le moteur.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Claude](https://img.shields.io/badge/Powered%20by-Claude-blueviolet)](https://claude.ai)
@@ -68,13 +75,17 @@ sudo apt-get install redis-server redis-tools tmux
 docker run -d --name redis -p 127.0.0.1:6379:6379 redis:7-alpine
 ```
 
-### 3. Vérifier Claude Code
+### 3. Vérifier le moteur CLI
 
 ```bash
 # Tester que Claude fonctionne
 claude --version
 echo "test" | claude --print -
 ```
+
+Le moteur par défaut est Claude Code. Le framework sait aussi piloter Codex
+CLI — voir [docs/ENGINES.md](docs/ENGINES.md) pour l’inférence depuis le modèle
+et l’usage des modèles GPT-5.6 avec le forfait ChatGPT.
 
 ### 4. Lancer les agents
 
@@ -116,6 +127,8 @@ Voir [patch/HOW_TO_UPGRADE.md](patch/HOW_TO_UPGRADE.md) pour le guide complet.
 | Variable | Description | Défaut |
 |----------|-------------|--------|
 | `CLAUDE_CONFIG_DIR` | Dossier config Claude | `~/.claude` |
+| `CODEX_HOME` | Dossier config Codex (moteur `codex`) | `~/.codex` |
+| `AGENT_CLI` | Moteur du bridge (`claude`\|`codex`) — posé par agent.sh | `claude` |
 | `CLAUDE_CMD` | Commande Claude | `claude` |
 | `REDIS_HOST` | Hôte Redis | `localhost` |
 | `REDIS_PORT` | Port Redis | `6379` |
@@ -231,6 +244,7 @@ multi-agent/
 | Fichier | Description |
 |---------|-------------|
 | [CLAUDE.md](CLAUDE.md) | Documentation principale |
+| [docs/ENGINES.md](docs/ENGINES.md) | **Moteurs CLI** — sélection transparente par modèle, profils ChatGPT |
 | [patch/HOW_TO_UPGRADE.md](patch/HOW_TO_UPGRADE.md) | Guide de mise à jour |
 | [patch/HOW_TO_PATCH.md](patch/HOW_TO_PATCH.md) | **Pipeline de patches** (projet → Hub → GitHub) |
 | [docs/AUTH.md](docs/AUTH.md) | Authentification (Keycloak, JWT, WebSocket) |
@@ -311,4 +325,4 @@ MIT - voir [LICENSE](LICENSE)
 
 ---
 
-*Multi-Agent System v3.0.15 - 2026*
+*Multi-Agent System v3.1.0 - 2026*

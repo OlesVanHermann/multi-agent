@@ -21,12 +21,15 @@ BUMP_TYPE="${1:-patch}"
 echo -e "${BOLD}=== Multi-Agent Release ===${NC}"
 echo ""
 
-# 1. Check we're on main
+# 1. Releases are made from a maintained release line.
 CURRENT=$(git branch --show-current)
-if [ "$CURRENT" != "main" ]; then
-    echo -e "${RED}Error: Must be on 'main' branch (currently on '$CURRENT').${NC}"
-    exit 1
-fi
+case "$CURRENT" in
+    main) RELEASE_LINE="3.0"; RELEASE_REMOTE_BRANCH="main" ;;
+    v3.1) RELEASE_LINE="3.1"; RELEASE_REMOTE_BRANCH="v3.1" ;;
+    *)
+        echo -e "${RED}Error: releases are allowed from 'main' or 'v3.1' (currently '$CURRENT').${NC}"
+        exit 1 ;;
+esac
 
 # 2. Check clean working tree
 if [ -n "$(git status --porcelain)" ]; then
@@ -56,9 +59,10 @@ fi
 echo ""
 
 # 4. Get current version and bump
-CURRENT_TAG=$(git tag --sort=-v:refname | head -1)
+CURRENT_TAG=$(git tag --list "v${RELEASE_LINE}.*" --sort=-v:refname | head -1)
 if [ -z "$CURRENT_TAG" ]; then
-    CURRENT_TAG="v0.0.0"
+    # A new release line starts at .0 when the default patch bump is used.
+    CURRENT_TAG="v${RELEASE_LINE}.-1"
 fi
 
 # Parse version (strip 'v' prefix)
@@ -112,7 +116,9 @@ FRAMEWORK_PATHS=(scripts web docs patch setup tests templates examples framework
                  'login/*/settings.json'
                  prompts/RULES.md prompts/CONVENTIONS.md prompts/PATHS.md
                  prompts/AGENT.md prompts/CHROME.md
-                 requirements.txt CLAUDE.md README.md LICENSE .gitignore)
+                 prompts/gpt-5-6-sol.model prompts/gpt-5-6-terra.model
+                 prompts/gpt-5-6-luna.model
+                 requirements.txt CLAUDE.md AGENTS.md README.md LICENSE .gitignore)
 # ':!...' = pathspec git d'exclusion (le manifest ne peut pas se contenir lui-même)
 git ls-files -z -- "${FRAMEWORK_PATHS[@]}" ':!patch/checksums.sha256' \
     | LC_ALL=C sort -z \
@@ -141,7 +147,7 @@ echo -e "${CYAN}[6/6] Pushing to GitHub (origin) via orphan commit...${NC}"
 TREE=$(git write-tree)
 ORPHAN=$(git commit-tree "$TREE" -m "release: $NEW_VERSION")
 git tag "$TAG_SIGN_FLAG" -f "$NEW_VERSION" "$ORPHAN" -m "Version ${NEW_VERSION} - ${COMMIT_COUNT} commits since ${CURRENT_TAG}"
-git push --force origin "$ORPHAN":refs/heads/main
+git push --force origin "$ORPHAN:refs/heads/$RELEASE_REMOTE_BRANCH"
 git push --force origin "$NEW_VERSION"
 echo ""
 
