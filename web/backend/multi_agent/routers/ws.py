@@ -247,10 +247,9 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
         print(f"[ws] REJECTED agent={agent_id} from={websocket.client}")
         await _reject(websocket, 4001)
         return
-    base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
-    if base_id == "000":
-        await _reject(websocket, 4005)
-        return
+    # 000 (Architect) : flux AUTORISÉ — cet endpoint est en lecture seule
+    # (seuls les pings client sont traités). Les contrôles du 000 restent
+    # interdits par les routes REST (403 sur send/input/lifecycle).
     if len(_ws_agent_connections) >= _WS_AGENT_MAX:
         await _reject(websocket, 1013)
         return

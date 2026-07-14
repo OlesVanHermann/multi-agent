@@ -234,8 +234,7 @@ async def _agent_lifecycle(agent_id: str, action: str):
     if not cfg.is_valid_agent_id(agent_id):
         raise HTTPException(status_code=400, detail="invalid agent_id")
     base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
-    if base_id == "000":
-        raise HTTPException(status_code=403, detail="Cannot control architect agent via API")
+    # 000 (Architect) : contrôlable depuis le dashboard comme tout agent.
 
     script = cfg.BASE_DIR / "scripts" / "agent.sh"
     if not script.exists():
@@ -278,8 +277,6 @@ async def restart_agent(agent_id: str):
 async def get_agent_events(agent_id: str = ValidAgentId, all: int = 0):
     """Get event log for an agent. ?all=1 includes archived (rotated) files."""
     base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
-    if base_id == "000":
-        raise HTTPException(status_code=403, detail="Cannot read architect agent events")
     d = _events_dir(agent_id)
 
     def _read_jsonl(path: Path) -> list:
@@ -314,8 +311,6 @@ _SEND_MAX_LENGTH = 5000
 async def send_to_agent(msg: SendMessage, agent_id: str = ValidAgentId):
     """Send message to an agent via tmux send-keys (with Enter)"""
     base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
-    if base_id == "000":
-        raise HTTPException(status_code=403, detail="Cannot send to architect agent")
     if len(msg.message) > _SEND_MAX_LENGTH:
         raise HTTPException(status_code=400, detail=f"Message too long (max {_SEND_MAX_LENGTH})")
     session_name = f"{cfg.MA_PREFIX}-agent-{agent_id}"
@@ -352,8 +347,6 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
     if not cfg.is_valid_agent_id(agent_id):
         raise HTTPException(status_code=400, detail="invalid agent_id")
     base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
-    if base_id == "000":
-        raise HTTPException(status_code=403, detail="Cannot control architect agent")
     # Normaliser plutot que rejeter : les copier-coller reels contiennent des \r
     # (CRLF) et parfois d'autres caracteres de controle — on les retire. La
     # protection anti-injection tmux est conservee : aucun char < 32 hors \t\n
@@ -419,8 +412,6 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
 async def get_agent_history(agent_id: str = ValidAgentId):
     """Read prompt history file for an agent."""
     base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
-    if base_id == "000":
-        raise HTTPException(status_code=403, detail="Cannot read architect agent history")
     prompts_dir = cfg.BASE_DIR / "prompts"
     parent_id = agent_id.split('-')[0] if '-' in agent_id else agent_id
     parent_dir = _resolve_prompts_dir(prompts_dir, parent_id)
@@ -494,8 +485,6 @@ _SEND_KEYS_MAX = 20
 async def send_keys_to_agent(data: SendKeys, agent_id: str = ValidAgentId):
     """Send raw tmux keys to an agent (Enter, Ctrl+C, Escape, etc.)"""
     base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
-    if base_id == "000":
-        raise HTTPException(status_code=403, detail="Cannot send keys to architect agent")
     if len(data.keys) > _SEND_KEYS_MAX:
         raise HTTPException(status_code=400, detail=f"Too many keys (max {_SEND_KEYS_MAX})")
     session_name = f"{cfg.MA_PREFIX}-agent-{agent_id}"
@@ -528,8 +517,6 @@ async def send_keys_to_agent(data: SendKeys, agent_id: str = ValidAgentId):
 async def get_agent_output(agent_id: str = ValidAgentId, lines: int = 3000):
     """Capture tmux pane output for an agent (remote-aware via SSH)."""
     base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
-    if base_id == "000":
-        raise HTTPException(status_code=403, detail="Cannot read architect agent output")
     lines = max(1, min(lines, 5000))
     try:
         # Check if session exists (remote via SSH if applicable)

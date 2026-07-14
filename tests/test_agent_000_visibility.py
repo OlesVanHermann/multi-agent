@@ -39,13 +39,16 @@ def test_frontend_websocket_update_does_not_filter_000():
     assert ".filter(a => (a.id || '').split('-')[0] !== '000')" not in source
 
 
-def test_000_control_protections_remain_present():
+def test_000_is_controllable_like_any_agent():
+    """000 (Architect) est pilotable depuis le dashboard comme tout agent :
+    plus aucune garde 403 `base_id == "000"` dans les routes agents, et le
+    flux /ws/agent/000 n'est plus rejeté (l'endpoint WS est en lecture seule —
+    seuls les pings client y sont traités)."""
     agents = (ROOT / "web/backend/multi_agent/routers/agents.py").read_text(
         encoding="utf-8"
     )
     websocket = (ROOT / "web/backend/multi_agent/routers/ws.py").read_text(
         encoding="utf-8"
     )
-    assert agents.count('base_id == "000"') >= 5
-    assert 'base_id == "000"' in websocket
-    assert "4005" in websocket
+    assert agents.count('base_id == "000"') == 0
+    assert 'await _reject(websocket, 4005)' not in websocket
