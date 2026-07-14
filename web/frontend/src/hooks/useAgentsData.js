@@ -23,10 +23,11 @@ export function useAgentsData(fetchSec, wsLive) {
   const applyUpdate = useCallback((data) => {
     // Only update if we got valid agent data
     if (data.agents && Array.isArray(data.agents) && data.agents.length > 0) {
-      // Le WS n'envoie qu'une projection {id, status, last_seen} et inclut 000 ;
-      // on fusionne avec l'état connu pour préserver les champs complets (ctx…)
-      // et on applique le même filtre 000 que /api/agents.
-      const incoming = data.agents.filter(a => (a.id || '').split('-')[0] !== '000')
+      // Le WS n'envoie qu'une projection {id, status, last_seen} ; on fusionne
+      // avec l'état connu pour préserver les champs complets (ctx…). Le 000
+      // reste visible comme dans /api/agents, mais ses contrôles restent
+      // interdits par les routes backend et le WebSocket terminal.
+      const incoming = data.agents
       setAgents(prev => {
         const prevById = {}
         for (const a of prev) prevById[a.id] = a
