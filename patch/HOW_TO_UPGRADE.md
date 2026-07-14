@@ -96,16 +96,10 @@ tmux kill-server 2>/dev/null || true
 ./patch/upgrade.sh
 ```
 
-Pour suivre explicitement la ligne Codex 3.1 avant son tag :
+Pour installer explicitement la ligne 3.1 :
 
 ```bash
-./patch/upgrade.sh v3.1
-```
-
-Pour suivre explicitement la ligne Codex 3.1 avant son tag :
-
-```bash
-./patch/upgrade.sh v3.1
+./patch/upgrade.sh v3.1.1
 ```
 
 ### Étape 6: Installer les dépendances
@@ -140,6 +134,202 @@ python3 scripts/agent-bridge/healthcheck.py
      `login/claude*/settings.json` existants via `patch/merge-deny-rules.py`
      — union des règles uniquement, le reste du fichier ne bouge pas.
 7. Installe les dépendances Python.
+
+---
+
+## Migration v3.0.x → v3.1.x : Claude Code + Codex CLI
+
+La ligne 3.0.x pilote uniquement Claude Code. La ligne 3.1.x ajoute Codex CLI
+interactif avec le forfait ChatGPT, sans remplacer les prompts, mémoires,
+historiques ou streams Redis des agents.
+
+### Résumé des changements
+
+| Élément | v3.0.x | v3.1.x |
+|---|---|---|
+| Moteur | Claude Code | Déduit du modèle : `claude-*` ou `gpt-*` |
+| Modèles GPT | absents | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` |
+| Slot visible | `claude1a`…`claude4b` | `login1a`…`login4b` |
+| Profil physique | `login/claude1a` | `login/claude1a` ou `login/codex1a` selon le modèle |
+| Instructions projet | `CLAUDE.md` | `CLAUDE.md` et `AGENTS.md → CLAUDE.md` |
+| Interface | modèle Claude + profil Claude | un modèle et un slot neutre ; aucun sélecteur de CLI |
+
+Exemple de résolution :
+
+```text
+login2b + claude-opus-4-8 → CLAUDE_CONFIG_DIR=login/claude2b
+login2b + gpt-5.6-sol     → CODEX_HOME=login/codex2b
+```
+
+Le changement de modèle est atomique : sélectionner un modèle `gpt-*` dans le
+dashboard sélectionne Codex. Il ne faut créer aucun fichier `.cli`.
+
+### Mise à jour automatique recommandée
+
+Depuis une v3.0.x récente, **une seule exécution** suffit :
+
+```bash
+./scripts/infra.sh stop 2>/dev/null || true
+./patch/upgrade.sh v3.1.1
+```
+
+### Ce que `upgrade.sh` fait automatiquement
+
+Le périmètre de `upgrade.sh` ne change pas. Il effectue notamment :
+
+1. met à jour les répertoires framework `scripts/`, `web/`, `docs/`, `patch/`,
+   `setup/`, `tests/`, `templates/`, `examples/`, `framework/` et `.github/` ;
+2. installe donc automatiquement le moteur Codex, ses marqueurs TUI, le bridge,
+   le backend et les sources du dashboard 3.1.x ;
+3. met à jour `CLAUDE.md`, `README.md`, les dépendances et la documentation ;
+4. synchronise uniquement les cinq prompts canoniques ;
+5. fusionne les règles `permissions.deny` des profils Claude ;
+6. conserve volontairement tous les `.model`, `.login`, liens de sélection,
+   prompts d’agents, mémoires et credentials du projet.
+
+Il **ne crée donc pas** `AGENTS.md`, les modèles GPT, les slots neutres, les
+profils Codex ou les nouveaux liens `.login`. Ces opérations sont manuelles
+parce qu’elles appartiennent à la configuration du projet.
+
+### Ce qu’il faut faire manuellement après `upgrade.sh`
+
+Depuis la racine du projet, créer d’abord les fichiers de compatibilité 3.1.x :
+
+```bash
+cd /home/ubuntu/multi-agent
+
+# Codex lit AGENTS.md ; une seule source reste maintenue.
+ln -sfn CLAUDE.md AGENTS.md
+
+# Catalogue des modèles exposés dans l’interface.
+printf 'gpt-5.6-sol\n'   > prompts/gpt-5-6-sol.model
+printf 'gpt-5.6-terra\n' > prompts/gpt-5-6-terra.model
+printf 'gpt-5.6-luna\n'  > prompts/gpt-5-6-luna.model
+
+# Slots neutres visibles dans le dashboard.
+for slot in 1a 1b 2a 2b 3a 3b 4a 4b; do
+  printf 'login%s\n' "$slot" > "prompts/login${slot}.login"
+done
+```
+
+Migrer ensuite les liens explicites existants sans changer le slot choisi :
+
+```bash
+while IFS= read -r link; do
+  target=$(readlink "$link")
+  base=$(basename "$target")
+  if [[ "$base" =~ ^claude([1-4][ab])\.login$ ]]; then
+    prefix="${target%$base}"
+    ln -sfn "${prefix}login${BASH_REMATCH[1]}.login" "$link"
+  fi
+done < <(find prompts -type l -name '*.login' -print)
+```
+
+Si le profil par défaut historique était `claude1a`, le résultat devient :
+
+```bash
+ln -sfn login1a.login prompts/default.login
+```
+
+Adapter `login1a` si un autre slot était le défaut. Ne pas renommer les
+répertoires physiques `login/claude*` : ils restent utilisés par Claude Code.
+
+### Création des profils Codex
+
+Les slots neutres ne contiennent aucun credential. Chaque profil physique
+Codex doit être connecté une fois :
+
+```bash
+source setup/login_create.sh \
+  codex1a codex1b codex2a codex2b \
+  codex3a codex3b codex4a codex4b
+```
+
+Choisir **Sign in with ChatGPT**, jamais une clé API. Il est possible de ne
+créer que les profils réellement utilisés, par exemple :
+
+```bash
+source setup/login_create.sh codex1a codex1b
+```
+
+Contrôle :
+
+```bash
+CODEX_HOME="$PWD/login/codex1a" codex login status
+# attendu : Logged in using ChatGPT
+```
+
+### Vérifications après upgrade
+
+```bash
+grep -m1 'Multi-Agent System' CLAUDE.md
+readlink AGENTS.md
+readlink prompts/default.login
+cat prompts/login1a.login
+for f in prompts/gpt-5-6-{sol,terra,luna}.model; do echo "$f: $(cat "$f")"; done
+```
+
+Résultat attendu :
+
+```text
+# Multi-Agent System v3.1.1
+CLAUDE.md
+login1a.login
+login1a
+prompts/gpt-5-6-sol.model: gpt-5.6-sol
+prompts/gpt-5-6-terra.model: gpt-5.6-terra
+prompts/gpt-5-6-luna.model: gpt-5.6-luna
+```
+
+Puis reconstruire/redémarrer les services :
+
+```bash
+./scripts/web.sh restart
+./scripts/infra.sh start
+./scripts/agent.sh start all
+```
+
+Dans le panneau Login/Model, choisir par exemple `login1a` et
+`gpt-5-6-sol`. Le tmux doit démarrer Codex, saisir `/model gpt-5.6-sol`, puis
+charger le même `deviens agent` et les mêmes fichiers mémoire que Claude.
+
+### Réparation manuelle si une ancienne instance reste incohérente
+
+Cette procédure est idempotente et peut être exécutée par Claude ou Codex :
+
+```bash
+cd /home/ubuntu/multi-agent
+
+# Catalogue minimal attendu
+for slot in 1a 1b 2a 2b 3a 3b 4a 4b; do
+  printf 'login%s\n' "$slot" > "prompts/login${slot}.login"
+done
+
+printf 'gpt-5.6-sol\n'   > prompts/gpt-5-6-sol.model
+printf 'gpt-5.6-terra\n' > prompts/gpt-5-6-terra.model
+printf 'gpt-5.6-luna\n'  > prompts/gpt-5-6-luna.model
+
+# Migration de tous les liens explicites claudeXa.login → loginXa.login
+while IFS= read -r link; do
+  target=$(readlink "$link")
+  base=$(basename "$target")
+  if [[ "$base" =~ ^claude([1-4][ab])\.login$ ]]; then
+    prefix="${target%$base}"
+    ln -sfn "${prefix}login${BASH_REMATCH[1]}.login" "$link"
+  fi
+done < <(find prompts -type l -name '*.login' -print)
+
+ln -sfn CLAUDE.md AGENTS.md
+ln -sfn login1a.login prompts/default.login  # seulement si 1a est votre défaut
+```
+
+Ne pas renommer les répertoires physiques `login/claude*` et `login/codex*` :
+ils stockent des authentifications différentes. Seuls les fichiers/symlinks
+de sélection sous `prompts/` utilisent le préfixe neutre `login`.
+
+Si l’interface affiche encore l’erreur « model incompatible with engine
+claude », le backend 3.0 tourne encore : redémarrer `web.sh` après l’upgrade et
+vérifier que `CLAUDE.md` annonce bien 3.1.1.
 
 ---
 
@@ -229,8 +419,8 @@ docker inspect quay.io/keycloak/keycloak:<TAG> --format '{{index .RepoDigests 0}
 |---------|------|---------------------|
 | v3.0.4–v3.0.7 | 2026-07 | redis.sh mot de passe env-only, `.github/` dans les manifests, scroll tmux (DISABLE_MOUSE dans les profils), défaut opus-4-8, dashboard résilient aux rebuilds frontend, triangle auto-resolve par vivacité (send.sh/done.sh), sessions Keycloak 7 j — les instances existantes appliquent les durées via kcadm (`docs/AUTH.md`) |
 | v3.0 | 2026-07 | Boucle verify au bridge (C1), WAL/budgets/stall (C2), banc bench/ (C0), migrations upgrade.sh |
-| v3.1 | 2026-07 | Codex CLI interactif, profils ChatGPT, moteur déduit du modèle |
-| v3.1 | 2026-07 | Codex CLI interactif, profils ChatGPT, moteur déduit du modèle |
+| v3.1.1 | 2026-07 | Slots neutres `login1a…login4b`, migration des liens Claude, modèle comme unique sélecteur |
+| v3.1.0 | 2026-07 | Codex CLI interactif, profils ChatGPT, marqueurs TUI multi-moteurs |
 | v2.5 | 2026-03 | Effort selector, usage bars, agents 310/311/312, keepalive panel, Keycloak proxy-edge |
 | v2.4 | 2026-02 | Format mono/x45/z21, Chrome Bridge extension, agent 150, patch/ dir |
 | v2.3 | 2026-02 | Dashboard web React+FastAPI, Keycloak auth, proxy.sh |

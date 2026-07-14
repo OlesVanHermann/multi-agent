@@ -46,9 +46,6 @@ class TestMiroir:
     def test_chemins_v3_presents(self, framework_paths):
         assert "bench" in framework_paths
         assert "login/*/settings.json" in framework_paths
-        assert "AGENTS.md" in framework_paths
-        for name in ("sol", "terra", "luna"):
-            assert f"prompts/gpt-5-6-{name}.model" in framework_paths
 
 
 class TestCouverture:
@@ -70,13 +67,6 @@ class TestCouverture:
                 f"prompts/{f} synchronisé mais hors manifest"
             )
 
-    def test_catalogue_modeles_couvert(self, manifest_paths):
-        for f in bash_array(UPGRADE, "MODEL_CATALOG"):
-            assert f"prompts/{f}" in manifest_paths
-
-    def test_slots_login_couverts(self, manifest_paths):
-        assert "prompts/login[1-4][ab].login" in manifest_paths
-        assert len(bash_array(UPGRADE, "LOGIN_SLOTS")) == 8
 
 
 class TestPathspecs:
