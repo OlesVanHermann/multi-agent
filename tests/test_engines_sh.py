@@ -123,6 +123,14 @@ class TestModelViaSlash:
         assert sh('engine_model_via_slash codex').returncode == 0
 
 
+class TestNeutralLoginSlots:
+    def test_slot_maps_to_claude_profile(self):
+        assert sh('engine_effective_profile claude login2b', check_rc=True).stdout.strip() == 'claude2b'
+
+    def test_slot_maps_to_codex_profile(self):
+        assert sh('engine_effective_profile codex login2b', check_rc=True).stdout.strip() == 'codex2b'
+
+
 class TestEffortFlag:
     @pytest.mark.parametrize('level,expected', [
         ('L', 'low'), ('M', 'medium'), ('H', 'high'),

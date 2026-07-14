@@ -11,9 +11,9 @@ change ni le répertoire de prompts, ni les fichiers de mémoire, ni
 
 ## Profils
 
-Les huit slots visibles restent `claude1a` à `claude4b`. Pour un modèle GPT,
-le slot est traduit automatiquement vers `codex1a` à `codex4b` et passé dans
-`CODEX_HOME`. Chaque répertoire Codex doit être connecté séparément :
+Les huit slots visibles sont neutres : `login1a` à `login4b`. Selon le modèle,
+`login2b` devient automatiquement `claude2b` ou `codex2b`. Chaque répertoire
+Codex doit être connecté séparément :
 
 ```bash
 source setup/login_create.sh codex1a codex1b codex2a codex2b \

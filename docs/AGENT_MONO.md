@@ -49,7 +49,7 @@ prompts/
 ├── agent_mono.type    # Vide — cible des agents mono
 ├── agent_x45.type     # Vide — cible des agents x45
 ├── agent_z21.type     # Vide — cible des agents z21
-├── default.login      # Profil Claude par défaut (ex: "claude1a")
+├── default.login      # Slot de compte par défaut (ex: "login1a")
 ├── default.model      # Modèle par défaut (ex: "claude-opus-4-8")
 └── ...
 ```
@@ -63,7 +63,7 @@ Le symlink `agent.type` est toujours **relatif** (`../agent_mono.type`) et jamai
 Ces fichiers contiennent une **chaîne de texte simple** (le nom du profil ou du modèle) :
 
 ```bash
-cat prompts/default.login   # → "claude1a"
+cat prompts/default.login   # → "login1a"
 cat prompts/default.model   # → "claude-opus-4-8"
 ```
 
@@ -74,7 +74,7 @@ Chaque agent peut avoir son propre login/modèle via symlink :
 ln -sf ../default.login 150-create-mono.login
 
 # Ou un login spécifique
-ln -sf ../claude2b.login 150-create-mono.login
+ln -sf ../login2b.login 150-create-mono.login
 ```
 
 **Résolution** (par `resolve_config()` dans `agent.sh`) :

@@ -74,6 +74,10 @@ class TestCouverture:
         for f in bash_array(UPGRADE, "MODEL_CATALOG"):
             assert f"prompts/{f}" in manifest_paths
 
+    def test_slots_login_couverts(self, manifest_paths):
+        assert "prompts/login[1-4][ab].login" in manifest_paths
+        assert len(bash_array(UPGRADE, "LOGIN_SLOTS")) == 8
+
 
 class TestPathspecs:
     """Les pathspecs du manifest doivent matcher des fichiers trackés."""

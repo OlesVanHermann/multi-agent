@@ -118,6 +118,7 @@ FRAMEWORK_PATHS=(scripts web docs patch setup tests templates examples framework
                  prompts/AGENT.md prompts/CHROME.md
                  prompts/gpt-5-6-sol.model prompts/gpt-5-6-terra.model
                  prompts/gpt-5-6-luna.model
+                 'prompts/login[1-4][ab].login'
                  requirements.txt CLAUDE.md AGENTS.md README.md LICENSE .gitignore)
 # ':!...' = pathspec git d'exclusion (le manifest ne peut pas se contenir lui-même)
 git ls-files -z -- "${FRAMEWORK_PATHS[@]}" ':!patch/checksums.sha256' \

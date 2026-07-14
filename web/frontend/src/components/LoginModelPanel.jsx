@@ -158,7 +158,7 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
   // E1 : n'exposer que les modèles compatibles avec le moteur de la ligne.
   // Sans ce filtre, l'UI laisse choisir gpt-5.6-sol sur un agent Claude Code :
   // la slash-command /model est alors ignorée par le TUI, sans erreur visible.
-  const accountSlots = (logins || []).filter(l => l.startsWith('claude'))
+  const accountSlots = (logins || []).filter(l => l.startsWith('login'))
   const groupMap = {}
   ;(groups || []).forEach(g => { groupMap[g.id] = g })
 

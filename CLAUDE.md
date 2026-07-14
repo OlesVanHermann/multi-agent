@@ -373,7 +373,7 @@ Claude Code et `gpt-*` utilise Codex CLI.
 
 | Extension | Rôle | Exemple |
 |---|---|---|
-| `.login` | profil d'authentification | `prompts/claude1a.login` |
+| `.login` | slot de compte neutre | `prompts/login1a.login` |
 | `.model` | identifiant de modèle | `prompts/gpt-5-6-sol.model` → `gpt-5.6-sol` |
 | `.effort` | effort de raisonnement (L/M/H) | `prompts/301.effort` |
 

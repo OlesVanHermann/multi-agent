@@ -1,9 +1,4 @@
-"""Routes /api/config : logins/modèles/CLI, effort, favoris, tmux, panel, keepalive (B1).
-
-E1 : la dimension `cli` (moteur : claude | codex) suit exactement le même
-mécanisme que `login` et `model` — fichiers plats prompts/<nom>.cli, overrides
-par symlink, défaut par prompts/default.cli.
-"""
+"""Routes de configuration : slots de login neutres et modèles."""
 
 # E1 : la couche moteur est IMPORTÉE, pas recopiée. cfg a déjà inséré
 # scripts/agent-bridge dans sys.path (même convention que ids.py / A6).
@@ -58,17 +53,13 @@ async def get_logins_models():
     # Collect non-symlink .login and .model files
     logins = sorted(
         f.stem for f in prompts_dir.glob("*.login")
-        if not f.is_symlink() and f.stem != "default"
+        if not f.is_symlink() and f.stem.startswith("login")
     )
     models = sorted(
         f.stem for f in prompts_dir.glob("*.model")
         if not f.is_symlink() and f.stem != "default"
     )
-    # E1 : moteurs disponibles (prompts/*.cli)
-    clis = sorted(
-        f.stem for f in prompts_dir.glob("*.cli")
-        if not f.is_symlink() and f.stem != "default"
-    )
+    clis = list(ENGINES)
 
     # Identifiant réel porté par chaque fichier *.model — sert au garde-fou
     # de compatibilité modèle↔moteur côté UI.
@@ -285,44 +276,8 @@ def _effective_model_id(prompts_dir: Path, agent_id: str) -> str:
 
 
 def _guard_engine_model_compat(prompts_dir: Path, data: LoginModelUpdate) -> None:
-    """E1 : refuse toute combinaison modèle ↔ moteur incohérente (HTTP 400)."""
-    if data.type == "model":
-        cli = _effective_cli(prompts_dir, data.agent_id)
-        try:
-            model_id = (prompts_dir / f"{data.value}.model").read_text().strip()
-        except OSError:
-            return
-        if not _model_matches_engine(model_id, cli):
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"model '{model_id}' is incompatible with engine '{cli}' "
-                    f"(expected prefix '{ENGINE_MODEL_PREFIX.get(cli, '?')}'). "
-                    f"Use POST /api/config/engine to switch engine and model atomically."
-                ),
-            )
-    elif data.type == "cli":
-        model_id = _effective_model_id(prompts_dir, data.agent_id)
-        if model_id and not _model_matches_engine(model_id, data.value):
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"engine '{data.value}' is incompatible with the agent's current "
-                    f"model '{model_id}' (expected prefix "
-                    f"'{ENGINE_MODEL_PREFIX.get(data.value, '?')}'). "
-                    f"Use POST /api/config/engine to switch engine and model atomically."
-                ),
-            )
-    elif data.type == "login":
-        cli = _effective_cli(prompts_dir, data.agent_id)
-        if _profile_engine(data.value) != cli:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"login profile '{data.value}' does not belong to engine '{cli}' "
-                    f"(expected a '{cli}*' profile)"
-                ),
-            )
+    """The model selects the engine; neutral login slots are always compatible."""
+    return None
 
 
 _profile_engine = engines.profile_engine

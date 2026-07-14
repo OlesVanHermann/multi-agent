@@ -85,7 +85,7 @@ engine_model_via_slash() {
 }
 
 # The model is the only user-facing engine selector. Login files keep naming a
-# stable account slot (claude1a..4b); Codex transparently uses the matching
+# stable account slot (login1a..4b); each engine uses the matching
 # CODEX_HOME (codex1a..4b), so agent prompts and memory never move.
 engine_for_model() {
     case "$1" in
@@ -97,7 +97,7 @@ engine_for_model() {
 engine_effective_profile() {
     local cli="$1" profile="$2" slot
     [ -z "$profile" ] && return 0
-    slot="${profile#claude}"; slot="${slot#codex}"
+    slot="${profile#login}"; slot="${slot#claude}"; slot="${slot#codex}"
     printf '%s%s\n' "$cli" "$slot"
 }
 
@@ -176,6 +176,7 @@ ENGINES_PY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/agent-bridge/engines.p
 engine_from_profile() {
     local profile="$1" e
     [ -z "$profile" ] && return 1
+    case "$profile" in login[1-4][ab]) printf 'slot\n'; return 0 ;; esac
     for e in "${ENGINES[@]}"; do
         case "$profile" in
             "$e"*) printf '%s\n' "$e"; return 0 ;;
@@ -187,6 +188,7 @@ engine_from_profile() {
 # Nom de profil valide : <moteur><chiffre><lettre>  (claude1a, codex2b…)
 engine_profile_is_valid() {
     local profile="$1" e
+    [[ "$profile" =~ ^login[1-4][ab]$ ]] && return 0
     for e in "${ENGINES[@]}"; do
         [[ "$profile" =~ ^${e}[0-9][a-z]$ ]] && return 0
     done

@@ -129,7 +129,8 @@ source setup/login_create.sh claude1a claude1b
 
 Le script crée :
 - `login/claude1a/` et `login/claude1b/` (répertoires CLAUDE_CONFIG_DIR)
-- `prompts/claude1a.login` et `prompts/claude1b.login`
+- les profils physiques `login/claude1a`, `login/codex1a`, etc. ; les agents
+  sélectionnent les slots neutres `prompts/login1a.login` à `login4b.login`
 
 Avec un seul profil, les deux agents 1a et 1b partagent la même authentification.
 Avec deux profils distincts (recommandé), chaque paire d'agents a son propre compte.
@@ -142,7 +143,7 @@ Avec deux profils distincts (recommandé), chaque paire d'agents a son propre co
 cd ~/multi-agent/prompts
 
 # Profil par défaut (remplacer claude1a par ton profil principal)
-ln -sf claude1a.login default.login
+ln -sf login1a.login default.login
 ```
 
 Le dépôt inclut déjà `default.model -> opus-4-8.model` (Claude Opus 4.8 par défaut).

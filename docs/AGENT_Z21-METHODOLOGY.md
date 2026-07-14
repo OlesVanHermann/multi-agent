@@ -160,12 +160,12 @@ ln -s ../sonnet-5.model {ID}-7{XX}.model    # Reviewer = sonnet-5
 ln -s ../sonnet-5.model {ID}-8{XX}.model    # Coach = sonnet-5
 ln -s ../fable-5.model {ID}-9{XX}.model     # Architect = fable-5
 
-ln -s ../claude1a.login {ID}-1{XX}.login
-ln -s ../claude1a.login {ID}-{ID}.login
-ln -s ../claude1a.login {ID}-5{XX}.login
-ln -s ../claude1b.login {ID}-7{XX}.login
-ln -s ../claude1b.login {ID}-8{XX}.login
-ln -s ../claude1b.login {ID}-9{XX}.login
+ln -s ../login1a.login {ID}-1{XX}.login
+ln -s ../login1a.login {ID}-{ID}.login
+ln -s ../login1a.login {ID}-5{XX}.login
+ln -s ../login1b.login {ID}-7{XX}.login
+ln -s ../login1b.login {ID}-8{XX}.login
+ln -s ../login1b.login {ID}-9{XX}.login
 ```
 
 ### 7. Verifier
