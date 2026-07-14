@@ -75,7 +75,9 @@ async def get_z21_contexts(base_id: str):
 @router.get("/api/agents")
 async def list_agents():
     """List all agents — reads from background cache (instant)"""
-    agents = [a for a in state._cache["agents"] if (a.get("id") or "").split("-")[0] != "000"]
+    # 000 (Architect) apparaît dans la liste comme tout agent — seules les
+    # opérations de contrôle (send/input/lifecycle) restent protégées (403).
+    agents = list(state._cache["agents"])
     result = {
         "agents": agents,
         "count": len(agents),
