@@ -1,4 +1,4 @@
-"""Les lignes 3.0 et 3.1 évoluent sans se voler leurs numéros de tags."""
+"""La ligne 3.1 est publiée depuis main (branche v3.1 encore acceptée)."""
 
 from pathlib import Path
 
@@ -8,7 +8,7 @@ SOURCE = (ROOT / "patch" / "hub-release.sh").read_text(encoding="utf-8")
 
 
 def test_release_branches_are_explicit():
-    assert 'main) RELEASE_LINE="3.0"' in SOURCE
+    assert 'main) RELEASE_LINE="3.1"' in SOURCE
     assert 'v3.1) RELEASE_LINE="3.1"' in SOURCE
 
 

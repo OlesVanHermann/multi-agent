@@ -24,7 +24,7 @@ echo ""
 # 1. Releases are made from a maintained release line.
 CURRENT=$(git branch --show-current)
 case "$CURRENT" in
-    main) RELEASE_LINE="3.0"; RELEASE_REMOTE_BRANCH="main" ;;
+    main) RELEASE_LINE="3.1"; RELEASE_REMOTE_BRANCH="main" ;;
     v3.1) RELEASE_LINE="3.1"; RELEASE_REMOTE_BRANCH="v3.1" ;;
     *)
         echo -e "${RED}Error: releases are allowed from 'main' or 'v3.1' (currently '$CURRENT').${NC}"
