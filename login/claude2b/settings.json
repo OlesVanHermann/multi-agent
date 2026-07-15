@@ -2,18 +2,10 @@
   "model": "claude-opus-4-6",
   "effortLevel": "high",
   "skipDangerousModePermissionPrompt": true,
-  "env": {
-    "CLAUDE_CODE_DISABLE_MOUSE": "1",
-    "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN": "1"
-  },
-  "permissions": {
-    "deny": [
-      "Read(./setup/secrets.cfg)",
-      "Edit(./setup/secrets.cfg)",
-      "Edit(./login/**)",
-      "Edit(./pool-requests/tests/**)",
-      "Read(./bench/oracle/**)",
-      "Edit(./bench/oracle/**)"
-    ]
-  }
+  "env": { "CLAUDE_CODE_DISABLE_MOUSE": "1" },
+  "permissions": { "deny": [
+    "Read(./setup/secrets.cfg)", "Edit(./setup/secrets.cfg)",
+    "Edit(./login/**)", "Edit(./pool-requests/tests/**)",
+    "Read(./bench/oracle/**)", "Edit(./bench/oracle/**)"
+  ] }
 }

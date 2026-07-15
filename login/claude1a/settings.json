@@ -1,7 +1,10 @@
 {
+  "model": "claude-opus-4-6",
+  "effortLevel": "high",
+  "skipDangerousModePermissionPrompt": true,
+  "theme": "dark",
   "env": {
-    "CLAUDE_CODE_DISABLE_MOUSE": "1",
-    "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN": "1"
+    "CLAUDE_CODE_DISABLE_MOUSE": "1"
   },
   "permissions": {
     "deny": [
@@ -11,11 +14,6 @@
       "Edit(./pool-requests/tests/**)",
       "Read(./bench/oracle/**)",
       "Edit(./bench/oracle/**)"
-    ],
-    "defaultMode": "bypassPermissions"
-  },
-  "model": "claude-fable-5",
-  "effortLevel": "xhigh",
-  "skipDangerousModePermissionPrompt": true,
-  "theme": "light"
+    ]
+  }
 }
