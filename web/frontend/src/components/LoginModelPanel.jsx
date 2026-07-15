@@ -171,7 +171,7 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
             <th>Agent</th>
             <th>Login</th>
             <th>Model</th>
-            <th>Effort</th>
+            <th title="Claude: /effort · Codex: /reasoning">Effort / Reasoning</th>
             <th>Panel</th>
             <th>Actions</th>
           </tr>

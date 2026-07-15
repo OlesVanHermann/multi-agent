@@ -259,6 +259,16 @@ do_start() {
             sleep 3
         fi
 
+        if [ -n "$EFFORT" ]; then
+            local EFFORT_CMD
+            if ! EFFORT_CMD=$(engine_effort_slash "$CLI" "$EFFORT"); then
+                log_error "000: niveau d'effort invalide '$EFFORT'"
+                exit 1
+            fi
+            tmux send-keys -t "$SESSION_NAME" "$EFFORT_CMD" Enter
+            sleep 2
+        fi
+
         # Prompt injection is handled by the bridge (agent.py auto-init)
 
         tmux new-window -t "$SESSION_NAME" -n bridge

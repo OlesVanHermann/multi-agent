@@ -36,3 +36,19 @@ Les états web sont dérivés de `markers.claude.yaml` ou
 `markers.codex.yaml`. La saisie web continue d’utiliser les mêmes opérations
 tmux `send-keys` et la communication inter-agent conserve les mêmes streams
 Redis.
+
+## Effort et reasoning
+
+Le dashboard conserve trois niveaux neutres dans les fichiers `.effort` :
+
+| Interface | Niveau TUI |
+|---|---|
+| `L` | `low` |
+| `M` | `medium` |
+| `H` | `high` |
+
+Après `/model`, avant le chargement du prompt agent, le démarrage envoie la
+commande propre au moteur : `/effort <niveau>` pour Claude Code et
+`/reasoning <niveau>` pour Codex CLI. Le même fichier `.effort` est donc
+réutilisé lors d’un changement de modèle. Un changement depuis le dashboard
+est pris en compte au prochain démarrage de l’agent.

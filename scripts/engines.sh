@@ -102,9 +102,11 @@ engine_effective_profile() {
 }
 
 # ── Effort de raisonnement (optionnel) ──
+# Compatibilité de configuration au lancement (le flux normal utilise ensuite
+# la slash-command interactive via engine_effort_slash).
 # codex : model_reasoning_effort = low | medium | high | xhigh
 #         [Documenté: developers.openai.com/codex/config-reference]
-# claude : pas d'équivalent en ligne de commande → ignoré.
+# claude : non émis ici ; le framework utilise /effort après démarrage.
 # Mapping depuis les niveaux L/M/H déjà exposés par le dashboard (.effort).
 engine_effort_flag() {
     local cli="$1" effort="$2"
@@ -114,6 +116,28 @@ engine_effort_flag() {
         L) printf -- '-c model_reasoning_effort=low' ;;
         M) printf -- '-c model_reasoning_effort=medium' ;;
         H) printf -- '-c model_reasoning_effort=high' ;;
+    esac
+}
+
+# Niveau neutre du dashboard → libellé compris par chaque TUI.
+engine_effort_level() {
+    case "$1" in
+        L) printf 'low\n' ;;
+        M) printf 'medium\n' ;;
+        H) printf 'high\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+# Commande interactive propre au moteur. Claude nomme ce réglage « effort » ;
+# Codex CLI 0.144.4 le nomme « reasoning ».
+engine_effort_slash() {
+    local cli="$1" level
+    level=$(engine_effort_level "$2") || return 1
+    case "$cli" in
+        claude) printf '/effort %s\n' "$level" ;;
+        codex)  printf '/reasoning %s\n' "$level" ;;
+        *) return 1 ;;
     esac
 }
 

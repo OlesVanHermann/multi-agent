@@ -259,6 +259,7 @@ start_single() {
     # E1 : moteur + modèle + login (résolution: subdir agent → prompts/ → default)
     local CLI=$(resolve_engine "$agent_id")
     local MODEL=$(resolve_config "$agent_id" "model")
+    local EFFORT=$(resolve_config "$agent_id" "effort")
     local LAUNCH_CMD
     LAUNCH_CMD=$(build_launch_cmd "$agent_id") || return 1
 
@@ -280,6 +281,8 @@ start_single() {
         tmux send-keys -t "$SESSION_NAME" Enter
         sleep 3
     fi
+
+    apply_cli_effort "$SESSION_NAME" "$CLI" "$EFFORT" || return 1
 
     # Prompt injection is handled by the bridge (agent.py auto-init)
 
@@ -343,6 +346,17 @@ wait_cli_ready() {
 # Rétro-compat : ancien nom conservé (appelants externes éventuels)
 wait_claude_ready() {
     wait_cli_ready "$1" "$ENGINE_DEFAULT" "${2:-30}"
+}
+
+apply_cli_effort() {
+    local session="$1" cli="$2" effort="$3" cmd
+    [ -n "$effort" ] || return 0
+    if ! cmd=$(engine_effort_slash "$cli" "$effort"); then
+        log_error "Niveau d'effort invalide '$effort' pour $cli"
+        return 1
+    fi
+    tmux send-keys -t "$session" "$cmd" Enter
+    sleep 2
 }
 
 start_all() {
@@ -449,6 +463,7 @@ start_all() {
             # Wait for the CLI to be ready
             if wait_cli_ready "$SESSION" "$CLI" 30; then
                 local MODEL=$(resolve_config "$agent_id" "model")
+                local EFFORT=$(resolve_config "$agent_id" "effort")
 
                 # Send /model only for engines without a launch-time option
                 if [ -n "$MODEL" ]; then
@@ -457,6 +472,8 @@ start_all() {
                     tmux send-keys -t "$SESSION" Enter
                     sleep 1
                 fi
+
+                apply_cli_effort "$SESSION" "$CLI" "$EFFORT" || continue
 
                 # Start bridge in second window
                 tmux new-window -t "$SESSION" -n bridge

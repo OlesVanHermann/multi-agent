@@ -140,11 +140,31 @@ class TestEffortFlag:
         assert out == f'-c model_reasoning_effort={expected}'
 
     def test_claude_ignores_effort(self):
-        """Pas d'équivalent CLI côté Claude Code → aucun drapeau émis."""
+        """Claude reçoit l'effort par slash-command, pas par ce flag Codex."""
         assert sh('engine_effort_flag claude H', check_rc=True).stdout.strip() == ''
 
     def test_empty_effort_emits_nothing(self):
         assert sh('engine_effort_flag codex ""', check_rc=True).stdout.strip() == ''
+
+
+class TestInteractiveEffortCommand:
+    @pytest.mark.parametrize('level,name', [('L', 'low'), ('M', 'medium'), ('H', 'high')])
+    def test_claude_uses_effort(self, level, name):
+        out = sh(f'engine_effort_slash claude {level}', check_rc=True).stdout.strip()
+        assert out == f'/effort {name}'
+
+    @pytest.mark.parametrize('level,name', [('L', 'low'), ('M', 'medium'), ('H', 'high')])
+    def test_codex_uses_reasoning(self, level, name):
+        out = sh(f'engine_effort_slash codex {level}', check_rc=True).stdout.strip()
+        assert out == f'/reasoning {name}'
+
+    def test_unknown_level_is_rejected(self):
+        assert sh('engine_effort_slash codex X').returncode != 0
+
+    def test_startup_applies_effort_before_bridge(self):
+        source = open(os.path.join(BASE_DIR, 'scripts', 'agent.sh')).read()
+        assert 'apply_cli_effort "$SESSION_NAME" "$CLI" "$EFFORT"' in source
+        assert 'apply_cli_effort "$SESSION" "$CLI" "$EFFORT"' in source
 
 
 class TestLaunchCmd:
