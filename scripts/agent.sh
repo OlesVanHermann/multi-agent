@@ -241,7 +241,7 @@ start_single() {
         return
     fi
 
-    if is_protected "$agent_id"; then
+    if is_protected "$agent_id" && [ "${ALLOW_PROTECTED_000:-0}" != "1" ]; then
         log_warn "Skipping $agent_id (use ./scripts/infra.sh start for Architect)"
         return
     fi
@@ -561,7 +561,7 @@ stop_single() {
     local agent_id=$1
     local SESSION="${MA_PREFIX}-agent-$agent_id"
 
-    if is_protected "$agent_id"; then
+    if is_protected "$agent_id" && [ "${ALLOW_PROTECTED_000:-0}" != "1" ]; then
         log_warn "Cannot stop $agent_id (use ./scripts/infra.sh stop)"
         return 1
     fi

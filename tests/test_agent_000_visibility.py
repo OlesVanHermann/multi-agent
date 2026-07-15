@@ -50,5 +50,14 @@ def test_000_is_controllable_like_any_agent():
     websocket = (ROOT / "web/backend/multi_agent/routers/ws.py").read_text(
         encoding="utf-8"
     )
-    assert agents.count('base_id == "000"') == 0
+    assert 'detail="Cannot control architect agent' not in agents
     assert 'await _reject(websocket, 4005)' not in websocket
+
+
+def test_000_lifecycle_explicitly_unlocks_agent_script():
+    agents = (ROOT / "web/backend/multi_agent/routers/agents.py").read_text(
+        encoding="utf-8"
+    )
+    agent_script = (ROOT / "scripts/agent.sh").read_text(encoding="utf-8")
+    assert '"ALLOW_PROTECTED_000=1"' in agents
+    assert '${ALLOW_PROTECTED_000:-0}' in agent_script

@@ -235,15 +235,20 @@ async def _agent_lifecycle(agent_id: str, action: str):
     if not cfg.is_valid_agent_id(agent_id):
         raise HTTPException(status_code=400, detail="invalid agent_id")
     base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
-    # 000 (Architect) : contrôlable depuis le dashboard comme tout agent.
+    # La protection CLI de 000 reste active pour les opérateurs. Seul cet
+    # endpoint authentifié l'ouvre explicitement, sans arrêter le reste de
+    # l'infrastructure comme le ferait ``infra.sh stop``.
 
     script = cfg.BASE_DIR / "scripts" / "agent.sh"
     if not script.exists():
         raise HTTPException(status_code=500, detail="agent.sh not found")
 
     try:
+        command = ["bash", str(script), action, agent_id]
+        if base_id == "000":
+            command = ["env", "ALLOW_PROTECTED_000=1", *command]
         result = await _run_subprocess(
-            ["bash", str(script), action, agent_id],
+            command,
             text=True, timeout=60
         )
         output = result.stdout.strip()
