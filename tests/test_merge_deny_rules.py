@@ -147,12 +147,16 @@ class TestReglesReelles:
             os.path.dirname(__file__), "..", "login", "claude1a", "settings.json"
         )
         deny = mdr.load_deny(repo_ref)
-        # Les 5 règles V3 (protection oracle) font partie de la référence
+        # Règles V3 (protection oracle) de la référence. Les Write(...)
+        # historiques sont retirées : Claude Code ≥ 2.1.210 ne les matche
+        # plus (« only Edit(path) rules are ») — Edit couvre tous les outils
+        # d'édition, Write inclus.
         for rule in [
             "Read(./bench/oracle/**)",
-            "Write(./bench/oracle/**)",
             "Edit(./bench/oracle/**)",
-            "Write(./pool-requests/tests/**)",
             "Edit(./pool-requests/tests/**)",
         ]:
             assert rule in deny
+        for rule in deny:
+            assert not rule.startswith("Write("), \
+                f"règle morte (non matchée par Claude Code ≥ 2.1.210) : {rule}"

@@ -24,11 +24,13 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROFILES = sorted(glob.glob(os.path.join(BASE, "login", "claude*",
                                          "settings.json")))
 
+# Claude Code ≥ 2.1.210 : les règles Write(path) ne matchent plus aucun outil
+# (« only Edit(path) rules are ») — Edit(...) couvre TOUS les outils d'édition,
+# Write inclus. Les règles Write(...) historiques ont été retirées (bruit au
+# lancement, aucune protection).
 ORACLE_DENY = ("Read(./bench/oracle/**)",
-               "Write(./bench/oracle/**)",
                "Edit(./bench/oracle/**)")
-POOL_TESTS_DENY = ("Write(./pool-requests/tests/**)",
-                   "Edit(./pool-requests/tests/**)")
+POOL_TESTS_DENY = ("Edit(./pool-requests/tests/**)",)
 
 
 def _heldout_ids():
