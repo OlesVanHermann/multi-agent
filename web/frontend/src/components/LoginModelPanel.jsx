@@ -63,8 +63,8 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
 
   const handleChange = async (agentId, type, value) => {
     try {
-      // Confirmation défaut global désactivée sur cette machine (choix opérateur
-      // 2026-07-15) — confirm_global toujours envoyé, le backend l'exige (409).
+      // Pas de popup pour la ligne explicitement nommée « Défaut global ».
+      // confirm_global reste envoyé : le backend l'exige pour les autres clients.
       const confirmGlobal = agentId === 'default'
       const res = await fetch(api('api/config/logins-models'), {
         method: 'POST',
@@ -107,7 +107,7 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
 
   const handleEffort = async (agentId, level) => {
     try {
-      // Confirmation défaut global désactivée (même choix que handleChange).
+      // Même politique explicite que handleChange pour « Défaut global ».
       const confirmGlobal = agentId === 'default'
       const res = await fetch(api('api/config/effort'), {
         method: 'POST',

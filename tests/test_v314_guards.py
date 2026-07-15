@@ -48,7 +48,7 @@ def test_keepalive_websocket_ids_are_bounded():
     assert "and not _KEEPALIVE_ID_RE.match(agent_id)" in source
 
 
-def test_global_mutations_require_explicit_confirmation():
+def test_global_mutations_are_explicit_without_popup():
     models = (ROOT / "web/backend/multi_agent/models.py").read_text()
     backend = (ROOT / "web/backend/multi_agent/routers/config.py").read_text()
     frontend = (ROOT / "web/frontend/src/components/LoginModelPanel.jsx").read_text()
@@ -56,7 +56,8 @@ def test_global_mutations_require_explicit_confirmation():
     assert backend.count('not data.confirm_global') >= 2
     assert "default_affected" in backend
     assert "Défaut global" in frontend
-    assert "window.confirm" in frontend
+    assert "window.confirm" not in frontend
+    assert "const confirmGlobal = agentId === 'default'" in frontend
     assert "engine_codex_preflight" in backend
 
 

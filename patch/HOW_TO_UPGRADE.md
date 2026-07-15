@@ -78,7 +78,9 @@ Le backend doit pouvoir écrire dans `logs/`, `uploads/`, `crontab/`,
 `keepalive/` et `prompts/`. Ce dernier contient notamment les sélections
 `*.model`, `*.login` et `*.effort` du panneau web.
 
-Le panneau nomme désormais clairement `Défaut global` et demande confirmation.
+Le panneau nomme clairement `Défaut global`. Il ne présente pas de popup
+supplémentaire : sélectionner cette ligne constitue la confirmation explicite ;
+le backend continue d'exiger `confirm_global=true` pour tout autre client.
 Pour empêcher l'architecte d'hériter d'une future bascule globale, créer
 manuellement un override projet (adapter le modèle Claude choisi) :
 
