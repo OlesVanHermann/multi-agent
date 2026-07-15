@@ -18,6 +18,11 @@ router = APIRouter()
 
 _WS_ALLOWED_ORIGINS = set(cfg._ALLOWED_ORIGINS + cfg._ALLOWED_ORIGINS_LOCAL_DEV)
 
+# Sessions keepalive « 002-<profil> » (claude1a…codex4b) : observables dans le
+# panneau Keep Alive comme un agent — l'ID ne matche pas AGENT_ID_RE (NNN-NNN)
+# mais la session tmux existe bel et bien ({MA_PREFIX}-agent-002-<profil>).
+_KEEPALIVE_ID_RE = re.compile(r"^002-(?:claude|codex)\d[a-z]$")
+
 # B4 : ticket WS à usage unique — le JWT ne transite plus jamais en query
 # string (les ?token= finissent dans les access logs nginx/proxies).
 WS_TICKET_TTL = 30
@@ -240,7 +245,7 @@ async def websocket_agent_output(websocket: WebSocket, agent_id: str):
     if not _ws_origin_ok(websocket):
         await websocket.close(code=1008)
         return
-    if not cfg.AGENT_ID_RE.match(agent_id):
+    if not cfg.AGENT_ID_RE.match(agent_id) and not _KEEPALIVE_ID_RE.match(agent_id):
         await websocket.close(code=1008)
         return
     if not authenticated:

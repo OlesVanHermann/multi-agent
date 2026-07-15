@@ -270,6 +270,89 @@ def _login_expired_markers(profile):
 # LOGIN_EXPIRED_MARKERS : voir _login_expired_markers(profile) ci-dessus.
 _sweep_thread = None
 
+# Fichier de credentials par moteur : la présence du fichier distingue un
+# profil connecté d'un template jamais loggé. `.credentials.json` est un
+# artefact Claude Code — le chercher sur un profil codex marquait TOUS les
+# profils codex `no_credentials`, même authentifiés (auth.json présent).
+ENGINE_CRED_FILE = {"claude": ".credentials.json", "codex": "auth.json"}
+
+
+def _scrape_codex_status(session_name):
+    """/status codex : UNE boîte — compte, répertoire, limites d'usage.
+
+    Rendu réel (codex-cli 0.144.4) :
+        Account:      user@example.com (Pro)
+        Directory:    ~/multi-agent
+        Weekly limit:                       [████████] 99% left
+                                            (resets 22:20 on 21 Jul)
+        GPT-5.3-Codex-Spark Weekly limit:   [████████] 100% left
+
+    Pas d'onglet Usage à naviguer (contrairement à Claude Code). Codex affiche
+    « N% left » : converti en « % utilisé » (100-N) pour rester homogène avec
+    les barres Claude du panneau. Returns (bars, info).
+    """
+    try:
+        # PAS d'Escape ici : contrairement à Claude Code, la boîte /status de
+        # codex n'est pas modale, et Esc sur un composer vide déclenche le
+        # « rewind » de la conversation. C-u suffit à nettoyer le composer.
+        subprocess.run(["tmux", "send-keys", "-t", session_name, "C-u"], timeout=5)
+        time.sleep(0.5)
+        subprocess.run(["tmux", "send-keys", "-t", session_name, "-l", "/status"], timeout=5)
+        time.sleep(0.8)
+        subprocess.run(["tmux", "send-keys", "-t", session_name, "Enter"], timeout=5)
+
+        text = ""
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            time.sleep(1)
+            text = _pane_text(session_name)
+            if "Account:" in text or "limit:" in text:
+                break
+
+        bars = []
+        # Libellé + pourcentage sur une ligne ; le « (resets …) » est rendu sur
+        # la ligne SUIVANTE de la boîte — apparié par ordre d'apparition.
+        for m in re.finditer(
+            r'([A-Za-z0-9][A-Za-z0-9 .\-]*?limit):\s*\[[^\]]*\]\s*(\d+)%\s*left',
+            text,
+        ):
+            bars.append({
+                "label": m.group(1).strip(),
+                "percent": max(0, 100 - int(m.group(2))),
+                "resets": "",
+            })
+        resets = re.findall(r'\(resets ([^)]+)\)', text)
+        for bar, rst in zip(bars, resets):
+            bar["resets"] = rst.strip()
+        # Le pane peut contenir PLUSIEURS boîtes /status (scrapes successifs
+        # dans le scrollback visible) : garder la dernière occurrence de
+        # chaque libellé — la boîte la plus récente est en bas.
+        uniq = {}
+        for b in bars:
+            uniq[b["label"]] = b
+        bars = list(uniq.values())
+
+        info = {}
+        # Le plan est entre parenthèses, souvent TRONQUÉ par la boîte
+        # (« (Pr » pour « (Pro) ») : ne jamais franchir la fin de ligne ni
+        # la bordure « │ » — sinon la capture avale les lignes suivantes.
+        am = re.search(r'Account:\s+(\S+)(?:\s+\(([^)\n│]*)\)?)?', text)
+        if am:
+            info["email"] = am.group(1)
+            info["login_method"] = "ChatGPT account"
+            info["organization"] = (am.group(2) or "ChatGPT").strip().rstrip("… ") or "ChatGPT"
+        dm = re.search(r'Directory:\s+(\S+)', text)
+        if dm:
+            info["cwd"] = dm.group(1)
+        mm = re.search(r'Model:\s+(\S+)', text)
+        if mm:
+            info["model"] = mm.group(1)
+
+        return (bars or None), info
+    except Exception as e:
+        print(f"{time.strftime('%H:%M:%S')} KEEPALIVE codex scrape error ({session_name}): {e}")
+        return None, {}
+
 
 def _scrape_usage_tab(session_name):
     """Send /status to a tmux session, capture info, navigate to Usage tab, scrape, Escape.
@@ -572,8 +655,11 @@ def _wait_prompt(session, timeout_s=90, profile=None):
 
 def _sweep_profile(profile):
     """Hello + /status scrape for one profile. Returns a status dict."""
-    # Profil template jamais loggé : ne pas démarrer de session pour rien
-    creds = os.path.join(os.path.abspath(LOGIN_DIR), profile, ".credentials.json")
+    # Profil template jamais loggé : ne pas démarrer de session pour rien.
+    # E1 : le fichier de credentials dépend du moteur (claude ≠ codex).
+    engine = _profile_engine(profile)
+    cred_file = ENGINE_CRED_FILE.get(engine, ".credentials.json")
+    creds = os.path.join(os.path.abspath(LOGIN_DIR), profile, cred_file)
     if not os.path.exists(creds):
         usage_data = {"profile": profile, "bars": [], "status": "no_credentials",
                       "last_scan": int(time.time())}
@@ -594,15 +680,24 @@ def _sweep_profile(profile):
             json.dump(usage_data, f, indent=2)
         return result
 
-    # Hello : un vrai échange API rafraîchit la session OAuth
+    # Hello : un vrai échange API rafraîchit la session OAuth.
+    # Enter envoyé SÉPARÉMENT après une pause : collé à la frappe, le TUI
+    # codex l'absorbe dans sa détection de collage (paste burst) et le
+    # prompt n'est jamais soumis.
     subprocess.run(
-        ["tmux", "send-keys", "-t", session, "hello (keepalive) - reponds en un mot", "Enter"],
+        ["tmux", "send-keys", "-t", session, "-l", "hello (keepalive) - reponds en un mot"],
         timeout=5
     )
+    time.sleep(1)
+    subprocess.run(["tmux", "send-keys", "-t", session, "Enter"], timeout=5)
     time.sleep(30)
     _wait_prompt(session, timeout_s=60, profile=profile)
 
-    bars, info = _scrape_usage_tab(session)
+    # E1 : le scrape d'usage est propre au moteur (boîtes /status différentes)
+    if engine == "codex":
+        bars, info = _scrape_codex_status(session)
+    else:
+        bars, info = _scrape_usage_tab(session)
     result["status"] = "ok" if bars else "no_bars"
     result["bars"] = len(bars) if bars else 0
     if info:
