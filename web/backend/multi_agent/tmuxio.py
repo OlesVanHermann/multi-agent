@@ -26,6 +26,29 @@ async def _run_subprocess(cmd, **kwargs):
     )
 
 
+async def _tmux_server_alive() -> bool:
+    """True si le serveur tmux tourne déjà.
+
+    Le backend tourne dans un sandbox systemd (ProtectHome=read-only) : s'il
+    est le premier client tmux, le serveur naîtrait DANS ce namespace et
+    toutes les sessions futures (agents, keepalive) hériteraient d'un /home
+    en lecture seule — Claude/Codex démarrent puis échouent sur la moindre
+    écriture. Toute création de session depuis le backend doit donc être
+    refusée tant qu'un serveur sain (démarré depuis un shell : infra.sh,
+    agent.sh, scheduler) n'existe pas.
+    """
+    result = await _run_subprocess(["tmux", "has-session"], text=True)
+    return result.returncode == 0
+
+
+TMUX_SERVER_ABSENT_DETAIL = (
+    "serveur tmux absent — refus de le créer depuis le backend sandboxé "
+    "(/home serait monté en lecture seule pour toutes les sessions). "
+    "Démarrer d'abord le scheduler ou un agent depuis un shell : "
+    "./scripts/infra.sh start ou ./scripts/agent.sh start <id>."
+)
+
+
 def _get_remote_info(agent_id: str):
     """Return (ssh_cmd, remote_session) for remote agents, or None for local ones.
 

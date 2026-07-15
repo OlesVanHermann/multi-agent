@@ -13,6 +13,7 @@ ENGINE_CONFIG_ENV = engines.ENGINE_CONFIG_ENV
 ENGINE_BYPASS_FLAG = engines.ENGINE_BYPASS_FLAG
 _model_matches_engine = engines.model_matches_engine
 
+import asyncio
 import json
 import logging
 import os
@@ -25,7 +26,7 @@ from fastapi import APIRouter, HTTPException, Request
 from .. import config as cfg
 from .. import state
 from ..auth import _get_jwt_username
-from ..tmuxio import _run_subprocess
+from ..tmuxio import TMUX_SERVER_ABSENT_DETAIL, _run_subprocess, _tmux_server_alive
 from ..models import (
     AgentEngineUpdate,
     EffortUpdate,
@@ -39,7 +40,6 @@ from ..prompts import (
     _resolve_prompts_dir,
     _write_panel_config,
 )
-from ..tmuxio import _run_subprocess
 
 logger = logging.getLogger(__name__)
 
@@ -825,6 +825,10 @@ async def start_keepalive(data: dict):
     if result.returncode == 0:
         raise HTTPException(status_code=409, detail="session already running")
 
+    # Jamais spawner le serveur tmux depuis le backend (namespace sandboxé).
+    if not await _tmux_server_alive():
+        raise HTTPException(status_code=503, detail=TMUX_SERVER_ABSENT_DETAIL)
+
     # E1 : commande de lancement selon le moteur du profil — un profil codex
     # lancé avec `claude` + CLAUDE_CONFIG_DIR produirait une auth cassée.
     engine = _profile_engine(profile)
@@ -837,6 +841,20 @@ async def start_keepalive(data: dict):
     await _run_subprocess([
         "tmux", "new-session", "-d", "-s", session, cmd
     ], text=True)
+
+    # Un échec instantané (moteur hors PATH → exit 127) ferme la session avec
+    # la commande : répondre « started » sans revérifier serait un mensonge.
+    await asyncio.sleep(2)
+    result = await _run_subprocess(["tmux", "has-session", "-t", session], text=True)
+    if result.returncode != 0:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"session {session} morte au lancement — "
+                f"'{engine}' introuvable dans le PATH du service ? "
+                "(voir setup/multiagent-dashboard-hardening.conf.example)"
+            ),
+        )
 
     # Create keepalive file
     cfg.KEEPALIVE_DIR.mkdir(parents=True, exist_ok=True)

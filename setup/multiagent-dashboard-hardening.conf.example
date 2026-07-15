@@ -3,6 +3,12 @@
 # Copier ce bloc puis adapter le chemin si le dépôt n'est pas dans %h/multi-agent.
 [Service]
 EnvironmentFile=%h/multi-agent/setup/secrets.cfg
+# PATH : les CLI moteurs vivent hors du PATH systemd par défaut —
+# codex : %h/.local/bin ; claude + node : le bin nvm actif (ADAPTER la
+# version node). Sans cela : préflight codex en échec « non connecté »
+# (exit 127 pris pour une auth manquante) et sessions keepalive mortes
+# en « command not found » juste après leur création.
+Environment=PATH=%h/.nvm/versions/node/v24.14.1/bin:%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin
 ReadWritePaths=%h/multi-agent/logs
 ReadWritePaths=%h/multi-agent/uploads
 ReadWritePaths=%h/multi-agent/crontab

@@ -22,10 +22,12 @@ from ..prompts import (
     _resolve_prompts_dir,
 )
 from ..tmuxio import (
+    TMUX_SERVER_ABSENT_DETAIL,
     _agent_session_exists,
     _capture_agent_pane,
     _extract_current_input,
     _run_subprocess,
+    _tmux_server_alive,
 )
 
 logger = logging.getLogger(__name__)
@@ -242,6 +244,11 @@ async def _agent_lifecycle(agent_id: str, action: str):
     script = cfg.BASE_DIR / "scripts" / "agent.sh"
     if not script.exists():
         raise HTTPException(status_code=500, detail="agent.sh not found")
+
+    # start/restart créent des sessions : jamais spawner le serveur tmux
+    # depuis le backend (namespace sandboxé, /home read-only hérité).
+    if action in ("start", "restart") and not await _tmux_server_alive():
+        raise HTTPException(status_code=503, detail=TMUX_SERVER_ABSENT_DETAIL)
 
     try:
         command = ["bash", str(script), action, agent_id]
