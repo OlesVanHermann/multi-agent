@@ -63,16 +63,9 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
 
   const handleChange = async (agentId, type, value) => {
     try {
-      let confirmGlobal = false
-      if (agentId === 'default') {
-        const affected = data?.default_affected?.[type] || []
-        const preview = affected.slice(0, 12).join(', ')
-        const more = affected.length > 12 ? ` … (+${affected.length - 12})` : ''
-        confirmGlobal = window.confirm(
-          `Défaut global : ce changement affectera ${affected.length} agent(s), dont : ${preview}${more}. Continuer ?`
-        )
-        if (!confirmGlobal) return
-      }
+      // Confirmation défaut global désactivée sur cette machine (choix opérateur
+      // 2026-07-15) — confirm_global toujours envoyé, le backend l'exige (409).
+      const confirmGlobal = agentId === 'default'
       const res = await fetch(api('api/config/logins-models'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -114,14 +107,8 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
 
   const handleEffort = async (agentId, level) => {
     try {
-      let confirmGlobal = false
-      if (agentId === 'default') {
-        const affected = data?.default_affected?.effort || []
-        confirmGlobal = window.confirm(
-          `Défaut global : cet effort affectera ${affected.length} agent(s). Continuer ?`
-        )
-        if (!confirmGlobal) return
-      }
+      // Confirmation défaut global désactivée (même choix que handleChange).
+      const confirmGlobal = agentId === 'default'
       const res = await fetch(api('api/config/effort'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
