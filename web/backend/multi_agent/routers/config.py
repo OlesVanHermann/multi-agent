@@ -286,12 +286,17 @@ PROFILE_RE = re.compile(engines.PROFILE_RE)
 
 
 def _link_path_for(prompts_dir: Path, agent_id: str, ext: str):
-    """Chemin du symlink d'override + cible relative, selon x45 ou plat."""
-    if agent_id != "default" and "-" in agent_id:
+    """Chemin du symlink d'override + cible relative — MIROIR de
+    _find_agent_config : le répertoire de l'agent (mono comme x45/z21) a
+    priorité sur prompts/. Écrire à plat quand l'agent a un répertoire
+    produirait un override FANTÔME : le lien du répertoire (ex.
+    160-create-x45/160.model → ../default.model) le masque à la lecture
+    ET au démarrage (resolve_config d'agent.sh a le même ordre)."""
+    if agent_id != "default":
         base_id = agent_id.split("-")[0]
-        x45_dir = _resolve_prompts_dir(prompts_dir, base_id)
-        if x45_dir:
-            return x45_dir / f"{agent_id}.{ext}", "../"
+        agent_dir = _resolve_prompts_dir(prompts_dir, base_id)
+        if agent_dir:
+            return agent_dir / f"{agent_id}.{ext}", "../"
     return prompts_dir / f"{agent_id}.{ext}", ""
 
 
@@ -409,19 +414,10 @@ async def update_login_model(data: LoginModelUpdate):
     if data.value and not re.match(r'^[a-zA-Z0-9_.-]+$', data.value):
         raise HTTPException(status_code=400, detail="invalid value")
 
-    # For compound x45 IDs, resolve to x45 directory; otherwise prompts/
-    if data.agent_id != "default" and "-" in data.agent_id:
-        base_id = data.agent_id.split("-")[0]
-        x45_dir = _resolve_prompts_dir(prompts_dir, base_id)
-        if x45_dir:
-            link_path = x45_dir / f"{data.agent_id}.{data.type}"
-            symlink_target = f"../{data.value}.{data.type}" if data.value else ""
-        else:
-            link_path = prompts_dir / f"{data.agent_id}.{data.type}"
-            symlink_target = f"{data.value}.{data.type}" if data.value else ""
-    else:
-        link_path = prompts_dir / f"{data.agent_id}.{data.type}"
-        symlink_target = f"{data.value}.{data.type}" if data.value else ""
+    # Même résolution que la lecture (_find_agent_config) : répertoire de
+    # l'agent d'abord (mono comme x45/z21), prompts/ sinon.
+    link_path, _prefix = _link_path_for(prompts_dir, data.agent_id, data.type)
+    symlink_target = f"{_prefix}{data.value}.{data.type}" if data.value else ""
 
     if data.value == "":
         # Remove override (only for non-default)
@@ -450,6 +446,13 @@ async def update_login_model(data: LoginModelUpdate):
         link_path.unlink()
     link_path.symlink_to(symlink_target)
 
+    # Nettoyer l'éventuel fantôme à plat (ancien emplacement d'écriture) : il
+    # serait masqué par le lien du répertoire mais fausserait tout lecteur
+    # qui ne regarde que prompts/.
+    ghost = prompts_dir / f"{data.agent_id}.{data.type}"
+    if ghost != link_path and (ghost.is_symlink() or ghost.exists()):
+        ghost.unlink()
+
     return {"status": "updated", "agent_id": data.agent_id, "type": data.type, "value": data.value}
 
 
@@ -467,14 +470,10 @@ async def update_effort(data: EffortUpdate):
     if data.agent_id != "default" and not cfg.is_valid_agent_id(data.agent_id):
         raise HTTPException(status_code=400, detail="invalid agent_id")
 
-    # Resolve write path: x45 subdir for compounds when it exists, else root
+    # Même résolution que la lecture : répertoire de l'agent d'abord
+    # (mono comme x45/z21), prompts/ sinon — cf. _link_path_for.
     root_path = prompts_dir / f"{data.agent_id}.effort"
-    if data.agent_id != "default" and "-" in data.agent_id:
-        base_id = data.agent_id.split("-")[0]
-        x45_dir = _resolve_prompts_dir(prompts_dir, base_id)
-        effort_path = (x45_dir / f"{data.agent_id}.effort") if x45_dir else root_path
-    else:
-        effort_path = root_path
+    effort_path, _ = _link_path_for(prompts_dir, data.agent_id, "effort")
 
     if data.level == "":
         # Remove override (only for non-default) — clean BOTH locations
