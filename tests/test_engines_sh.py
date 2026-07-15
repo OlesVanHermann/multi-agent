@@ -161,6 +161,12 @@ class TestEffortCommand:
         assert 'engine_apply_model_effort' in open(AGENT_SH).read()
         assert 'engine_apply_model_effort' in open(INFRA_SH).read()
 
+    def test_infra_applies_effort_once(self):
+        """000 ne doit pas rejouer une ancienne slash-command après la danse."""
+        source = open(INFRA_SH).read()
+        assert source.count('engine_apply_model_effort "$SESSION_NAME"') == 1
+        assert 'engine_effort_slash' not in source
+
 
 class TestLaunchCmd:
     def test_claude_command_is_byte_identical_to_v3(self):
