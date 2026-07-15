@@ -84,7 +84,17 @@ async def lifespan(app: FastAPI):
             ["tmux", "has-session", "-t", _crontab_session],
             capture_output=True, timeout=5
         )
-        if check.returncode != 0 and _crontab_script.exists():
+        # Jamais spawner le PREMIER serveur tmux depuis le backend : sous
+        # l'unité durcie, il naîtrait dans le namespace sandboxé et /home
+        # serait read-only pour TOUTES les sessions futures (agents compris).
+        # Même contrat que start_keepalive/_agent_lifecycle (tmuxio).
+        _server_up = subprocess.run(["tmux", "has-session"],
+                                    capture_output=True, timeout=5)
+        if check.returncode != 0 and _server_up.returncode != 0:
+            print("WARNING: serveur tmux absent — scheduler NON démarré par le "
+                  "backend (sandbox). Le démarrer depuis un shell : "
+                  "voir scripts/crontab-scheduler.py (en-tête).")
+        elif check.returncode != 0 and _crontab_script.exists():
             os.makedirs(cfg.BASE_DIR / "logs", exist_ok=True)
             _env_file = cfg.BASE_DIR / "setup" / "secrets.cfg"
             _base = shlex.quote(str(cfg.BASE_DIR))
