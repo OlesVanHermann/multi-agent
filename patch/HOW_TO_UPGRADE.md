@@ -74,6 +74,17 @@ sudo systemctl daemon-reload
 sudo systemctl restart multiagent-dashboard.service
 ```
 
+Le service ne charge pas le shell interactif ni NVM. Exposer les binaires dans
+un répertoire stable présent dans le `PATH` du drop-in (ne pas inscrire une
+version NVM en dur dans l'unité) :
+
+```bash
+mkdir -p ~/.local/bin
+ln -sfn "$(command -v node)" ~/.local/bin/node
+ln -sfn "$(command -v claude)" ~/.local/bin/claude
+ln -sfn "$(command -v codex)" ~/.local/bin/codex
+```
+
 Le backend doit pouvoir écrire dans `logs/`, `uploads/`, `crontab/`,
 `keepalive/` et `prompts/`. Ce dernier contient notamment les sélections
 `*.model`, `*.login` et `*.effort` du panneau web.

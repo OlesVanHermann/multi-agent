@@ -76,3 +76,27 @@ def test_systemd_write_contract_is_synchronized():
 def test_reference_profile_json_stays_valid():
     for path in (ROOT / "login").glob("claude*/settings.json"):
         json.loads(path.read_text())
+
+
+def test_backend_never_spawns_first_tmux_server():
+    tmuxio = (ROOT / "web/backend/multi_agent/tmuxio.py").read_text()
+    agents = (ROOT / "web/backend/multi_agent/routers/agents.py").read_text()
+    config = (ROOT / "web/backend/multi_agent/routers/config.py").read_text()
+    assert "async def _tmux_server_alive()" in tmuxio
+    assert "TMUX_SERVER_ABSENT_DETAIL" in tmuxio
+    assert "not await _tmux_server_alive()" in agents
+    assert "not await _tmux_server_alive()" in config
+
+
+def test_keepalive_start_is_verified_after_spawn():
+    source = (ROOT / "web/backend/multi_agent/routers/config.py").read_text()
+    start = source[source.index("async def start_keepalive"):]
+    assert "await asyncio.sleep(2)" in start
+    assert start.count('["tmux", "has-session", "-t", session]') >= 2
+    assert "morte au lancement" in start
+
+
+def test_systemd_path_is_portable():
+    dropin = (ROOT / "setup/multiagent-dashboard-hardening.conf.example").read_text()
+    assert "Environment=PATH=%h/.local/bin:" in dropin
+    assert "/.nvm/versions/node/v" not in dropin
