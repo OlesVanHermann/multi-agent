@@ -25,6 +25,7 @@ from fastapi import APIRouter, HTTPException, Request
 from .. import config as cfg
 from .. import state
 from ..auth import _get_jwt_username
+from ..tmuxio import _run_subprocess
 from ..models import (
     AgentEngineUpdate,
     EffortUpdate,
@@ -492,7 +493,40 @@ async def update_effort(data: EffortUpdate):
     effort_path.write_text(data.level + "\n")
     if effort_path != root_path and (root_path.exists() or root_path.is_symlink()):
         root_path.unlink()
-    return {"status": "updated", "agent_id": data.agent_id, "level": data.level}
+
+    # Application À CHAUD : si la session tourne et que l'agent est libre, la
+    # commande du CLI est envoyée au TUI (claude: /effort <niveau> ; codex:
+    # picker /model piloté). Une seule implémentation de la danse — celle de
+    # scripts/engines.sh, partagée avec agent.sh/infra.sh. Agent occupé ou
+    # session absente : le .effort prendra effet au prochain démarrage.
+    applied = False
+    reason = "session absente"
+    if data.agent_id != "default":
+        session = f"{cfg.MA_PREFIX}-agent-{data.agent_id}"
+        alive = await _run_subprocess(["tmux", "has-session", "-t", session])
+        if alive.returncode == 0:
+            busy = False
+            if state.redis_pool:
+                try:
+                    ps = await state.redis_pool.hget(f"{cfg.MA_PREFIX}:agent:{data.agent_id}", "pane_state")
+                    busy = bool(json.loads(ps).get("busy")) if ps else False
+                except Exception:
+                    busy = False
+            if busy:
+                reason = "agent occupé — effectif au prochain démarrage"
+            else:
+                cli = engines.engine_for_model(_effective_model_id(prompts_dir, data.agent_id))
+                model_arg = _effective_model_id(prompts_dir, data.agent_id) if cli == "codex" else ""
+                res = await _run_subprocess(
+                    ["bash", "-c",
+                     'source "$1/scripts/engines.sh" && engine_apply_model_effort "$2" "$3" "$4" "$5"',
+                     "_", str(cfg.BASE_DIR), session, cli, model_arg, data.level],
+                    timeout=40,
+                )
+                applied = res.returncode == 0
+                reason = "" if applied else "échec de la commande TUI (voir logs)"
+    return {"status": "updated", "agent_id": data.agent_id, "level": data.level,
+            "applied": applied, **({"reason": reason} if not applied else {})}
 
 
 # --- Favoris (persisted JSON per user per project) ---

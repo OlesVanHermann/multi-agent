@@ -131,40 +131,35 @@ class TestNeutralLoginSlots:
         assert sh('engine_effective_profile codex login2b', check_rc=True).stdout.strip() == 'codex2b'
 
 
-class TestEffortFlag:
-    @pytest.mark.parametrize('level,expected', [
-        ('L', 'low'), ('M', 'medium'), ('H', 'high'),
-    ])
-    def test_codex_maps_effort(self, level, expected):
-        out = sh(f'engine_effort_flag codex {level}', check_rc=True).stdout.strip()
-        assert out == f'-c model_reasoning_effort={expected}'
+class TestEffortCommand:
+    """L'effort passe par la COMMANDE du CLI (modifiable en cours de session),
+    pas par une option de lancement. Mapping opérateur : L→medium, M→high,
+    H→xhigh — le niveau « low » n'est jamais utilisé pour des agents."""
 
-    def test_claude_ignores_effort(self):
-        """Claude reçoit l'effort par slash-command, pas par ce flag Codex."""
-        assert sh('engine_effort_flag claude H', check_rc=True).stdout.strip() == ''
+    @pytest.mark.parametrize('level,expected', [
+        ('L', 'medium'), ('M', 'high'), ('H', 'xhigh'),
+    ])
+    def test_effort_level_mapping(self, level, expected):
+        out = sh(f'engine_effort_level claude {level}', check_rc=True).stdout.strip()
+        assert out == expected
+
+    @pytest.mark.parametrize('level,digit', [
+        ('L', '2'), ('M', '3'), ('H', '4'),
+    ])
+    def test_codex_picker_digit(self, level, digit):
+        """Picker codex « Select Reasoning Level » (vérifié 0.144.4) :
+        1=Low 2=Medium 3=High 4=Extra high."""
+        out = sh(f'engine_codex_effort_digit {level}', check_rc=True).stdout.strip()
+        assert out == digit
 
     def test_empty_effort_emits_nothing(self):
-        assert sh('engine_effort_flag codex ""', check_rc=True).stdout.strip() == ''
+        assert sh('engine_effort_level codex ""', check_rc=True).stdout.strip() == ''
 
-
-class TestInteractiveEffortCommand:
-    @pytest.mark.parametrize('level,name', [('L', 'low'), ('M', 'medium'), ('H', 'high')])
-    def test_claude_uses_effort(self, level, name):
-        out = sh(f'engine_effort_slash claude {level}', check_rc=True).stdout.strip()
-        assert out == f'/effort {name}'
-
-    @pytest.mark.parametrize('level,name', [('L', 'low'), ('M', 'medium'), ('H', 'high')])
-    def test_codex_uses_reasoning(self, level, name):
-        out = sh(f'engine_effort_slash codex {level}', check_rc=True).stdout.strip()
-        assert out == f'/reasoning {name}'
-
-    def test_unknown_level_is_rejected(self):
-        assert sh('engine_effort_slash codex X').returncode != 0
-
-    def test_startup_applies_effort_before_bridge(self):
-        source = open(os.path.join(BASE_DIR, 'scripts', 'agent.sh')).read()
-        assert 'apply_cli_effort "$SESSION_NAME" "$CLI" "$EFFORT"' in source
-        assert 'apply_cli_effort "$SESSION" "$CLI" "$EFFORT"' in source
+    def test_apply_function_is_shared(self):
+        """Une seule danse TUI, partagée par agent.sh, infra.sh et le backend."""
+        assert 'engine_apply_model_effort()' in open(ENGINES_SH).read()
+        assert 'engine_apply_model_effort' in open(AGENT_SH).read()
+        assert 'engine_apply_model_effort' in open(INFRA_SH).read()
 
 
 class TestLaunchCmd:

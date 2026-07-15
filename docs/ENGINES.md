@@ -43,12 +43,16 @@ Le dashboard conserve trois niveaux neutres dans les fichiers `.effort` :
 
 | Interface | Niveau TUI |
 |---|---|
-| `L` | `low` |
-| `M` | `medium` |
-| `H` | `high` |
+| `L` | `medium` |
+| `M` | `high` |
+| `H` | `xhigh` / Extra high |
 
-Après `/model`, avant le chargement du prompt agent, le démarrage envoie la
-commande propre au moteur : `/effort <niveau>` pour Claude Code et
-`/reasoning <niveau>` pour Codex CLI. Le même fichier `.effort` est donc
-réutilisé lors d’un changement de modèle. Un changement depuis le dashboard
-est pris en compte au prochain démarrage de l’agent.
+Avant le chargement du prompt agent, Claude reçoit `/model <identifiant>` puis
+`/effort <niveau>`. Codex CLI 0.144.4 est piloté par le picker `/model`, qui
+sélectionne successivement le modèle puis le niveau de raisonnement : les
+arguments directs de `/model` seraient interprétés comme un prompt. Le même
+fichier `.effort` est donc réutilisé lors d'un changement de modèle.
+
+Un changement depuis le dashboard est aussi appliqué à chaud si la session
+existe et que l'agent est libre. Sinon, le fichier est conservé et prendra
+effet au prochain démarrage.

@@ -101,43 +101,99 @@ engine_effective_profile() {
     printf '%s%s\n' "$cli" "$slot"
 }
 
-# ── Effort de raisonnement (optionnel) ──
-# Compatibilité de configuration au lancement (le flux normal utilise ensuite
-# la slash-command interactive via engine_effort_slash).
-# codex : model_reasoning_effort = low | medium | high | xhigh
-#         [Documenté: developers.openai.com/codex/config-reference]
-# claude : non émis ici ; le framework utilise /effort après démarrage.
-# Mapping depuis les niveaux L/M/H déjà exposés par le dashboard (.effort).
-engine_effort_flag() {
-    local cli="$1" effort="$2"
-    [ -z "$effort" ] && return 0
-    [ "$cli" != "codex" ] && return 0
-    case "$effort" in
-        L) printf -- '-c model_reasoning_effort=low' ;;
-        M) printf -- '-c model_reasoning_effort=medium' ;;
-        H) printf -- '-c model_reasoning_effort=high' ;;
-    esac
-}
-
-# Niveau neutre du dashboard → libellé compris par chaque TUI.
+# ── Effort de raisonnement ──
+# L'effort se règle PAR LA COMMANDE DU CLI, pas par une option de lancement :
+# l'opérateur doit pouvoir le changer en cours d'exécution (boutons L/M/H du
+# dashboard). Mapping sémantique unique (décision opérateur — le niveau
+# « low »/« Low » n'est jamais utilisé pour des agents) :
+#     L → medium   |   M → high   |   H → xhigh (codex : « Extra high »)
 engine_effort_level() {
-    case "$1" in
-        L) printf 'low\n' ;;
-        M) printf 'medium\n' ;;
-        H) printf 'high\n' ;;
-        *) return 1 ;;
+    case "$2" in
+        L) printf 'medium' ;;
+        M) printf 'high' ;;
+        H) printf 'xhigh' ;;
     esac
 }
 
-# Commande interactive propre au moteur. Claude nomme ce réglage « effort » ;
-# Codex CLI 0.144.4 le nomme « reasoning ».
-engine_effort_slash() {
-    local cli="$1" level
-    level=$(engine_effort_level "$2") || return 1
+# Chiffre du niveau dans le picker codex « Select Reasoning Level »
+# [Vérifié: codex-cli 0.144.4 — 1.Low 2.Medium 3.High 4.Extra high 5.More]
+engine_codex_effort_digit() {
+    case "$1" in
+        L) printf '2' ;;
+        M) printf '3' ;;
+        H) printf '4' ;;
+    esac
+}
+
+# ── Application modèle + effort via le TUI (démarrage ET en cours de session) ──
+# engine_apply_model_effort <session> <cli> <model_id> <effort(L|M|H)>
+#
+# claude : `/model <id>` (argument direct) puis `/effort <niveau>`.
+#          [Vérifié: TUI réel — /effort accepte l'argument, statut « ● high »]
+# codex  : les arguments de /model sont AVALÉS COMME PROMPT (vérifié 0.144.4,
+#          le modèle répond poliment et rien ne change) — seul le picker
+#          fonctionne : /model ⏎ → chiffre du modèle ⏎ → chiffre du niveau ⏎.
+#          Le chiffre du modèle est PARSÉ dans le pane (l'ordre de la liste
+#          change entre versions) ; modèle vide → entrée « (current) ».
+engine_apply_model_effort() {
+    local session="$1" cli="$2" model="$3" effort="$4"
+    local target="${session}:0.0"
     case "$cli" in
-        claude) printf '/effort %s\n' "$level" ;;
-        codex)  printf '/reasoning %s\n' "$level" ;;
-        *) return 1 ;;
+        claude)
+            if [ -n "$model" ]; then
+                tmux send-keys -t "$target" -l "/model $model"
+                sleep 0.5; tmux send-keys -t "$target" Enter; sleep 2
+            fi
+            local lvl
+            lvl=$(engine_effort_level "$cli" "$effort")
+            if [ -n "$lvl" ]; then
+                tmux send-keys -t "$target" -l "/effort $lvl"
+                sleep 0.5; tmux send-keys -t "$target" Enter; sleep 1
+            fi
+            ;;
+        codex)
+            [ -z "$model" ] && [ -z "$effort" ] && return 0
+            tmux send-keys -t "$target" C-u; sleep 0.3
+            tmux send-keys -t "$target" -l "/model"
+            sleep 0.5; tmux send-keys -t "$target" Enter
+            local i pane="" digit=""
+            for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+                pane=$(tmux capture-pane -t "$target" -p 2>/dev/null)
+                printf '%s' "$pane" | grep -q "Select Model and Effort" && break
+                sleep 0.5
+            done
+            if ! printf '%s' "$pane" | grep -q "Select Model and Effort"; then
+                echo "engine_apply_model_effort: picker /model non ouvert ($session)" >&2
+                return 1
+            fi
+            if [ -n "$model" ]; then
+                digit=$(printf '%s' "$pane" | grep -oE "[0-9]+\. ${model}[^a-zA-Z0-9.-]" | head -1 | grep -oE '^[0-9]+')
+            else
+                digit=$(printf '%s' "$pane" | grep -E '\(current\)' | grep -oE '[0-9]+\.' | head -1 | tr -d '.')
+            fi
+            if [ -z "$digit" ]; then
+                tmux send-keys -t "$target" Escape
+                echo "engine_apply_model_effort: modèle '$model' introuvable dans le picker ($session)" >&2
+                return 1
+            fi
+            # Un chiffre SÉLECTIONNE ET CONFIRME instantanément dans les pickers
+            # codex (vérifié 0.144.4) — un Enter supplémentaire validerait
+            # l'entrée surlignée de l'écran suivant (Low par défaut).
+            tmux send-keys -t "$target" -l "$digit"
+            for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+                pane=$(tmux capture-pane -t "$target" -p 2>/dev/null)
+                printf '%s' "$pane" | grep -q "Select Reasoning Level" && break
+                sleep 0.5
+            done
+            if ! printf '%s' "$pane" | grep -q "Select Reasoning Level"; then
+                echo "engine_apply_model_effort: écran d'effort non atteint ($session)" >&2
+                return 1
+            fi
+            local lvl_digit
+            lvl_digit=$(engine_codex_effort_digit "${effort:-M}")
+            tmux send-keys -t "$target" -l "${lvl_digit:-3}"
+            sleep 1
+            ;;
     esac
 }
 

@@ -49,6 +49,19 @@ ENGINE_BYPASS_FLAG = {
 ENGINE_MODEL_PREFIX = {"claude": "claude-", "codex": "gpt-"}
 
 
+def engine_for_model(model_id):
+    """Moteur déduit du modèle (gpt-* → codex, sinon claude).
+
+    Miroir de engine_for_model (scripts/engines.sh) : le modèle est l'unique
+    sélecteur de moteur exposé à l'utilisateur.
+    """
+    if model_id:
+        for e, prefix in ENGINE_MODEL_PREFIX.items():
+            if e != ENGINE_DEFAULT and model_id.startswith(prefix):
+                return e
+    return ENGINE_DEFAULT
+
+
 def model_matches_engine(model_id, cli):
     """True si l'identifiant de modèle convient au moteur.
 

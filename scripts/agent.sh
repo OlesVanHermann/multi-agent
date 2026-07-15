@@ -274,15 +274,10 @@ start_single() {
         return 1
     fi
 
-    # Same interactive sequence for both CLIs.
-    if [ -n "$MODEL" ]; then
-        tmux send-keys -t "$SESSION_NAME" "/model $MODEL" Enter
-        sleep 1
-        tmux send-keys -t "$SESSION_NAME" Enter
-        sleep 3
-    fi
-
-    apply_cli_effort "$SESSION_NAME" "$CLI" "$EFFORT" || return 1
+    # Modèle + effort via la commande du CLI (modifiables en cours de session).
+    # codex : picker /model piloté (les arguments seraient avalés comme prompt).
+    engine_apply_model_effort "$SESSION_NAME" "$CLI" "$MODEL" "$EFFORT" || \
+        log_warn "$agent_id: application modèle/effort incomplète (voir ci-dessus)"
 
     # Prompt injection is handled by the bridge (agent.py auto-init)
 
@@ -346,17 +341,6 @@ wait_cli_ready() {
 # Rétro-compat : ancien nom conservé (appelants externes éventuels)
 wait_claude_ready() {
     wait_cli_ready "$1" "$ENGINE_DEFAULT" "${2:-30}"
-}
-
-apply_cli_effort() {
-    local session="$1" cli="$2" effort="$3" cmd
-    [ -n "$effort" ] || return 0
-    if ! cmd=$(engine_effort_slash "$cli" "$effort"); then
-        log_error "Niveau d'effort invalide '$effort' pour $cli"
-        return 1
-    fi
-    tmux send-keys -t "$session" "$cmd" Enter
-    sleep 2
 }
 
 start_all() {
@@ -465,15 +449,9 @@ start_all() {
                 local MODEL=$(resolve_config "$agent_id" "model")
                 local EFFORT=$(resolve_config "$agent_id" "effort")
 
-                # Send /model only for engines without a launch-time option
-                if [ -n "$MODEL" ]; then
-                    tmux send-keys -t "$SESSION" "/model $MODEL" Enter
-                    sleep 1
-                    tmux send-keys -t "$SESSION" Enter
-                    sleep 1
-                fi
-
-                apply_cli_effort "$SESSION" "$CLI" "$EFFORT" || continue
+                # Modèle + effort via la commande du CLI (picker piloté pour codex)
+                engine_apply_model_effort "$SESSION" "$CLI" "$MODEL" "$EFFORT" || \
+                    log_warn "  $agent_id: application modèle/effort incomplète"
 
                 # Start bridge in second window
                 tmux new-window -t "$SESSION" -n bridge

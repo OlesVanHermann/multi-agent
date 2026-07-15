@@ -251,13 +251,10 @@ do_start() {
         tmux send-keys -t "$SESSION_NAME" "cd '$BASE_DIR' && unset CLAUDECODE && $LAUNCH_CMD" Enter
         sleep 4
 
-        # Same interactive model selection for Claude and Codex.
-        if [ -n "$MODEL" ]; then
-            tmux send-keys -t "$SESSION_NAME" "/model $MODEL" Enter
-            sleep 1
-            tmux send-keys -t "$SESSION_NAME" Enter
-            sleep 3
-        fi
+        # Modèle + effort via la commande du CLI (modifiables en cours de session).
+        # codex : picker /model piloté (les arguments seraient avalés comme prompt).
+        engine_apply_model_effort "$SESSION_NAME" "$CLI" "$MODEL" "$EFFORT" || \
+            log_warn "000: application modèle/effort incomplète (voir ci-dessus)"
 
         if [ -n "$EFFORT" ]; then
             local EFFORT_CMD
