@@ -1,5 +1,6 @@
 """Routes agents : liste, détail, cycle de vie, IO tmux, historique, notes (B1)."""
 
+import asyncio
 import json
 import logging
 import os
@@ -370,10 +371,39 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
             raise HTTPException(status_code=404, detail=f"Agent {agent_id} session not found")
 
         if data.submit:
-            # On submit: just send Enter — the incremental sync already placed the text
+            # On submit: send Enter — the incremental sync already placed the text.
+            # Codex TUI : un Enter qui suit immédiatement la frappe est absorbé
+            # par la détection de collage (paste burst) et insère un retour à la
+            # ligne au lieu de soumettre. Même séquence que le bridge
+            # (agent.py _send_to_claude) : courte pause, Enter, vérification que
+            # la ligne du curseur s'est vidée, renvois bornés sinon. Sans effet
+            # pour Claude Code (la pause est imperceptible, l'Enter de renvoi
+            # tombe sur un composer déjà vide).
+            await asyncio.sleep(0.35)
             await _run_subprocess(
                 ["tmux", "send-keys", "-t", target, "Enter"], check=True
             )
+            snippet = (data.text or "")[:40]
+            for delay in (0.5, 1.0, 2.0):
+                if not snippet:
+                    break
+                await asyncio.sleep(delay)
+                try:
+                    cy = (await _run_subprocess(
+                        ["tmux", "display-message", "-t", target, "-p", "#{cursor_y}"],
+                        text=True,
+                    )).stdout.strip()
+                    pane = (await _run_subprocess(
+                        ["tmux", "capture-pane", "-t", target, "-p"], text=True,
+                    )).stdout.split("\n")
+                    cursor_line = pane[int(cy)] if cy.isdigit() and int(cy) < len(pane) else ""
+                except Exception:
+                    break
+                if snippet not in cursor_line:
+                    break  # soumis : le texte a quitté la ligne de saisie
+                await _run_subprocess(
+                    ["tmux", "send-keys", "-t", target, "Enter"], check=True
+                )
             _log_prompt_history(agent_id, data.text)
         else:
             # Incremental diff: only send backspaces + new chars
