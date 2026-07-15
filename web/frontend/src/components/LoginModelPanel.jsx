@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect } from 'react'
 import { api } from '../basePath'
 
-const RESTART_COOLDOWN = 60 // seconds
 const TMUX_WIDTH_OPTIONS = [80, 90, 100, 110, 120, 132, 180, 220, 280]
 
 function getDefaultPanel(agentId, mode) {
@@ -16,23 +15,11 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
   const runningIds = new Set((runningAgents || []).map(a => a.id))
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
-  const [restartUntil, setRestartUntil] = useState({}) // { agentId: epoch_ms }
-  const [activeRestart, setActiveRestart] = useState(null) // agentId currently restarting (API call in flight)
-  const [now, setNow] = useState(Date.now())
+  // Action en cours : {id, action}. Pas de compte à rebours — le backend
+  // rend la main quand l'état réel est atteint (session tmux présente/absente),
+  // les boutons se réactivent à la réponse.
+  const [activeRestart, setActiveRestart] = useState(null)
   const [tmuxWidth, setTmuxWidth] = useState(null)
-  const timerRef = useRef(null)
-
-  // Tick every second while any agent is in cooldown
-  useEffect(() => {
-    const hasActive = Object.values(restartUntil).some(until => until > Date.now())
-    if (hasActive && !timerRef.current) {
-      timerRef.current = setInterval(() => setNow(Date.now()), 1000)
-    } else if (!hasActive && timerRef.current) {
-      clearInterval(timerRef.current)
-      timerRef.current = null
-    }
-    return () => { if (timerRef.current) clearInterval(timerRef.current) }
-  }, [restartUntil, now])
 
   const fetchData = async () => {
     try {
@@ -95,20 +82,23 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
 
   const handleAction = async (agentId, action) => {
     if (activeRestart) return // already one in flight
-    const until = Date.now() + RESTART_COOLDOWN * 1000
-    setRestartUntil(prev => ({ ...prev, [agentId]: until }))
-    setActiveRestart(agentId)
+    setActiveRestart({ id: agentId, action })
     setError(null)
     try {
       const res = await fetch(api(`api/agent/${agentId}/${action}`), { method: 'POST' })
+      const detail = await res.json().catch(() => ({}))
       if (!res.ok) {
-        const detail = await res.json().catch(() => ({}))
         throw new Error(detail.detail || `HTTP ${res.status}`)
+      }
+      // Le backend a vérifié l'état réel (session tmux) avant de répondre.
+      if (detail.verified === false) {
+        setError(`${action} ${agentId}: état non confirmé — voir logs agent.sh`)
       }
     } catch (err) {
       setError(`${action} ${agentId}: ${err.message}`)
     } finally {
       setActiveRestart(null)
+      fetchData()
     }
   }
 
@@ -142,11 +132,6 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
     }
   }
 
-  const getRemaining = (agentId) => {
-    const until = restartUntil[agentId]
-    if (!until) return 0
-    return Math.max(0, Math.ceil((until - now) / 1000))
-  }
 
   if (error && !data) return <div className="login-model-panel" style={{ display: hidden ? 'none' : undefined }}><p style={{ color: 'var(--red)' }}>Error: {error}</p></div>
   if (!data) return <div className="login-model-panel" style={{ display: hidden ? 'none' : undefined }}><p style={{ color: 'var(--text-secondary)' }}>Loading...</p></div>
@@ -232,9 +217,7 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
           </tr>
           {/* Agent rows */}
           {agents.map((agent, idx) => {
-            const remaining = getRemaining(agent.id)
-            const isCooling = remaining > 0
-            const isThis = activeRestart === agent.id
+            const isThis = activeRestart && activeRestart.id === agent.id
             const blocked = !!activeRestart && !isThis
             const group = agent.id.split('-')[0]
             const isCompound = agent.id.includes('-')
@@ -256,18 +239,16 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
                 <td>
                   <span className="lm-actions-group">
                     {['start', 'stop', 'restart'].map(act => {
-                      const gRemaining = getRemaining(`group-${group}`)
-                      const gCooling = gRemaining > 0
-                      const gThis = activeRestart === `group-${group}`
+                      const gThis = activeRestart && activeRestart.id === group
                       const gBlocked = !!activeRestart && !gThis
                       return (
                         <button key={act}
-                          className={`lm-restart-btn ${gThis ? 'lm-restarting' : ''}`}
+                          className={`lm-restart-btn ${gThis && activeRestart.action === act ? 'lm-restarting' : ''}`}
                           onClick={() => handleAction(group, act)}
-                          disabled={gCooling || gBlocked || gThis}
+                          disabled={gBlocked || gThis}
                           title={`./scripts/agent.sh ${act} ${group}`}
                         >
-                          {gThis ? '...' : gCooling ? `${gRemaining}s` : act}
+                          {gThis && activeRestart.action === act ? '…' : act}
                         </button>
                       )
                     })}
@@ -340,12 +321,12 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
                   <span className="lm-actions-group">
                     {['start', 'stop', 'restart'].map(act => (
                       <button key={act}
-                        className={`lm-restart-btn ${isThis ? 'lm-restarting' : ''}`}
+                        className={`lm-restart-btn ${isThis && activeRestart.action === act ? 'lm-restarting' : ''}`}
                         onClick={() => handleAction(agent.id, act)}
-                        disabled={isCooling || blocked || isThis}
+                        disabled={blocked || isThis}
                         title={`./scripts/agent.sh ${act} ${agent.id}`}
                       >
-                        {isThis ? '...' : isCooling ? `${remaining}s` : act}
+                        {isThis && activeRestart.action === act ? '…' : act}
                       </button>
                     ))}
                   </span>

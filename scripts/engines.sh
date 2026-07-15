@@ -142,13 +142,28 @@ engine_apply_model_effort() {
         claude)
             if [ -n "$model" ]; then
                 tmux send-keys -t "$target" -l "/model $model"
-                sleep 0.5; tmux send-keys -t "$target" Enter; sleep 2
+                sleep 0.5; tmux send-keys -t "$target" Enter; sleep 3
             fi
-            local lvl
+            local lvl attempt
             lvl=$(engine_effort_level "$cli" "$effort")
             if [ -n "$lvl" ]; then
-                tmux send-keys -t "$target" -l "/effort $lvl"
-                sleep 0.5; tmux send-keys -t "$target" Enter; sleep 1
+                # Juste après /model, le re-rendu du TUI peut MANGER la frappe
+                # (constaté au démarrage : /effort n'apparaît jamais, sans
+                # erreur). Comme le bridge : vérifier l'effet réel — le footer
+                # affiche « <niveau> · /effort » quand c'est pris — et
+                # réessayer, composer nettoyé (C-u) avant chaque tentative.
+                for attempt in 1 2 3; do
+                    tmux send-keys -t "$target" C-u; sleep 0.3
+                    tmux send-keys -t "$target" -l "/effort $lvl"
+                    sleep 0.8; tmux send-keys -t "$target" Enter; sleep 1.5
+                    # Ligne de résultat du TUI : « Set effort level to <lvl> … »
+                    # (l'indicateur du footer n'est pas rendu en permanence).
+                    if tmux capture-pane -t "$target" -p -S -60 2>/dev/null | grep -q "Set effort level to $lvl"; then
+                        return 0
+                    fi
+                done
+                echo "engine_apply_model_effort: /effort $lvl non confirmé ($session)" >&2
+                return 1
             fi
             ;;
         codex)

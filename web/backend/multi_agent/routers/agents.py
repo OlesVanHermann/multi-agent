@@ -247,16 +247,36 @@ async def _agent_lifecycle(agent_id: str, action: str):
         command = ["bash", str(script), action, agent_id]
         if base_id == "000":
             command = ["env", "ALLOW_PROTECTED_000=1", *command]
+        # agent.sh est synchrone (attente TUI prêt + application modèle/effort) :
+        # 120 s de marge — le picker codex ajoute ~10-15 s au démarrage.
         result = await _run_subprocess(
             command,
-            text=True, timeout=60
+            text=True, timeout=120
         )
         output = result.stdout.strip()
         print(f"[{action}] agent {agent_id}: {output}")
 
+        # Rendre la main sur l'ÉTAT RÉEL, pas sur un délai : la session tmux
+        # doit exister (start/restart) ou avoir disparu (stop). Le front
+        # réactive les boutons à la réponse — jamais sur un compte à rebours.
+        session = f"{cfg.MA_PREFIX}-agent-{agent_id}"
+        want_alive = action in ("start", "restart")
+        alive = not want_alive
+        verified = False
+        for _ in range(20):
+            alive = (await _run_subprocess(
+                ["tmux", "has-session", "-t", session]
+            )).returncode == 0
+            if alive == want_alive:
+                verified = True
+                break
+            await asyncio.sleep(0.5)
+
         return {
-            "status": action,
+            "status": action if verified else f"{action}_unverified",
             "agent_id": agent_id,
+            "running": alive,
+            "verified": verified,
             "output": output,
         }
     except Exception as e:
