@@ -460,9 +460,9 @@ async def update_login_model(data: LoginModelUpdate):
 async def update_effort(data: EffortUpdate):
     """Create, update, or remove an effort override for an agent.
 
-    Compound x45 IDs (e.g. 011-911) write to the x45 subdir when present,
-    mirroring /api/config/logins-models. Remove cleans both locations so
-    no ghost file ever shadows the GET lookup.
+    Les agents mono et composés écrivent dans leur répertoire lorsqu'il
+    existe, comme /api/config/logins-models. La suppression nettoie aussi
+    l'ancien emplacement à plat afin qu'aucun fantôme ne masque la lecture.
     """
     prompts_dir = cfg.BASE_DIR / "prompts"
 
