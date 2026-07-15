@@ -305,10 +305,13 @@ class TestReadyMarkers:
         assert m['ready_markers'] != m['prompt_markers']
 
     def test_codex_ready_markers_are_captured(self):
-        """« › Ask Codex to do anything » : placeholder du composer.
-        [Snapshot: bottom_pane__chat_composer__tests__footer_mode_*.snap]"""
+        """Bannière « >_ OpenAI Codex (v…) » + composer « › » — relevés sur
+        session réelle 0.144.4. Les anciens marqueurs des snapshots
+        (« Ask Codex to do anything », « for shortcuts ») n'apparaissent plus :
+        wait_cli_ready ne matchait jamais et tuait l'agent à 30 s."""
         rm = load(MARKERS_CODEX)['ready_markers']
-        assert 'Ask Codex to do anything' in rm
+        assert 'OpenAI Codex (v' in rm
+        assert '› ' in rm
         assert engines.TODO_SENTINEL not in rm
 
     def test_agent_sh_reads_ready_markers_not_prompt_markers(self):

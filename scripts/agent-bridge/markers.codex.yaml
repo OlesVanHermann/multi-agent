@@ -74,10 +74,16 @@ status_line: ' · '
 prompt_markers: ['›', '>', '$', '%']
 
 # ── [D] CLI démarré et prêt ─────────────────────────────────────────────────
-# Le placeholder du composer et le hint du footer n'apparaissent qu'une fois le
-# TUI monté. Deux marqueurs, pour couvrir le cas d'un composer déjà rempli.
-# [Snapshots: chat_composer footer_mode_* / footer__tests__footer_shortcuts_default]
-ready_markers: ['Ask Codex to do anything', 'for shortcuts']
+# La bannière d'accueil et le composer n'apparaissent qu'une fois le TUI monté.
+# [Vérifié: codex-cli 0.144.4, session réelle — les anciens marqueurs issus des
+#  snapshots (« Ask Codex to do anything », « for shortcuts ») N'APPARAISSENT
+#  PLUS : le placeholder du composer est une suggestion tournante (« Find and
+#  fix a bug in @filename »…) et le footer est « <model> <effort> · <dir> ».
+#  Conséquence : wait_cli_ready ne matchait jamais → kill-session à 30 s
+#  (« l'agent démarre puis s'arrête »).]
+# [Source: capture-pane sur session réelle codex-cli 0.144.4 — bannière
+#  « >_ OpenAI Codex (v0.144.4) » + composer « › »]
+ready_markers: ['OpenAI Codex (v', '› ']
 
 # ── [D] Pourcentage de contexte restant ─────────────────────────────────────
 # « 72% context left ». Quand le pourcentage est inconnu, Codex affiche
