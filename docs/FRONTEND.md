@@ -253,12 +253,16 @@ ReadWritePaths=%h/multi-agent/prompts
 Écritures du backend par répertoire : `logs/` (logs frontend B7),
 `uploads/` (`/api/upload`), `crontab/` (prompts planifiés),
 `keepalive/` (`.active`/`.suspended` + fichiers du sweep),
-`prompts/` (`tmux.width`, `favoris-*.json`, `*.effort`, `*.notes`).
+`prompts/` (`*.model`, `*.login`, `*.effort`, `*.notes`, `tmux.width` et
+`favoris-*.json`). Le modèle de drop-in versionné est
+`setup/multiagent-dashboard-hardening.conf.example`.
 Vérifier après déploiement depuis le namespace réel du service :
 
 ```bash
 sudo systemd-run -p JoinsNamespaceOf=multiagent-dashboard.service -p ProtectHome=read-only \
   --wait -P touch ~/multi-agent/uploads/.rw-test
+
+./scripts/check-dashboard-systemd.sh
 ```
 
 ---

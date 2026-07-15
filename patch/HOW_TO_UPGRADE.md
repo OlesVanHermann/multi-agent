@@ -62,6 +62,33 @@ les tâches importées depuis votre historique et vos résultats survivent.
 
 ## Processus de mise à jour
 
+### Dashboard systemd durci (v3.1.4+)
+
+`upgrade.sh` met à jour le framework, mais ne modifie jamais les unités locales
+dans `/etc/systemd/system`. Après une mise à jour, comparer le drop-in du
+dashboard avec `setup/multiagent-dashboard-hardening.conf.example`, puis lancer :
+
+```bash
+./scripts/check-dashboard-systemd.sh
+sudo systemctl daemon-reload
+sudo systemctl restart multiagent-dashboard.service
+```
+
+Le backend doit pouvoir écrire dans `logs/`, `uploads/`, `crontab/`,
+`keepalive/` et `prompts/`. Ce dernier contient notamment les sélections
+`*.model`, `*.login` et `*.effort` du panneau web.
+
+Le panneau nomme désormais clairement `Défaut global` et demande confirmation.
+Pour empêcher l'architecte d'hériter d'une future bascule globale, créer
+manuellement un override projet (adapter le modèle Claude choisi) :
+
+```bash
+ln -sfn claude-opus-4-8.model prompts/000.model
+```
+
+Les fichiers `prompts/*.model` sont des données projet préservées : cette
+opération reste volontairement manuelle et hors du périmètre d'`upgrade.sh`.
+
 ### Étape 1: Identifier votre version actuelle
 
 ```bash

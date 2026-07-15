@@ -1,0 +1,10 @@
+# Drop-in de référence :
+#   sudo systemctl edit multiagent-dashboard.service
+# Copier ce bloc puis adapter le chemin si le dépôt n'est pas dans %h/multi-agent.
+[Service]
+EnvironmentFile=%h/multi-agent/setup/secrets.cfg
+ReadWritePaths=%h/multi-agent/logs
+ReadWritePaths=%h/multi-agent/uploads
+ReadWritePaths=%h/multi-agent/crontab
+ReadWritePaths=%h/multi-agent/keepalive
+ReadWritePaths=%h/multi-agent/prompts

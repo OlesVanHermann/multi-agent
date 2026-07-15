@@ -46,6 +46,22 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _inherits_global(prompts_dir: Path, agent_id: str, ext: str) -> bool:
+    """True si l'agent n'a ni override propre ni override de groupe."""
+    own = _find_agent_config(prompts_dir, agent_id, ext)
+    if own and (own.is_symlink() or (ext == "effort" and own.exists())):
+        return False
+    if "-" in agent_id:
+        parent = prompts_dir / f"{agent_id.split('-')[0]}.{ext}"
+        if parent.is_symlink() or (ext == "effort" and parent.exists()):
+            return False
+    return True
+
+
+def _global_affected(agents: list[dict], prompts_dir: Path, ext: str) -> list[str]:
+    return [a["id"] for a in agents if _inherits_global(prompts_dir, a["id"], ext)]
+
+
 @router.get("/api/config/logins-models")
 async def get_logins_models():
     """Return available logins, models, defaults, and per-agent assignments."""
@@ -231,6 +247,10 @@ async def get_logins_models():
         "default_effort": default_effort,
         "agents": agents,
         "groups": groups,
+        "default_affected": {
+            ext: _global_affected(agents, prompts_dir, ext)
+            for ext in ("login", "model", "effort")
+        },
     }
 
 
@@ -414,6 +434,39 @@ async def update_login_model(data: LoginModelUpdate):
     if data.value and not re.match(r'^[a-zA-Z0-9_.-]+$', data.value):
         raise HTTPException(status_code=400, detail="invalid value")
 
+    if data.agent_id == "default" and not data.confirm_global:
+        raise HTTPException(status_code=409, detail="global default change requires confirm_global=true")
+
+    # Une bascule globale vers Codex ne doit pas rendre tous les héritants
+    # indémarrables : sonder le profil ChatGPT effectif avant toute écriture.
+    if data.agent_id == "default" and data.value:
+        if data.type == "model":
+            try:
+                model_id = (prompts_dir / f"{data.value}.model").read_text().strip()
+            except OSError:
+                raise HTTPException(status_code=400, detail=f"target {data.value}.model not found")
+        else:
+            model_id = _effective_model_id(prompts_dir, "default")
+        if engines.engine_for_model(model_id) == "codex":
+            login_link = prompts_dir / "default.login"
+            login_slot = data.value if data.type == "login" else (
+                Path(os.readlink(login_link)).stem if login_link.is_symlink() else "login1a"
+            )
+            slot = re.sub(r"^(?:login|claude|codex)", "", login_slot)
+            profile = f"codex{slot}"
+            check = await _run_subprocess(
+                ["bash", "-c",
+                 'source "$1/scripts/engines.sh" && engine_codex_preflight "$1/login" "$2"',
+                 "_", str(cfg.BASE_DIR), profile],
+                text=True, timeout=20,
+            )
+            if check.returncode != 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(f"profil {profile} non connecté avec ChatGPT; exécuter "
+                            f"CODEX_HOME={cfg.BASE_DIR}/login/{profile} codex login"),
+                )
+
     # Même résolution que la lecture (_find_agent_config) : répertoire de
     # l'agent d'abord (mono comme x45/z21), prompts/ sinon.
     link_path, _prefix = _link_path_for(prompts_dir, data.agent_id, data.type)
@@ -469,6 +522,8 @@ async def update_effort(data: EffortUpdate):
     # Validate agent_id format
     if data.agent_id != "default" and not cfg.is_valid_agent_id(data.agent_id):
         raise HTTPException(status_code=400, detail="invalid agent_id")
+    if data.agent_id == "default" and not data.confirm_global:
+        raise HTTPException(status_code=409, detail="global default change requires confirm_global=true")
 
     # Même résolution que la lecture : répertoire de l'agent d'abord
     # (mono comme x45/z21), prompts/ sinon — cf. _link_path_for.

@@ -23,6 +23,7 @@ class LoginModelUpdate(BaseModel):
     agent_id: str      # "300" or "default"
     type: str          # "login" or "model"; engine is inferred from model
     value: str         # "claude2a", "gpt-5-6-sol", "codex"... or "" to remove override
+    confirm_global: bool = False
 
 
 class AgentEngineUpdate(BaseModel):
@@ -40,6 +41,7 @@ class AgentEngineUpdate(BaseModel):
 class EffortUpdate(BaseModel):
     agent_id: str      # "300" or "default"
     level: str         # "L", "M", "H", or "" (remove override)
+    confirm_global: bool = False
 
 
 class PanelConfigUpdate(BaseModel):

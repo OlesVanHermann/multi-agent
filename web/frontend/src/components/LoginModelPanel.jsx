@@ -63,10 +63,20 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
 
   const handleChange = async (agentId, type, value) => {
     try {
+      let confirmGlobal = false
+      if (agentId === 'default') {
+        const affected = data?.default_affected?.[type] || []
+        const preview = affected.slice(0, 12).join(', ')
+        const more = affected.length > 12 ? ` … (+${affected.length - 12})` : ''
+        confirmGlobal = window.confirm(
+          `Défaut global : ce changement affectera ${affected.length} agent(s), dont : ${preview}${more}. Continuer ?`
+        )
+        if (!confirmGlobal) return
+      }
       const res = await fetch(api('api/config/logins-models'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent_id: agentId, type, value }),
+        body: JSON.stringify({ agent_id: agentId, type, value, confirm_global: confirmGlobal }),
       })
       if (!res.ok) {
         // E1 : le backend renvoie un detail explicite sur les incompatibilités
@@ -104,10 +114,18 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
 
   const handleEffort = async (agentId, level) => {
     try {
+      let confirmGlobal = false
+      if (agentId === 'default') {
+        const affected = data?.default_affected?.effort || []
+        confirmGlobal = window.confirm(
+          `Défaut global : cet effort affectera ${affected.length} agent(s). Continuer ?`
+        )
+        if (!confirmGlobal) return
+      }
       const res = await fetch(api('api/config/effort'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent_id: agentId, level }),
+        body: JSON.stringify({ agent_id: agentId, level, confirm_global: confirmGlobal }),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       await fetchData()
@@ -182,7 +200,7 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
           </tr>
           {/* Default row */}
           <tr className="lm-default-row">
-            <td><strong>default</strong></td>
+            <td title="Affecte tous les agents sans override explicite"><strong>Défaut global</strong></td>
             <td>
               <select
                 className="lm-select"

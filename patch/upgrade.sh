@@ -1,4 +1,5 @@
 #!/bin/bash
+# Actions manuelles (systemd, overrides projet) : patch/HOW_TO_UPGRADE.md
 # upgrade.sh - Met à jour le framework depuis GitHub sans écraser les données projet
 #
 # Usage:
