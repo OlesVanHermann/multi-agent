@@ -4,6 +4,7 @@ import os
 import asyncio
 import concurrent.futures
 import re
+import socket
 import subprocess
 
 from . import config as cfg
@@ -50,7 +51,18 @@ async def _tmux_server_alive() -> bool:
     auto-restart systemd → premier tick → serveur né sandboxé → EROFS).
     On teste le SOCKET, sans effet de bord.
     """
-    return os.path.exists(_tmux_socket_path())
+    path = _tmux_socket_path()
+    if not os.path.exists(path):
+        return False
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    probe.settimeout(0.25)
+    try:
+        probe.connect(path)
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
 
 
 TMUX_SERVER_ABSENT_DETAIL = (

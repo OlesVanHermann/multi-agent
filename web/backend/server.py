@@ -39,6 +39,7 @@ from multi_agent.cache import _cache_loop, _seed_prompt_history
 from multi_agent.ratelimit import _check_rate_limit
 from multi_agent.routers import agent_chat, agents, chat, crontab, system, ws
 from multi_agent.routers import config as config_routes
+from multi_agent.tmuxio import _tmux_server_alive
 
 # === Ré-exports compat tests (lecture seule) ===
 from multi_agent.config import (  # noqa: F401
@@ -87,8 +88,7 @@ async def lifespan(app: FastAPI):
         # crée le socket ET le serveur — la version précédente de cette garde
         # provoquait elle-même l'empoisonnement au premier démarrage du
         # backend après un infra.sh stop. On teste le SOCKET (tmuxio).
-        from multi_agent.tmuxio import _tmux_socket_path
-        _server_up = os.path.exists(_tmux_socket_path())
+        _server_up = await _tmux_server_alive()
         check = subprocess.run(
             ["tmux", "has-session", "-t", _crontab_session],
             capture_output=True, timeout=5

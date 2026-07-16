@@ -1,6 +1,7 @@
 """Régressions v3.1.4 : keepalive Codex, défaut global et sandbox systemd."""
 
 import importlib.util
+import asyncio
 import json
 from pathlib import Path
 
@@ -89,7 +90,8 @@ def test_backend_never_spawns_first_tmux_server():
     server = (ROOT / "web/backend/server.py").read_text()
     assert "def _tmux_socket_path()" in tmuxio
     assert "async def _tmux_server_alive()" in tmuxio
-    assert "os.path.exists(_tmux_socket_path())" in tmuxio
+    assert "probe.connect(path)" in tmuxio
+    assert "socket.AF_UNIX" in tmuxio
     assert '["tmux", "has-session"]' not in tmuxio
     assert "TMUX_SERVER_ABSENT_DETAIL" in tmuxio
     assert "not await _tmux_server_alive()" in agents
@@ -97,7 +99,7 @@ def test_backend_never_spawns_first_tmux_server():
     # server.py : le has-session -t <session> n'est exécuté QUE si le socket
     # existe déjà ; jamais de `tmux has-session` sans cible.
     assert '["tmux", "has-session"]' not in server
-    assert "os.path.exists(_tmux_socket_path())" in server
+    assert "await _tmux_server_alive()" in server
     assert "if _server_up else None" in server
     assert "scheduler NON démarré" in server
 
@@ -114,3 +116,28 @@ def test_systemd_path_is_portable():
     dropin = (ROOT / "setup/multiagent-dashboard-hardening.conf.example").read_text()
     assert "Environment=PATH=%h/.local/bin:" in dropin
     assert "/.nvm/versions/node/v" not in dropin
+
+
+def test_tmux_socket_probe_rejects_stale_socket(monkeypatch):
+    import sys
+    sys.path.insert(0, str(ROOT / "web" / "backend"))
+    from multi_agent import tmuxio
+
+    class StaleSocket:
+        def settimeout(self, _timeout):
+            pass
+
+        def connect(self, _path):
+            raise ConnectionRefusedError("stale")
+
+        def close(self):
+            pass
+
+    loop = asyncio.new_event_loop()
+    try:
+        monkeypatch.setattr(tmuxio.os.path, "exists", lambda _path: True)
+        monkeypatch.setattr(tmuxio.socket, "socket", lambda *_args: StaleSocket())
+        assert loop.run_until_complete(tmuxio._tmux_server_alive()) is False
+    finally:
+        monkeypatch.undo()
+        loop.close()
