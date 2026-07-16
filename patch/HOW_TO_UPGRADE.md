@@ -80,9 +80,13 @@ version NVM en dur dans l'unité) :
 
 ```bash
 mkdir -p ~/.local/bin
-ln -sfn "$(command -v node)" ~/.local/bin/node
-ln -sfn "$(command -v claude)" ~/.local/bin/claude
-ln -sfn "$(command -v codex)" ~/.local/bin/codex
+# NE PAS lier un binaire sur lui-même : si `command -v` résout déjà dans
+# ~/.local/bin (installeurs claude/codex), ln -sfn REMPLACERAIT le binaire
+# par un lien auto-référent cassé.
+for b in node claude codex; do
+  src=$(command -v "$b") || continue
+  [ "$src" = "$HOME/.local/bin/$b" ] || ln -sfn "$src" ~/.local/bin/"$b"
+done
 ```
 
 Le backend doit pouvoir écrire dans `logs/`, `uploads/`, `crontab/`,
