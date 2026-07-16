@@ -74,7 +74,8 @@ class TestParsePaneState:
 
     def test_misc_flags(self):
         out = ("bypass permissions · 2 bashes ↓ 12 lines\n"
-               "plan mode on\nEnter to select\nContext limit reached\n/model opus\n❯\n")
+               "Enter to select\nContext limit reached\n/model opus\n"
+               "plan mode on\n❯\n")
         st = self._parse(out)
         assert st['has_bashes'] is True
         assert st['has_down'] is True
