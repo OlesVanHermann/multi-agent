@@ -82,10 +82,14 @@ def test_backend_never_spawns_first_tmux_server():
     tmuxio = (ROOT / "web/backend/multi_agent/tmuxio.py").read_text()
     agents = (ROOT / "web/backend/multi_agent/routers/agents.py").read_text()
     config = (ROOT / "web/backend/multi_agent/routers/config.py").read_text()
+    server = (ROOT / "web/backend/server.py").read_text()
     assert "async def _tmux_server_alive()" in tmuxio
     assert "TMUX_SERVER_ABSENT_DETAIL" in tmuxio
     assert "not await _tmux_server_alive()" in agents
     assert "not await _tmux_server_alive()" in config
+    assert '["tmux", "has-session"]' in server
+    assert "_server_up.returncode != 0" in server
+    assert "scheduler NON démarré" in server
 
 
 def test_keepalive_start_is_verified_after_spawn():
