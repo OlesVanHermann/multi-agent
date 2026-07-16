@@ -41,6 +41,8 @@ def _make_agent():
     agent.metrics = None
     agent.redis = MagicMock()
     agent._log = MagicMock()
+    agent._log_event = MagicMock()
+    agent._wal = MagicMock()
     return agent
 
 
@@ -74,14 +76,13 @@ class TestHandleInboxMessage:
         assert task['from_agent'] == "100"
         agent.redis.xack.assert_not_called()
 
-    def test_response_message_acked_immediately(self):
+    def test_response_transcript_acked_without_tui_injection(self):
         agent = _make_agent()
         agent._handle_inbox_message("2-0", {
             "type": "response", "from_agent": "200",
             "response": "result", "complete": "true"})
 
-        task = agent.prompt_queue.get(timeout=1)
-        assert "[FROM 200]" in task['prompt']
+        assert agent.prompt_queue.empty()
         agent.redis.xack.assert_called_once_with(agent.inbox, "bridge", "2-0")
 
     def test_reload_prompt_acked_immediately(self):
@@ -143,12 +144,19 @@ class TestPendingDrain:
 
         agent.redis.xreadgroup.side_effect = mock_xreadgroup
 
-        agent._listen_redis()
+        import threading
+        t = threading.Thread(target=agent._listen_redis, daemon=True)
+        t.start()
+        deadline = time.time() + 2
+        while agent.prompt_queue.empty() and time.time() < deadline:
+            time.sleep(0.01)
+        agent.running = False
+        t.join(timeout=2)
 
-        # Drain '0' d'abord (jusqu'à vide), puis lecture '>'
+        # Un seul pending est reclame. Les nouveaux restent dans Redis tant
+        # que ce message n'est pas publie puis XACK.
         assert calls[0] == '0'
-        assert '>' in calls
-        assert calls.index('>') > calls.index('0')
+        assert '>' not in calls
         task = agent.prompt_queue.get(timeout=1)
         assert task['prompt'] == "pending msg"
         assert task['ack_id'] == "9-0"

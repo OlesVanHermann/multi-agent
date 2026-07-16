@@ -38,6 +38,8 @@ def _make_agent():
     agent.metrics = None
     agent.redis = MagicMock()
     agent._log = MagicMock()
+    agent._log_event = MagicMock()
+    agent._wal = MagicMock()
     agent._inflight_ids = set()
     agent._inflight_lock = threading.Lock()
     return agent
@@ -117,7 +119,7 @@ class TestXdelRespected:
 
 
 class TestQueuedMessageWaitsIdle:
-    def test_no_early_return_while_queued(self):
+    def test_stall_does_not_complete_or_ack_while_queued(self):
         """Pane affichant le marqueur 'queued' : _wait_for_response ne doit
         PAS retourner immediatement (l'ancien code renvoyait le pane comme
         reponse en <1 poll, d'ou publication+ack d'une fausse reponse)."""
@@ -126,16 +128,26 @@ class TestQueuedMessageWaitsIdle:
         pane = f"some output\n{agent_mod.QUEUED_MSG}\nmore"
         agent._capture_pane = MagicMock(return_value=pane)
 
-        start = time.time()
-        result = agent._wait_for_response(timeout=1.5)
-        elapsed = time.time() - start
+        result = []
+        t = threading.Thread(
+            target=lambda: result.append(agent._wait_for_response(timeout=0.3)),
+            daemon=True)
+        t.start()
+        time.sleep(1.6)
 
-        # Attend le timeout (idle jamais atteint) au lieu de retourner tot.
-        assert elapsed >= 1.4, f"retour premature en {elapsed:.2f}s"
-        assert result.startswith("BRIDGE_TIMEOUT|")
-        assert pane not in result
-        assert "completion_unconfirmed=true" in result
+        # Le seuil produit un diagnostic STALLED mais ne termine pas la tache.
+        assert t.is_alive()
+        assert result == []
+        agent.redis.hset.assert_any_call(
+            f"A:agent:{agent.agent_id}", "status", "stalled")
         # Log unique, pas de spam.
         waits = [c for c in agent._log.call_args_list
                  if "waiting for idle" in str(c)]
         assert len(waits) == 1
+        stalls = [c for c in agent._log.call_args_list
+                  if "STALL DETECTED" in str(c)]
+        assert len(stalls) == 1
+
+        agent.running = False
+        t.join(timeout=2)
+        assert result == ["__BRIDGE_STOPPED__"]

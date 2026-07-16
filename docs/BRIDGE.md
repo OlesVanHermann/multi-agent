@@ -43,6 +43,9 @@ de façon idempotente avec `id='$'` et `mkstream=True` :
 - Au démarrage, les messages **lus mais non acquittés** lors d'un run
   précédent (crash) sont rejoués d'abord (lecture avec id `'0'`), puis les
   nouveaux messages sont consommés (id `'>'`).
+- Le bridge ne réclame qu'**un prompt Redis à la fois**. Tant que sa réponse
+  n'est pas publiée puis acquittée, les messages suivants restent dans le
+  Stream Redis ; ils ne sont pas préchargés dans une seconde FIFO volatile.
 - Un prompt n'est **XACK qu'après publication de la réponse** dans l'outbox :
   un crash en cours de traitement ⇒ rejeu au redémarrage, pas de perte.
 - Les messages de type `response` / `reload_prompt` (et entrées inconnues ou
@@ -154,14 +157,16 @@ Champs : `prompt` (requis), `from_agent`, `correlation_id` (F2, optionnel),
   correlation_id   # F2 : écho du correlation_id de la requête
 ```
 
-Si `from_agent` est un autre agent **vivant** (session tmux active), la
-réponse lui est aussi routée dans son inbox (type `response`, découpée en
-chunks de 15000 caractères si nécessaire, champ `complete`). Les expéditeurs
-`cli`, `manual`, `auto_init`, etc. ne reçoivent pas de routage retour.
+La réponse canonique reste dans l'outbox et porte le `correlation_id` de la
+requête. Elle n'est pas recopiée automatiquement dans l'inbox de l'émetteur :
+une transcription TUI est un artefact de diagnostic, pas un événement métier.
+Les signaux actionnables (`DONE`, `SCORE`, `BLOCKED`, etc.) sont envoyés
+explicitement comme prompts courts via `send.sh` / `done.sh`.
 
 ### Autres types inbox
 
-- `type=response` : notification `[FROM xxx]…[/xxx]` injectée comme prompt.
+- `type=response` : transcription historique acquittée sans injection TUI
+  (compatibilité avec les anciennes entrées encore présentes dans Redis).
 - `type=reload_prompt` : ré-injection du prompt agent (après compaction).
 
 ---
@@ -200,7 +205,8 @@ Toute autre ligne stdin est traitée comme un prompt local (`from_agent=manual`)
 | `MA_PREFIX` | `A` | Préfixe des clés métier (`A:agent:300:inbox`…) |
 | `MONITORING_PREFIX` | `mi` | Préfixe des streams monitoring |
 | `LOG_DIR` | `logs/` | Logs : `{LOG_DIR}/{id}/bridge_{ts}.log` + `events.jsonl` |
-| `RESPONSE_TIMEOUT` | `300` | Attente max d'une réponse (s) |
+| `RESPONSE_STALL_THRESHOLD` | valeur de `RESPONSE_TIMEOUT`, sinon `300` | Silence du pane avant diagnostic `stalled` ; ne termine ni n'acquitte la tâche |
+| `RESPONSE_TIMEOUT` | `300` | Alias de compatibilité du seuil de stall ; ce n'est plus une deadline de complétion |
 | `POLL_MIN` / `POLL_MAX` | `0.2` / `2.0` | Scrutation adaptative du pane (A2) |
 | `STABLE_READY_SECS` | `5` | Stabilité requise avec marqueur de prompt |
 | `STABLE_FALLBACK_SECS` | `10` | Stabilité requise sans marqueur |

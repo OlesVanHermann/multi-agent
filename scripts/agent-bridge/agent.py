@@ -76,7 +76,14 @@ MA_PREFIX = os.environ.get("MA_PREFIX", "A")
 MONITORING_PREFIX = os.environ.get("MONITORING_PREFIX", "mi")
 
 MAX_HISTORY = 50
-RESPONSE_TIMEOUT = int(os.environ.get("RESPONSE_TIMEOUT", 300))
+# Compatibilite de configuration : RESPONSE_TIMEOUT reste accepte mais ne
+# borne plus la duree totale d'une tache. Il devient le seuil d'inactivite
+# apres lequel le bridge signale STALLED sans publier de fausse reponse, sans
+# XACK et sans passer au message suivant.
+RESPONSE_STALL_THRESHOLD = int(os.environ.get(
+    "RESPONSE_STALL_THRESHOLD", os.environ.get("RESPONSE_TIMEOUT", 300)))
+# Alias conserve pour les integrations qui importent encore cette constante.
+RESPONSE_TIMEOUT = RESPONSE_STALL_THRESHOLD
 POLL_INTERVAL = 1.0
 
 # V3/C1 : boucle verify (opt-in par tâche via champ verify_cmd)
@@ -548,9 +555,14 @@ class TmuxAgent:
     # Sentinel returned by _wait_for_response when compaction is detected
     _COMPACTION_SENTINEL = "__COMPACTION_DETECTED__"
 
-    def _wait_for_response(self, timeout=RESPONSE_TIMEOUT):
-        """Wait for Claude to finish responding and return the output"""
-        start_time = time.time()
+    def _wait_for_response(self, timeout=None):
+        """Attend une completion certaine, sans deadline murale.
+
+        ``timeout`` est conserve uniquement comme seuil de stall pour les
+        appels historiques/tests. Un stall est diagnostique dans Redis mais ne
+        devient jamais une reponse canonique et ne libere jamais la FIFO.
+        """
+        stall_threshold = RESPONSE_STALL_THRESHOLD if timeout is None else timeout
         baseline = self._capture_pane(200)
         baseline_hash = hash(baseline)
         baseline_compaction_count = baseline.count(COMPACTION_DONE)
@@ -561,20 +573,54 @@ class TmuxAgent:
         last_printed = 0
         poll = POLL_MIN
         queued_logged = False
+        last_activity_at = time.time()
+        stalled_logged = False
+        last_observed_content = baseline
 
-        while time.time() - start_time < timeout:
+        while getattr(self, 'running', True):
             time.sleep(poll)
 
             current = self._capture_pane(200)
+            pane_changed = current != last_observed_content
+            if pane_changed:
+                last_activity_at = time.time()
+                last_observed_content = current
+                if stalled_logged:
+                    self._log("STALL CLEARED — terminal activity resumed")
+                    stalled_logged = False
+                    try:
+                        self.redis.hset(
+                            f"{MA_PREFIX}:agent:{self.agent_id}",
+                            "status", "busy")
+                    except Exception:
+                        pass
             # A2: poll court tant que le pane change, allongé dès stabilité
-            poll = _next_poll_interval(poll, current != last_content)
+            poll = _next_poll_interval(poll, pane_changed)
+
+            # Une absence d'activite est un diagnostic, jamais une completion.
+            # La tache reste courante et son entree Redis reste pending.
+            if (stall_threshold and not stalled_logged
+                    and time.time() - last_activity_at >= stall_threshold):
+                self._log(
+                    f"STALL DETECTED — no terminal activity for {stall_threshold}s; "
+                    "task remains pending")
+                self._log_event("stall", f"inactive_for={stall_threshold}")
+                self._wal("stall", (getattr(self, 'current_task', None) or {}).get('task_id'),
+                          inactive_for=stall_threshold)
+                try:
+                    self.redis.hset(
+                        f"{MA_PREFIX}:agent:{self.agent_id}",
+                        "status", "stalled")
+                except Exception:
+                    pass
+                stalled_logged = True
 
             # Detect queued message (Claude busy, prompt queued by the TUI).
             # A5 : NE PAS retourner — l'ancien code renvoyait le pane comme
             # "reponse" (publiee + ack) pendant que la TUI gardait le prompt
             # en file ; combine aux re-livraisons, ca floodait la TUI. Le
             # prompt EST pris en compte (file TUI) : on attend l'idle, la TUI
-            # le soumettra elle-meme ; RESPONSE_TIMEOUT borne l'attente.
+            # le soumettra elle-meme ; un stall est signale sans abandon.
             if QUEUED_MSG in current:
                 if not queued_logged:
                     self._log("QUEUED MESSAGE detected — Claude busy, waiting for idle (no re-send)")
@@ -679,15 +725,9 @@ class TmuxAgent:
                             response = response[:-len(marker)].strip()
                     return response
 
-        self._log("WARNING: Response timeout")
-        task = getattr(self, 'current_task', None) or {}
-        task_id = task.get('task_id') or task.get('msg_id', '')
-        correlation_id = task.get('correlation_id', '')
-        # Le scrollback reste accessible via tmux/logs pour le diagnostic, mais
-        # ne devient jamais une réponse canonique ni un faux succès.
-        return (f"BRIDGE_TIMEOUT|task_id={task_id}"
-                f"|correlation_id={correlation_id}"
-                "|submission_confirmed=true|completion_unconfirmed=true")
+        # Arret explicite du bridge uniquement. Le caller ne doit pas publier
+        # cette sentinelle comme une completion de la tache.
+        return "__BRIDGE_STOPPED__"
 
     def _run_claude(self, prompt):
         """Send prompt to Claude via tmux and capture response"""
@@ -920,17 +960,14 @@ class TmuxAgent:
 
             self._log(f"<- Response from {from_id} ({len(response_text)} chars){' ['+chunk_info+']' if chunk_info else ''}")
 
-            header = f"[FROM {from_id}]"
-            if chunk_info:
-                header += f" [{chunk_info}]"
-
-            notification = f"{header}\n{response_text}\n[/{from_id}]"
-            self.prompt_queue.put({
-                'prompt': notification,
-                'from_agent': f'response_{from_id}',
-                'msg_id': f"response-{int(time.time())}",
-                'source': 'response'
-            })
+            # Une transcription est un artefact de diagnostic, pas un
+            # evenement metier. L'outbox de l'emetteur la conserve deja ; la
+            # reinjecter dans le TUI du destinataire pollue son contexte avec
+            # des marqueurs d'UI. Les signaux actionnables passent par un
+            # message prompt explicite (send.sh / done.sh).
+            self._log(
+                f"Response transcript from {from_id} stored in sender outbox; "
+                "not injected into TUI")
             self._ack_inbox(msg_id)
         else:
             self._log(f"<- Unknown message type '{msg_type}' from {data.get('from_agent', '?')} — acked")
@@ -958,6 +995,15 @@ class TmuxAgent:
                     self._ensure_group()
                     group_ready = True
 
+                # Redis reste l'unique tampon : un seul prompt Redis peut etre
+                # reclame a la fois. Tant qu'il n'est pas publie puis XACK, le
+                # listener ne precharge pas les messages suivants en memoire.
+                with self._inflight_lock:
+                    has_inflight = bool(self._inflight_ids)
+                if has_inflight:
+                    time.sleep(0.2)
+                    continue
+
                 if not pending_drained:
                     # A5 (fix re-injection 11/07) : curseur AVANCANT. L'ancien
                     # code relisait la PEL depuis '0' a chaque tour — un prompt
@@ -969,7 +1015,7 @@ class TmuxAgent:
                     cursor = '0'
                     while self.running:
                         result = self.redis.xreadgroup(
-                            self.group, self.consumer, {self.inbox: cursor}, count=10)
+                            self.group, self.consumer, {self.inbox: cursor}, count=1)
                         messages = result[0][1] if result else []
                         if not messages:
                             break
@@ -977,6 +1023,12 @@ class TmuxAgent:
                         for msg_id, data in messages:
                             self._handle_inbox_message(msg_id, data)
                             cursor = msg_id
+                        with self._inflight_lock:
+                            if self._inflight_ids:
+                                break
+                    with self._inflight_lock:
+                        if self._inflight_ids:
+                            continue
                     pending_drained = True
 
                 result = self.redis.xreadgroup(
@@ -1117,6 +1169,10 @@ class TmuxAgent:
                     if self.metrics:
                         self.metrics.record_error(self.agent_id, type(e).__name__, str(e))
                     response = f"[ERROR] {e}"
+
+            if response == "__BRIDGE_STOPPED__":
+                self._log("Bridge stopped while task active — leaving Redis entry pending")
+                break
 
             # API error detection — retry with backoff (max 2 retries)
             # A1: motifs externalisés dans markers.yaml (API_ERROR_PATTERNS)
@@ -1318,50 +1374,10 @@ class TmuxAgent:
             # A7: no DONE/SCORE scraping of model output — completion signals
             # go through the explicit channel only (scripts/done.sh → Redis)
 
-            # Notify sender if it was another agent
-            from_agent = task.get('from_agent')
-
-            if from_agent and from_agent not in ['manual', 'cli', 'auto_init', 'unknown', 'legacy', 'compaction_reload', 'compaction_resume', 'verify', 'watchdog']:
-                if not self._agent_alive(from_agent):
-                    self._log(f"ko response routing: '{from_agent}' not alive or invalid format — skipping")
-                else:
-                    try:
-                        MAX_CHUNK = 15000
-                        corr = task.get('correlation_id', '')
-
-                        if len(response) <= MAX_CHUNK:
-                            reply = {
-                                'response': response,
-                                'from_agent': self.agent_id,
-                                'type': 'response',
-                                'timestamp': int(time.time()),
-                                'complete': 'true'
-                            }
-                            if corr:
-                                reply['correlation_id'] = corr
-                            self.redis.xadd(f"{MA_PREFIX}:agent:{from_agent}:inbox", reply,
-                                            maxlen=IO_STREAM_MAXLEN, approximate=True)
-                        else:
-                            chunks = [response[i:i+MAX_CHUNK] for i in range(0, len(response), MAX_CHUNK)]
-                            for i, chunk in enumerate(chunks):
-                                reply = {
-                                    'response': chunk,
-                                    'from_agent': self.agent_id,
-                                    'type': 'response',
-                                    'timestamp': int(time.time()),
-                                    'chunk': f"{i+1}/{len(chunks)}",
-                                    'complete': 'true' if i == len(chunks)-1 else 'false'
-                                }
-                                if corr:
-                                    reply['correlation_id'] = corr
-                                self.redis.xadd(f"{MA_PREFIX}:agent:{from_agent}:inbox", reply,
-                                                maxlen=IO_STREAM_MAXLEN, approximate=True)
-
-                        self._log(f"ok -> response sent to {from_agent} ({len(response)} chars)")
-                    except Exception as e:
-                        self._log(f"ko response to {from_agent}: {e}")
-                        if self.metrics:
-                            self.metrics.record_error(self.agent_id, "SendError", str(e))
+            # La reponse canonique reste dans l'outbox, correlee si demande.
+            # Elle n'est jamais recopied automatiquement dans l'inbox d'un
+            # autre agent. Les evenements metier courts sont emis explicitement
+            # avec send.sh/done.sh.
 
             self._log(f"Response sent ({len(response)} chars)")
             self.tasks_completed += 1

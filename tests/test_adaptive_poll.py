@@ -122,7 +122,7 @@ class TestWaitForResponseAdaptive:
         assert elapsed < 5  # bien plus court que les ~6s de l'ancien poll fixe
 
     def test_no_false_positive_before_stability(self, monkeypatch):
-        """Le pane change en continu → pas de retour avant le timeout."""
+        """Le pane change en continu : le seuil ne fabrique pas de fin."""
         import agent as agent_mod
         a = _make_agent()
         monkeypatch.setattr(agent_mod, "STABLE_READY_SECS", 5.0)
@@ -137,7 +137,16 @@ class TestWaitForResponseAdaptive:
         monkeypatch.setattr(a, "_capture_pane", capture, raising=False)
         a._last_tail3_key = ''
 
-        start = time.time()
-        a._wait_for_response(timeout=1.5)
-        elapsed = time.time() - start
-        assert elapsed >= 1.4  # est allé jusqu'au timeout, pas de sortie anticipée
+        import threading
+        a.running = True
+        result = []
+        t = threading.Thread(
+            target=lambda: result.append(a._wait_for_response(timeout=0.5)),
+            daemon=True)
+        t.start()
+        time.sleep(1.0)
+        assert t.is_alive()
+        assert result == []
+        a.running = False
+        t.join(timeout=2)
+        assert result == ["__BRIDGE_STOPPED__"]
