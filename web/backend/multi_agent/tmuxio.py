@@ -1,5 +1,6 @@
 """Accès tmux/SSH : exécuteur dédié, capture de panes, parsing terminal (B1)."""
 
+import os
 import asyncio
 import concurrent.futures
 import re
@@ -26,6 +27,12 @@ async def _run_subprocess(cmd, **kwargs):
     )
 
 
+def _tmux_socket_path() -> str:
+    """Chemin du socket du serveur tmux par défaut (TMUX_TMPDIR/tmux-<uid>/default)."""
+    tmpdir = os.environ.get("TMUX_TMPDIR", "/tmp")
+    return os.path.join(tmpdir, f"tmux-{os.getuid()}", "default")
+
+
 async def _tmux_server_alive() -> bool:
     """True si le serveur tmux tourne déjà.
 
@@ -36,9 +43,15 @@ async def _tmux_server_alive() -> bool:
     écriture. Toute création de session depuis le backend doit donc être
     refusée tant qu'un serveur sain (démarré depuis un shell : infra.sh,
     agent.sh, scheduler) n'existe pas.
+
+    SANS INVOQUER tmux : TOUTE commande tmux (y compris `has-session`, la
+    version précédente de cette garde) crée le socket ET le serveur — la
+    vérification déclenchait elle-même l'empoisonnement, dans la fenêtre
+    infra.sh stop → auto-restart systemd → premier tick du cache (vécu :
+    serveur né dans le cgroup du service une seconde avant le start shell,
+    tous les agents en EROFS). On teste le SOCKET, sans effet de bord.
     """
-    result = await _run_subprocess(["tmux", "has-session"], text=True)
-    return result.returncode == 0
+    return os.path.exists(_tmux_socket_path())
 
 
 TMUX_SERVER_ABSENT_DETAIL = (
