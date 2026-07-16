@@ -44,12 +44,11 @@ async def _tmux_server_alive() -> bool:
     refusée tant qu'un serveur sain (démarré depuis un shell : infra.sh,
     agent.sh, scheduler) n'existe pas.
 
-    SANS INVOQUER tmux : TOUTE commande tmux (y compris `has-session`, la
-    version précédente de cette garde) crée le socket ET le serveur — la
-    vérification déclenchait elle-même l'empoisonnement, dans la fenêtre
-    infra.sh stop → auto-restart systemd → premier tick du cache (vécu :
-    serveur né dans le cgroup du service une seconde avant le start shell,
-    tous les agents en EROFS). On teste le SOCKET, sans effet de bord.
+    SANS INVOQUER tmux : TOUTE commande tmux (y compris `has-session`) crée
+    le socket ET le serveur — une garde à base de has-session déclenche
+    elle-même l'empoisonnement qu'elle doit empêcher (vécu : infra.sh stop →
+    auto-restart systemd → premier tick → serveur né sandboxé → EROFS).
+    On teste le SOCKET, sans effet de bord.
     """
     return os.path.exists(_tmux_socket_path())
 

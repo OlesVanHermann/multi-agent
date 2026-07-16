@@ -79,16 +79,26 @@ def test_reference_profile_json_stays_valid():
 
 
 def test_backend_never_spawns_first_tmux_server():
+    """La garde teste le SOCKET, jamais `tmux has-session` nu : TOUTE commande
+    tmux (has-session comprise) crée le socket ET le serveur — une garde à
+    base de has-session provoque elle-même l'empoisonnement qu'elle doit
+    empêcher (serveur né dans le namespace sandboxé → /home ro → EROFS)."""
     tmuxio = (ROOT / "web/backend/multi_agent/tmuxio.py").read_text()
     agents = (ROOT / "web/backend/multi_agent/routers/agents.py").read_text()
     config = (ROOT / "web/backend/multi_agent/routers/config.py").read_text()
     server = (ROOT / "web/backend/server.py").read_text()
+    assert "def _tmux_socket_path()" in tmuxio
     assert "async def _tmux_server_alive()" in tmuxio
+    assert "os.path.exists(_tmux_socket_path())" in tmuxio
+    assert '["tmux", "has-session"]' not in tmuxio
     assert "TMUX_SERVER_ABSENT_DETAIL" in tmuxio
     assert "not await _tmux_server_alive()" in agents
     assert "not await _tmux_server_alive()" in config
-    assert '["tmux", "has-session"]' in server
-    assert "_server_up.returncode != 0" in server
+    # server.py : le has-session -t <session> n'est exécuté QUE si le socket
+    # existe déjà ; jamais de `tmux has-session` sans cible.
+    assert '["tmux", "has-session"]' not in server
+    assert "os.path.exists(_tmux_socket_path())" in server
+    assert "if _server_up else None" in server
     assert "scheduler NON démarré" in server
 
 

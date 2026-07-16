@@ -80,17 +80,20 @@ async def lifespan(app: FastAPI):
     _crontab_script = cfg.BASE_DIR / "scripts" / "crontab-scheduler.py"
     _crontab_log = cfg.BASE_DIR / "logs" / "crontab-scheduler.log"
     try:
-        check = subprocess.run(
-            ["tmux", "has-session", "-t", _crontab_session],
-            capture_output=True, timeout=5
-        )
         # Jamais spawner le PREMIER serveur tmux depuis le backend : sous
         # l'unité durcie, il naîtrait dans le namespace sandboxé et /home
         # serait read-only pour TOUTES les sessions futures (agents compris).
-        # Même contrat que start_keepalive/_agent_lifecycle (tmuxio).
-        _server_up = subprocess.run(["tmux", "has-session"],
-                                    capture_output=True, timeout=5)
-        if check.returncode != 0 and _server_up.returncode != 0:
+        # SANS INVOQUER tmux : toute commande tmux (has-session comprise)
+        # crée le socket ET le serveur — la version précédente de cette garde
+        # provoquait elle-même l'empoisonnement au premier démarrage du
+        # backend après un infra.sh stop. On teste le SOCKET (tmuxio).
+        from multi_agent.tmuxio import _tmux_socket_path
+        _server_up = os.path.exists(_tmux_socket_path())
+        check = subprocess.run(
+            ["tmux", "has-session", "-t", _crontab_session],
+            capture_output=True, timeout=5
+        ) if _server_up else None
+        if not _server_up:
             print("WARNING: serveur tmux absent — scheduler NON démarré par le "
                   "backend (sandbox). Le démarrer depuis un shell : "
                   "voir scripts/crontab-scheduler.py (en-tête).")
