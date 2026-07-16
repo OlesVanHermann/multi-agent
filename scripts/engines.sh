@@ -136,7 +136,10 @@ engine_codex_effort_digit() {
 #          Le chiffre du modèle est PARSÉ dans le pane (l'ordre de la liste
 #          change entre versions) ; modèle vide → entrée « (current) ».
 engine_apply_model_effort() {
-    local session="$1" cli="$2" model="$3" effort="$4"
+    # Le dashboard affiche H quand aucun fichier .effort n'existe. Le moteur
+    # doit utiliser le même défaut, sinon Codex tombait silencieusement sur M
+    # (high) tandis que l'interface annonçait H (xhigh / Extra high).
+    local session="$1" cli="$2" model="$3" effort="${4:-H}"
     local target="${session}:0.0"
     case "$cli" in
         claude)
@@ -205,8 +208,8 @@ engine_apply_model_effort() {
                 return 1
             fi
             local lvl_digit
-            lvl_digit=$(engine_codex_effort_digit "${effort:-M}")
-            tmux send-keys -t "$target" -l "${lvl_digit:-3}"
+            lvl_digit=$(engine_codex_effort_digit "$effort")
+            tmux send-keys -t "$target" -l "${lvl_digit:-4}"
             sleep 1
             ;;
     esac

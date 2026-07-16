@@ -155,6 +155,14 @@ class TestEffortCommand:
     def test_empty_effort_emits_nothing(self):
         assert sh('engine_effort_level codex ""', check_rc=True).stdout.strip() == ''
 
+    def test_apply_defaults_to_h_when_effort_file_is_absent(self):
+        """Le backend affiche H sans default.effort : la couche moteur doit
+        donc normaliser une valeur absente vers H, jamais vers M/high."""
+        source = open(ENGINES_SH).read()
+        assert 'effort="${4:-H}"' in source
+        assert 'engine_codex_effort_digit "${effort:-M}"' not in source
+        assert '"${lvl_digit:-4}"' in source
+
     def test_apply_function_is_shared(self):
         """Une seule danse TUI, partagée par agent.sh, infra.sh et le backend."""
         assert 'engine_apply_model_effort()' in open(ENGINES_SH).read()
