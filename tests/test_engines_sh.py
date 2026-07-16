@@ -163,6 +163,10 @@ class TestEffortCommand:
         assert 'engine_codex_effort_digit "${effort:-M}"' not in source
         assert '"${lvl_digit:-4}"' in source
 
+    def test_fresh_clone_has_explicit_h_default(self):
+        path = os.path.join(BASE_DIR, 'prompts', 'default.effort')
+        assert open(path).read().strip() == 'H'
+
     def test_apply_function_is_shared(self):
         """Une seule danse TUI, partagée par agent.sh, infra.sh et le backend."""
         assert 'engine_apply_model_effort()' in open(ENGINES_SH).read()

@@ -47,6 +47,10 @@ Le dashboard conserve trois niveaux neutres dans les fichiers `.effort` :
 | `M` | `high` |
 | `H` | `xhigh` / Extra high |
 
+Les nouveaux clones livrent `prompts/default.effort` à `H`. Sur un projet
+existant, `upgrade.sh` préserve `prompts/` et ne crée ni ne remplace ce fichier :
+l'absence reste néanmoins interprétée comme `H` par l'interface et le moteur.
+
 Avant le chargement du prompt agent, Claude reçoit `/model <identifiant>` puis
 `/effort <niveau>`. Codex CLI 0.144.4 est piloté par le picker `/model`, qui
 sélectionne successivement le modèle puis le niveau de raisonnement : les
