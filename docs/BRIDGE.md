@@ -208,6 +208,10 @@ Toute autre ligne stdin est traitée comme un prompt local (`from_agent=manual`)
 | `RETRY_BACKOFF_SECS` | `10` | Backoff entre retries après erreur API |
 | `IO_STREAM_MAXLEN` | `10000` | Borne des streams inbox/outbox (A3) |
 | `AGENT_HEALTH_PORT_BASE` | `9100` | Port health = base + id numérique |
+
+Le timeout peut être réglé par agent avec `prompts/<agent>.timeout` (ou dans
+son répertoire mono/x45/z21), puis `prompts/default.timeout` en fallback.
+Valeur acceptée : entier de 30 à 86400 secondes ; absence = défaut bridge 300 s.
 | `HEALTH_TOKEN` | vide | Token du endpoint `/health` (vide = tout refusé) |
 | `VERIFY_MAX_RETRIES` | `3` | V3 : budget de retries verify par tâche |
 | `VERIFY_TIMEOUT` | `600` | V3 : timeout (s) d'un `verify_cmd` |

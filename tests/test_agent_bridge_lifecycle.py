@@ -15,6 +15,14 @@ from queue import Queue, Empty
 from collections import deque
 from pathlib import Path
 
+
+def test_auto_init_is_queued_before_redis_delivery():
+    """Le listener attend que run() ait mis l'identité dans la queue."""
+    source = (Path(__file__).resolve().parents[1] / "scripts" / "agent-bridge" / "agent.py").read_text()
+    assert "self._auto_init_queued = threading.Event()" in source
+    assert "_gate.wait(timeout=30)" in source
+    assert "self._auto_init_queued.set()" in source
+
 _BASE = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 sys.path.insert(0, os.path.join(_BASE, 'core', 'agent-bridge'))
 

@@ -168,6 +168,20 @@ class TestEffortCommand:
         assert 'engine_effort_slash' not in source
 
 
+class TestPerAgentResponseTimeout:
+    def test_timeout_is_validated_before_shell_injection(self):
+        source = open(AGENT_SH).read()
+        assert "resolve_agent_timeout()" in source
+        assert "[[ ! \"$value\" =~ ^[0-9]+$ ]]" in source
+        assert '[ "$value" -lt 30 ]' in source
+        assert '[ "$value" -gt 86400 ]' in source
+        assert source.count('resolve_agent_timeout "$agent_id"') == 2
+
+    def test_bridge_receives_validated_timeout(self):
+        source = open(AGENT_SH).read()
+        assert "RESPONSE_TIMEOUT='$AGENT_TIMEOUT'" in source
+
+
 class TestLaunchCmd:
     def test_claude_command_is_byte_identical_to_v3(self):
         """RÉGRESSION : la commande claude doit rester CELLE de v3.0.13."""
