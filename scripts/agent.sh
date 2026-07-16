@@ -281,8 +281,14 @@ start_single() {
 
     # Prompt injection is handled by the bridge (agent.py auto-init)
 
+    # Timeout de réponse par agent : prompts/{dir}/{id}.timeout > prompts/{id}.timeout
+    # > défaut bridge (300 s). Les devs codex sur tâches longues dépassent 300 s :
+    # le bridge renvoyait alors un pane tronqué comme « réponse » au master.
+    local AGENT_TIMEOUT
+    AGENT_TIMEOUT=$(resolve_config "$agent_id" "timeout")
+
     tmux new-window -t "$SESSION_NAME" -n bridge
-    tmux send-keys -t "$SESSION_NAME:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX='$MA_PREFIX' AGENT_CLI='$CLI' REDIS_PASSWORD='${REDIS_PASSWORD:-}' REDIS_PORT='${REDIS_PORT:-6379}' HEALTH_TOKEN='${HEALTH_TOKEN:-}' python3 '$BRIDGE_SCRIPT' '$agent_id' 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
+    tmux send-keys -t "$SESSION_NAME:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX='$MA_PREFIX' AGENT_CLI='$CLI' ${AGENT_TIMEOUT:+RESPONSE_TIMEOUT='$AGENT_TIMEOUT' }REDIS_PASSWORD='${REDIS_PASSWORD:-}' REDIS_PORT='${REDIS_PORT:-6379}' HEALTH_TOKEN='${HEALTH_TOKEN:-}' python3 '$BRIDGE_SCRIPT' '$agent_id' 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
     tmux select-window -t "$SESSION_NAME:0"
 
     log_ok "Agent $agent_id started: $SESSION_NAME ($CLI)"
@@ -454,8 +460,10 @@ start_all() {
                     log_warn "  $agent_id: application modèle/effort incomplète"
 
                 # Start bridge in second window
+                local AGENT_TIMEOUT
+                AGENT_TIMEOUT=$(resolve_config "$agent_id" "timeout")
                 tmux new-window -t "$SESSION" -n bridge
-                tmux send-keys -t "$SESSION:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX='$MA_PREFIX' AGENT_CLI='$CLI' REDIS_PASSWORD='${REDIS_PASSWORD:-}' REDIS_PORT='${REDIS_PORT:-6379}' HEALTH_TOKEN='${HEALTH_TOKEN:-}' python3 '$BRIDGE_SCRIPT' '$agent_id' 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
+                tmux send-keys -t "$SESSION:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX='$MA_PREFIX' AGENT_CLI='$CLI' ${AGENT_TIMEOUT:+RESPONSE_TIMEOUT='$AGENT_TIMEOUT' }REDIS_PASSWORD='${REDIS_PASSWORD:-}' REDIS_PORT='${REDIS_PORT:-6379}' HEALTH_TOKEN='${HEALTH_TOKEN:-}' python3 '$BRIDGE_SCRIPT' '$agent_id' 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
                 tmux select-window -t "$SESSION:0"
 
                 log_ok "  Agent $agent_id ready ($CLI)"

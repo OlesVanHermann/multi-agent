@@ -338,6 +338,12 @@ class TmuxAgent:
         self._inflight_ids = set()
         self._inflight_lock = Lock()
 
+        # A6 (fix ordonnancement 16/07) : les pending recovery du listener
+        # Redis partaient dans la queue AVANT le « deviens agent » d'auto-load
+        # (run()) — l'agent recevait sa tâche avant son identité. Le listener
+        # attend cet évènement, posé par run() une fois l'auto-init en queue.
+        self._auto_init_queued = threading.Event()
+
         # Logging
         self.log_dir = Path(LOG_DIR) / self.agent_id
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -914,6 +920,13 @@ class TmuxAgent:
         """
         group_ready = False
         pending_drained = False
+        # A6 : ne rien livrer avant que run() ait mis l'auto-init en queue —
+        # sinon les pending recovery doublent le « deviens agent ». Timeout de
+        # sécurité : on ne reste jamais bloqué si run() n'a rien à charger.
+        # getattr : les tests instancient sans __init__ (object.__new__).
+        _gate = getattr(self, "_auto_init_queued", None)
+        if _gate is not None and not _gate.wait(timeout=30):
+            self._log("WARNING: auto-init non signalé après 30s — drain pending quand même")
         try:
          while self.running:
             try:
@@ -1462,6 +1475,10 @@ class TmuxAgent:
                         'from_agent': 'auto_init',
                         'msg_id': f"init_resume_{int(time.time())}",
                     })
+
+        # A6 : l'auto-init (ou rien, si pas de prompt) est en queue — le
+        # listener Redis peut maintenant livrer pending et nouveaux messages.
+        self._auto_init_queued.set()
 
         try:
             import select
