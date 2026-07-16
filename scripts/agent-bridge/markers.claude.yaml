@@ -39,6 +39,9 @@ busy_markers: ['esc to interrupt']
 
 # Mode plan actif
 plan_mode: 'plan mode on'
+plan_mode_tail_lines: 3
+plan_mode_exclusions: []
+plan_mode_required: ''
 
 # Compaction de contexte
 compaction:

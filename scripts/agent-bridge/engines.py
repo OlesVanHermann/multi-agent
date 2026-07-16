@@ -332,7 +332,13 @@ def build_pane_eval(markers):
         + _bashes_block(markers)
         + _busy_block(markers, busy_re, prompt0) +
         f'if printf "%s" "$bp_line" | grep -qF {_q(markers["scroll_indicator"])}; then has_down=1; fi; '
-        f'if printf "%s" "$out" | grep -qF {_q(markers["plan_mode"])}; then plan_mode=1; fi; '
+        f'plan_scope=$(printf "%s" "$out" | tail -{int(markers.get("plan_mode_tail_lines", 3))}); '
+        f'if printf "%s" "$plan_scope" | awk -v marker={_q(markers["plan_mode"])} '
+        + "'{ line=$0; sub(/^[[:space:]]+/, \"\", line); if (index(line, marker) == 1) print }'"
+        + (f' | grep -F {_q(markers["plan_mode_required"])}'
+           if markers.get('plan_mode_required') else '')
+        + ''.join(f' | grep -vF {_q(x)}' for x in markers.get('plan_mode_exclusions', []))
+        + ' | grep -q .; then plan_mode=1; fi; '
         f'if printf "%s" "$out" | grep -qF {_q(markers["waiting_select"])}; then waiting_approval=1; fi; '
         f'if printf "%s" "$out" | grep -qiF {_q(markers["compaction"]["in_progress"])}; then compacted=1; fi; '
         f'if printf "%s" "$out" | grep -qiF {_q(markers["compaction"]["done"])}; then done_compacting=1; fi; '

@@ -97,6 +97,11 @@ context_pct_patterns:
 # Indicateur de mode de collaboration : « Plan mode ».
 # [Source: tui/src/bottom_pane/footer.rs:149 — CollaborationModeIndicator::Plan]
 plan_mode: 'Plan mode'
+# L'indicateur actif est dans le footer courant. La modale de suggestion
+# contient aussi les mots « Plan mode » mais ne représente pas le mode actif.
+plan_mode_tail_lines: 3
+plan_mode_exclusions: ['use Plan mode', 'Create a plan?']
+plan_mode_required: 'context left'
 
 # ── [D] Demande d'approbation ───────────────────────────────────────────────
 # « Would you like to run the following command? »

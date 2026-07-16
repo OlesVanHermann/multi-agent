@@ -132,7 +132,9 @@ class TestQueuedMessageWaitsIdle:
 
         # Attend le timeout (idle jamais atteint) au lieu de retourner tot.
         assert elapsed >= 1.4, f"retour premature en {elapsed:.2f}s"
-        assert result == pane  # fallback timeout = pane courant (inchange)
+        assert result.startswith("BRIDGE_TIMEOUT|")
+        assert pane not in result
+        assert "completion_unconfirmed=true" in result
         # Log unique, pas de spam.
         waits = [c for c in agent._log.call_args_list
                  if "waiting for idle" in str(c)]

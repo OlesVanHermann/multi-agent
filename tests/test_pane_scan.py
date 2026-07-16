@@ -358,6 +358,10 @@ CODEX_PANES = {
         f"{CODEX_COMPOSER}\n"
         "  Plan mode                                                  72% context left  \n"
     ),
+    'plan_mode_suggestion': (
+        "Create a plan?  shift + tab use Plan mode   esc dismiss\n"
+        f"{CODEX_COMPOSER}\n{CODEX_FOOTER_IDLE}\n"
+    ),
 
     # [Source: history_cell/notices.rs:213 — format!("■ {message}").red()]
     'api_error': (
@@ -468,6 +472,13 @@ class TestCodexSemantics:
 
     def test_plan_mode(self):
         assert self._st('plan_mode')['plan_mode'] is True
+
+    def test_plan_mode_suggestion_is_not_active_mode(self):
+        assert self._st('plan_mode_suggestion')['plan_mode'] is False
+
+    def test_plan_mode_in_old_scrollback_is_ignored(self):
+        pane = "Plan mode mentionné dans une ancienne réponse\n" + CODEX_PANES['idle']
+        assert run_bash_eval(MARKERS_CODEX, pane, 'codex', '300')['plan_mode'] is False
 
     def test_api_error(self):
         assert self._st('api_error')['api_error'] is True

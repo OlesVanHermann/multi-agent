@@ -109,6 +109,22 @@ def _next_poll_interval(current, changed):
         return POLL_MIN
     return min(current * 1.5, POLL_MAX)
 
+
+def _plan_mode_active(out, markers):
+    """Détecte uniquement l'indicateur actif, dans la zone UI récente.
+
+    Une suggestion ou une ancienne occurrence dans le scrollback ne doit pas
+    transformer l'état courant du TUI en mode plan.
+    """
+    scope = '\n'.join(out.splitlines()[-int(markers.get('plan_mode_tail_lines', 3)):])
+    marker = markers['plan_mode']
+    exclusions = markers.get('plan_mode_exclusions', [])
+    required = markers.get('plan_mode_required', '')
+    return any(line.lstrip().startswith(marker)
+               and (not required or required in line)
+               and not any(x in line for x in exclusions)
+               for line in scope.splitlines())
+
 # EF-003 : intervalle heartbeat enrichi (CA-004: toutes les 10s ± 2s)
 HEARTBEAT_INTERVAL = 10
 
@@ -224,7 +240,7 @@ def _parse_pane_state(out, pane_cmd, agent_id, process_names=None, busy_scope=No
         'busy': busy,
         'has_bashes': has_bashes,
         'has_down': m['scroll_indicator'] in bp_line,
-        'plan_mode': m['plan_mode'] in out,
+        'plan_mode': _plan_mode_active(out, m),
         'waiting_approval': m['waiting_select'] in out,
         'compacted': bool(re.search(re.escape(m['compaction']['in_progress']), out, re.IGNORECASE)),
         'context_pct': ctx,
@@ -628,7 +644,8 @@ class TmuxAgent:
                 tail3_stable_since = time.time()
             stable_secs = time.time() - tail3_stable_since
 
-            at_normal_prompt = STATUS_LINE in tail3 or (PLAN_MODE in tail3 and stable_secs >= STABLE_PLAN_SECS)
+            at_normal_prompt = STATUS_LINE in tail3 or (
+                _plan_mode_active(current, MARKERS) and stable_secs >= STABLE_PLAN_SECS)
 
             current_lines = current.strip().split('\n')
             last_line = current_lines[-1].strip() if current_lines else ""
@@ -663,7 +680,14 @@ class TmuxAgent:
                     return response
 
         self._log("WARNING: Response timeout")
-        return self._capture_pane(100)
+        task = getattr(self, 'current_task', None) or {}
+        task_id = task.get('task_id') or task.get('msg_id', '')
+        correlation_id = task.get('correlation_id', '')
+        # Le scrollback reste accessible via tmux/logs pour le diagnostic, mais
+        # ne devient jamais une réponse canonique ni un faux succès.
+        return (f"BRIDGE_TIMEOUT|task_id={task_id}"
+                f"|correlation_id={correlation_id}"
+                "|submission_confirmed=true|completion_unconfirmed=true")
 
     def _run_claude(self, prompt):
         """Send prompt to Claude via tmux and capture response"""
