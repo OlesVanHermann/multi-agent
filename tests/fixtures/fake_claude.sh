@@ -32,11 +32,27 @@ clear_pane() {
 }
 
 count=0
+in_bridge_envelope=0
 show_prompt
 while IFS= read -r line; do
     [ -z "$line" ] && continue
-    count=$((count + 1))
     printf '%s\n' "$line" >> "$LOG"
+
+    # Le vrai TUI reçoit l'enveloppe multi-ligne et le prompt comme une seule
+    # soumission. Le faux CLI lit stdin ligne par ligne : ignorer les lignes de
+    # métadonnées évite de les compter comme autant de requêtes distinctes.
+    if [[ "$line" == "[ENVELOPPE BRIDGE"* ]]; then
+        in_bridge_envelope=1
+        continue
+    fi
+    if [ "$in_bridge_envelope" -eq 1 ]; then
+        if [ "$line" = "[FIN ENVELOPPE]" ]; then
+            in_bridge_envelope=0
+        fi
+        continue
+    fi
+
+    count=$((count + 1))
     sleep "$DELAY"
 
     case "$SCENARIO" in
