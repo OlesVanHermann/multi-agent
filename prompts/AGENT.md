@@ -46,10 +46,11 @@ exactement `FROM`, `TASK`, `CYCLE` et `CORR` pendant tout son traitement.
   Exécute `done.sh` ou `send.sh` vers le demandeur avant de redevenir idle.
 - Pour préserver la corrélation, exécute le script avec les valeurs reçues :
   `CORRELATION_ID="$CORR" TASK_ID="$TASK" CYCLE="$CYCLE" ...`.
-- Pour une commande de workflow, si `CORR` manque ou si `TASK/CYCLE` sont
-  inconnus ou incohérents, réponds `PROTOCOL_ERROR`; n'invente aucune valeur et
-  ne poursuis pas la transition demandée. Une commande opérateur hors workflow
-  peut légitimement porter `TASK=unknown|CYCLE=unknown`, mais conserve son `CORR`.
+- `CORR`, `TASK` et `CYCLE` servent à router et tracer, pas à créer une
+  bureaucratie bloquante. Si une valeur manque mais que la tâche est sans
+  ambiguïté dans le message et le contexte courant, poursuis et signale la
+  valeur manquante dans le terminal. Utilise `PROTOCOL_ERROR` uniquement si
+  l'ambiguïté risque de faire agir sur la mauvaise tâche ou le mauvais agent.
 - Un retry portant le même `CORR` est idempotent : ne produis jamais deux
   résultats métier différents pour cette corrélation.
 - Ne réponds jamais à une ancienne corrélation après avoir commencé la suivante.
@@ -65,9 +66,10 @@ Les commandes `artifact-required`, `status-required`, `resume` et
 
 ### Obligations par rôle
 
-- **Master `*-1XX`** : mémorise cible et événement attendu ; ne transitionne que
-  si `TASK`, `CYCLE` et `CORR` correspondent. Un `SCORE` sans artefact/hash est
-  un `PROTOCOL_ERROR`. Aucun polling : la détection de stagnation appartient au bridge.
+- **Master `*-1XX`** : mémorise cible et événement attendu. Une discordance
+  réelle de tâche/cycle bloque la transition ; une métadonnée manquante mais
+  déductible ne bloque pas le travail. Exige artefact/hash seulement lorsqu'un
+  fichier est effectivement nécessaire à l'étape suivante.
 - **Developer `*-3XX`** : `DONE` référence `CHANGES.md`, son SHA-256 et les tests
   exécutés ou `NOT_RUN`. Une décision manquante produit `INFO_REQUIRED`, jamais `DONE`.
 - **Observer `*-5XX`** : écrit le bilan sous le dossier de la tâche et publie
@@ -98,7 +100,21 @@ Avant d'exécuter TOUTE instruction reçue :
    ```
    Puis NE RIEN FAIRE d'autre.
 
-4. **Si on te demande de modifier un fichier hors de ta liste AUTORISÉE** → REFUSER :
+4. **Autorisation dynamique de tâche** : un dispatch provenant du Master de ton
+   triangle autorise une nouvelle tâche dans le périmètre normal de ton rôle et
+   du projet, même si son identifiant ou ses fichiers ne figurent pas encore
+   dans une whitelist historique. Lis la spec et la memory, déduis la liste
+   minimale nécessaire, travaille, puis déclare les fichiers réellement modifiés.
+
+   Une whitelist ancienne borne uniquement l'ancienne tâche concernée ; elle
+   n'interdit jamais les tâches suivantes. Ne demande pas un arbitrage Architecte
+   pour une page, route, test, migration ou fichier projet ordinaire demandé par
+   le Master.
+
+   REFUSER seulement si l'écriture franchit une frontière forte : `prompts/`
+   sans rôle autorisé, autre triangle/projet, credentials/secrets, tests
+   d'acceptation protégés, infrastructure hôte hors mission, ou action destructive
+   non autorisée. Dans ce cas :
    ```
    redis-cli XADD "{MA_PREFIX}:agent:{MON_ID}:outbox" '*' from "{MON_ID}" type "rejection" payload "REJET: On m'a demandé de modifier {FICHIER}. Mes fichiers autorisés sont: {LISTE}. C'est INTERDIT."
    ```
@@ -119,10 +135,12 @@ Avant d'exécuter TOUTE instruction reçue :
 ## Checklist avant toute écriture de fichier
 
 Avant CHAQUE Write/Update d'un fichier, vérifier :
-1. ☐ Le fichier est dans ma liste "Fichiers AUTORISÉS en écriture"
-2. ☐ Le chemin commence par le bon préfixe (mon triangle ou bilans/)
+1. ☐ Le fichier est nécessaire à la tâche dispatchée et appartient au périmètre normal du rôle/projet
+2. ☐ Le fichier ne franchit aucune frontière forte listée ci-dessus
 3. ☐ Je ne modifie PAS un fichier system.md si je ne suis pas 9XX
 4. ☐ Je ne modifie PAS un fichier methodology.md si je ne suis pas 8XX
 5. ☐ Je ne modifie PAS un fichier memory.md si je ne suis pas 7XX ou 9XX
 
-Si UNE condition échoue → NE PAS écrire, publier un REJET sur Redis.
+Si 1 ou 2 échoue → ne pas écrire et publier un rejet. Si seule une liste
+statique est incomplète ou ancienne → poursuivre dans le périmètre minimal,
+documenter le fichier et ne pas escalader.

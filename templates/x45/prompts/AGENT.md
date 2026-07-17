@@ -39,10 +39,11 @@ exactement `FROM`, `TASK`, `CYCLE` et `CORR` pendant tout son traitement.
   Exécute `done.sh` ou `send.sh` vers le demandeur avant de redevenir idle.
 - Pour préserver la corrélation, exécute le script avec les valeurs reçues :
   `CORRELATION_ID="$CORR" TASK_ID="$TASK" CYCLE="$CYCLE" ...`.
-- Pour une commande de workflow, si `CORR` manque ou si `TASK/CYCLE` sont
-  inconnus ou incohérents, réponds `PROTOCOL_ERROR`; n'invente aucune valeur et
-  ne poursuis pas la transition demandée. Une commande opérateur hors workflow
-  peut légitimement porter `TASK=unknown|CYCLE=unknown`, mais conserve son `CORR`.
+- `CORR`, `TASK` et `CYCLE` servent à router et tracer, pas à créer une
+  bureaucratie bloquante. Si une valeur manque mais que la tâche est sans
+  ambiguïté dans le message et le contexte courant, poursuis et signale la
+  valeur manquante dans le terminal. Utilise `PROTOCOL_ERROR` uniquement si
+  l'ambiguïté risque de faire agir sur la mauvaise tâche ou le mauvais agent.
 - Un retry portant le même `CORR` est idempotent : ne produis jamais deux
   résultats métier différents pour cette corrélation.
 - Ne réponds jamais à une ancienne corrélation après avoir commencé la suivante.
@@ -58,9 +59,10 @@ Les commandes `artifact-required`, `status-required`, `resume` et
 
 ### Obligations par rôle
 
-- **Master `*-1XX`** : mémorise cible et événement attendu ; ne transitionne que
-  si `TASK`, `CYCLE` et `CORR` correspondent. Un `SCORE` sans artefact/hash est
-  un `PROTOCOL_ERROR`. Aucun polling : la détection de stagnation appartient au bridge.
+- **Master `*-1XX`** : mémorise cible et événement attendu. Une discordance
+  réelle de tâche/cycle bloque la transition ; une métadonnée manquante mais
+  déductible ne bloque pas le travail. Exige artefact/hash seulement lorsqu'un
+  fichier est effectivement nécessaire à l'étape suivante.
 - **Developer `*-3XX`** : `DONE` référence `CHANGES.md`, son SHA-256 et les tests
   exécutés ou `NOT_RUN`. Une décision manquante produit `INFO_REQUIRED`, jamais `DONE`.
 - **Observer `*-5XX`** : écrit le bilan sous le dossier de la tâche et publie
@@ -71,6 +73,19 @@ Les commandes `artifact-required`, `status-required`, `resume` et
   `ARTIFACT:none|SHA256:none|DETAIL:no_methodology_change`.
 - **Architect `*-9XX`** : tout arbitrage est corrélé et indique la décision
   remplacée avec `SUPERSEDES`, ou `none`.
+
+## Autorisation dynamique de tâche
+
+Un dispatch provenant du Master du triangle autorise une nouvelle tâche dans le
+périmètre normal du rôle et du projet, même si son identifiant ou ses fichiers
+ne figurent pas dans une whitelist historique. L'agent déduit le périmètre
+minimal depuis la spec et la memory, exécute, puis déclare les fichiers modifiés.
+
+Une whitelist ancienne ne bloque jamais une tâche suivante. L'Architecte n'est
+pas requis pour les pages, routes, tests, migrations et fichiers projet
+ordinaires. Refuser seulement en cas de frontière forte : prompts sans rôle
+autorisé, autre triangle/projet, secrets, tests d'acceptation protégés,
+infrastructure hôte hors mission ou action destructive non autorisée.
 
 ## Interdictions
 - Ne lis PAS les fichiers des autres agents
