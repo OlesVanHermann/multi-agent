@@ -940,6 +940,7 @@ class TmuxAgent:
                 'msg_id': msg_id,
                 'ack_id': msg_id,
                 'correlation_id': data.get('correlation_id', ''),
+                'cycle': data.get('cycle', ''),
                 # V3 — absents = comportement v2 inchangé
                 'verify_cmd': data.get('verify_cmd', ''),
                 'task_id': data.get('task_id', ''),
@@ -1163,7 +1164,18 @@ class TmuxAgent:
             else:
                 # Run prompt
                 try:
-                    response = self._run_claude(task['prompt'])
+                    delivered_prompt = task['prompt']
+                    if task.get('source') == 'redis':
+                        delivered_prompt = (
+                            "[ENVELOPPE BRIDGE — recopier ces valeurs dans toute réponse métier]\n"
+                            f"FROM={task.get('from_agent', 'unknown')}\n"
+                            f"TASK={task.get('task_id', '') or 'unknown'}\n"
+                            f"CYCLE={task.get('cycle', '') or 'unknown'}\n"
+                            f"CORR={task.get('correlation_id', '') or 'legacy'}\n"
+                            "[FIN ENVELOPPE]\n\n"
+                            f"{task['prompt']}"
+                        )
+                    response = self._run_claude(delivered_prompt)
                 except Exception as e:
                     self._log(f"ERROR running Claude: {e}")
                     if self.metrics:
@@ -1194,6 +1206,7 @@ class TmuxAgent:
                     'msg_id': task.get('msg_id', ''),
                     'ack_id': task.get('ack_id'),
                     'correlation_id': task.get('correlation_id', ''),
+                    'cycle': task.get('cycle', ''),
                     # V3 : le retry API ne doit pas faire perdre le gate verify
                     'verify_cmd': task.get('verify_cmd', ''),
                     'task_id': task.get('task_id', ''),
@@ -1276,6 +1289,7 @@ class TmuxAgent:
                     'msg_id': f"resume2_{int(time.time())}",
                     'ack_id': task.get('ack_id'),
                     'correlation_id': task.get('correlation_id', ''),
+                    'cycle': task.get('cycle', ''),
                     # V3 : la reprise post-compaction conserve le gate verify
                     'verify_cmd': task.get('verify_cmd', ''),
                     'task_id': task.get('task_id', ''),
@@ -1313,6 +1327,7 @@ class TmuxAgent:
                             'msg_id': task.get('msg_id', ''),
                             'ack_id': task.get('ack_id'),
                             'correlation_id': task.get('correlation_id', ''),
+                            'cycle': task.get('cycle', ''),
                             'verify_cmd': task['verify_cmd'],
                             'task_id': task.get('task_id', ''),
                             'deadline': task.get('deadline', ''),

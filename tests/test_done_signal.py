@@ -102,6 +102,9 @@ class TestDoneShIntegration:
             env = dict(os.environ)
             env['MA_PREFIX'] = prefix
             env['FROM_AGENT'] = '300'
+            env['CORRELATION_ID'] = 'corr-a7'
+            env['TASK_ID'] = 'task-a7'
+            env['CYCLE'] = '3'
             env.pop('TMUX', None)
             result = subprocess.run(
                 ['bash', _DONE_SH, '100', 'SCORE', '85', 'qualité OK'],
@@ -114,12 +117,18 @@ class TestDoneShIntegration:
             assert data['to'] == '100'
             assert data['signal'] == 'SCORE 85 qualité OK'
             assert data['origin'] == 'agent'  # V3 : signal consultatif
+            assert data['correlation_id'] == 'corr-a7'
+            assert data['task_id'] == 'task-a7'
+            assert data['cycle'] == '3'
 
             inbox_entries = r.xrange(inbox)
             assert len(inbox_entries) == 1
             _, msg = inbox_entries[0]
             assert msg['prompt'] == 'FROM:300|SCORE 85 qualité OK'
             assert msg['from_agent'] == '300'
+            assert msg['correlation_id'] == 'corr-a7'
+            assert msg['task_id'] == 'task-a7'
+            assert msg['cycle'] == '3'
 
             # exit code: 0 si la cible tourne, sinon ko (orphan queue) —
             # ici pas de tmux cible, le message doit quand même être délivré

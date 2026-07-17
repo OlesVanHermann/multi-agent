@@ -71,6 +71,19 @@ if [ -z "$MESSAGE" ]; then
 fi
 
 TIMESTAMP=$(date +%s)
+CORRELATION_ID="${CORRELATION_ID:-$(cat /proc/sys/kernel/random/uuid)}"
+TASK_ID="${TASK_ID:-}"
+CYCLE="${CYCLE:-}"
+
+# Compatibilité des prompts existants : extraire l'identité métier des formats
+# "start — task-id cycle N", "evaluate — ...", "artifact-required — ...".
+# Les variables explicites restent toujours prioritaires.
+if [ -z "$CYCLE" ] && [[ "$MESSAGE" =~ [Cc][Yy][Cc][Ll][Ee][[:space:]]+([0-9]+) ]]; then
+    CYCLE="${BASH_REMATCH[1]}"
+fi
+if [ -z "$TASK_ID" ] && [[ "$MESSAGE" =~ ^[^[:space:]]+[[:space:]]+[—-][[:space:]]+([^[:space:]]+) ]]; then
+    TASK_ID="${BASH_REMATCH[1]}"
+fi
 
 # ── Triangle auto-resolve (règle partagée : resolve_triangle_target, lib.sh) ──
 TO_AGENT=$(resolve_triangle_target "$FROM_AGENT" "$TO_AGENT" "$MA_PREFIX" "send.sh")
@@ -79,6 +92,9 @@ TO_AGENT=$(resolve_triangle_target "$FROM_AGENT" "$TO_AGENT" "$MA_PREFIX" "send.
 MSG_ID=$($REDIS_CLI XADD "${MA_PREFIX}:agent:${TO_AGENT}:inbox" MAXLEN '~' "${IO_STREAM_MAXLEN:-10000}" '*' \
     prompt "$MESSAGE" \
     from_agent "$FROM_AGENT" \
+    correlation_id "$CORRELATION_ID" \
+    task_id "$TASK_ID" \
+    cycle "$CYCLE" \
     timestamp "$TIMESTAMP" 2>/dev/null)
 
 if [ -z "$MSG_ID" ]; then
@@ -91,4 +107,4 @@ if ! tmux has-session -t "${MA_PREFIX}-agent-${TO_AGENT}" 2>/dev/null; then
     exit 1
 fi
 
-echo "ok: $TO_AGENT $MSG_ID"
+echo "ok: $TO_AGENT $MSG_ID corr=$CORRELATION_ID"

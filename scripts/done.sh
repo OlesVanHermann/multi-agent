@@ -87,6 +87,9 @@ fi
 TO_AGENT=$(resolve_triangle_target "$FROM_AGENT" "$TO_AGENT" "$MA_PREFIX" "done.sh")
 
 TIMESTAMP=$(date +%s)
+CORRELATION_ID="${CORRELATION_ID:-}"
+TASK_ID="${TASK_ID:-}"
+CYCLE="${CYCLE:-}"
 
 # 1. Audit : stream de complétion dédié
 # V3 : origin=agent — sur une tâche à verify_cmd, ce signal est consultatif ;
@@ -96,12 +99,18 @@ $REDIS_CLI XADD "${MA_PREFIX}:completion" MAXLEN '~' "${STREAM_MAXLEN:-1000}" '*
     to "$TO_AGENT" \
     signal "$SIGNAL" \
     origin "agent" \
+    correlation_id "$CORRELATION_ID" \
+    task_id "$TASK_ID" \
+    cycle "$CYCLE" \
     timestamp "$TIMESTAMP" >/dev/null 2>&1
 
 # 2. Délivrance : inbox de la cible
 MSG_ID=$($REDIS_CLI XADD "${MA_PREFIX}:agent:${TO_AGENT}:inbox" MAXLEN '~' "${IO_STREAM_MAXLEN:-10000}" '*' \
     prompt "FROM:${FROM_AGENT}|${SIGNAL}" \
     from_agent "$FROM_AGENT" \
+    correlation_id "$CORRELATION_ID" \
+    task_id "$TASK_ID" \
+    cycle "$CYCLE" \
     timestamp "$TIMESTAMP" 2>/dev/null)
 
 if [ -z "$MSG_ID" ]; then

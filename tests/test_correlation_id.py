@@ -49,10 +49,13 @@ class TestBridgePropagation:
 
         agent._handle_inbox_message("1-0", {
             "prompt": "hello", "from_agent": "100",
-            "correlation_id": "abc-123"})
+            "correlation_id": "abc-123", "task_id": "task-9",
+            "cycle": "4"})
 
         task = agent.prompt_queue.get(timeout=1)
         assert task['correlation_id'] == "abc-123"
+        assert task['task_id'] == "task-9"
+        assert task['cycle'] == "4"
 
     def test_missing_correlation_id_defaults_empty(self):
         from agent import TmuxAgent
