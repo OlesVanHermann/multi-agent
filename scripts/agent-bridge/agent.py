@@ -524,7 +524,11 @@ class TmuxAgent:
         # A2: adaptive loop — exit as soon as the input line is clear,
         # resend Enter on an escalating cadence (1/2/4/8s), same ~15s budget.
         target_pane = f"{self.session_name}:0"
-        check_snippet = text[:40] if len(text) > 40 else text
+        # cursor_y est relatif au viewport tmux, pas au scrollback. Vérifier la
+        # fin du texte (située près du curseur même quand le composer replie un
+        # long message), dans une capture du viewport uniquement.
+        visible_tail = ' '.join(text.rstrip().splitlines()[-2:]).strip()
+        check_snippet = visible_tail[-16:] if len(visible_tail) > 16 else visible_tail
         deadline = time.time() + SEND_KEYS_BUDGET
         resend_delay = 1.0
         next_resend = time.time() + resend_delay
@@ -536,7 +540,11 @@ class TmuxAgent:
                     ["tmux", "display-message", "-t", target_pane, "-p", "#{cursor_y}"],
                     capture_output=True, text=True
                 ).stdout.strip()
-                lines = self._capture_pane(50).split('\n')
+                viewport = subprocess.run(
+                    ["tmux", "capture-pane", "-t", target_pane, "-p"],
+                    capture_output=True, text=True
+                ).stdout
+                lines = viewport.split('\n')
                 cursor_line = lines[int(cy)] if cy.isdigit() and int(cy) < len(lines) else ''
             except Exception:
                 cursor_line = ''

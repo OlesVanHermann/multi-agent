@@ -78,6 +78,8 @@ class TestSendKeysAdaptive:
 
         def fake_run(cmd, **kw):
             calls.append(cmd)
+            if "capture-pane" in cmd:
+                return MagicMock(stdout="hello world\n", returncode=0)
             return MagicMock(stdout="0\n", returncode=0)
 
         monkeypatch.setattr(agent_mod.subprocess, "run", fake_run)
@@ -95,6 +97,33 @@ class TestSendKeysAdaptive:
         enters = [c for c in calls if c[:3] == ["tmux", "send-keys", "-t"] and c[-1] == "Enter"]
         # 1 Enter initial + renvois à ~1s puis ~3s
         assert len(enters) >= 3
+
+    def test_checks_viewport_and_tail_for_wrapped_message(self, monkeypatch):
+        """Le curseur tmux est relatif au viewport et pointe près de la fin
+        d'un long message replié, pas sur ses 40 premiers caractères."""
+        import agent as agent_mod
+        a = _make_agent()
+        calls = []
+        text = "prefix " + ("x" * 80) + " unique-message-tail"
+
+        def fake_run(cmd, **kw):
+            calls.append(cmd)
+            if "display-message" in cmd:
+                return MagicMock(stdout="1\n", returncode=0)
+            if "capture-pane" in cmd:
+                return MagicMock(stdout="old scrollback\nunique-message-tail\n", returncode=0)
+            return MagicMock(stdout="", returncode=0)
+
+        monkeypatch.setattr(agent_mod.subprocess, "run", fake_run)
+        monkeypatch.setattr(agent_mod, "SEND_KEYS_BUDGET", 1.5)
+        monkeypatch.setattr(agent_mod, "POLL_MAX", 0.2)
+        a._send_keys(text)
+
+        captures = [c for c in calls if "capture-pane" in c]
+        assert captures
+        assert all("-S" not in c for c in captures)
+        enters = [c for c in calls if c[:3] == ["tmux", "send-keys", "-t"] and c[-1] == "Enter"]
+        assert len(enters) >= 2
 
 
 class TestWaitForResponseAdaptive:
