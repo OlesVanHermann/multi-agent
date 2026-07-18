@@ -528,16 +528,38 @@ class TmuxAgent:
 
         NOTE: No Ctrl-C — it would interrupt Claude's thinking/execution.
         Ctrl-U clears the input line safely without interrupting.
+
+        Le texte transite par stdin + buffer tmux, jamais comme argument de
+        ``send-keys -l``. Cela évite ARG_MAX et garantit un collage atomique en
+        mode bracketed-paste pour les prompts longs/multilignes. Les lignes
+        vides externes sont retirées : elles n'ont pas de valeur métier et une
+        fin composée uniquement de retours ligne peut empêcher certains TUI de
+        considérer l'Enter suivant comme une soumission.
         """
         target = f"{self.session_name}:0"
+
+        text = str(text).replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+        if not text:
+            self._log("Empty prompt after newline normalization — not submitted")
+            return
 
         subprocess.run(["tmux", "send-keys", "-t", target, "C-u"], capture_output=True)
         time.sleep(0.3)
 
-        subprocess.run(
-            ["tmux", "send-keys", "-t", target, "-l", text],
-            capture_output=True
+        buffer_name = f"ma-{self.agent_id}-{threading.get_ident()}-{time.time_ns()}"
+        loaded = subprocess.run(
+            ["tmux", "load-buffer", "-b", buffer_name, "-"],
+            input=text, text=True, capture_output=True
         )
+        if loaded.returncode != 0:
+            raise RuntimeError(f"tmux load-buffer failed: {loaded.stderr.strip()}")
+        pasted = subprocess.run(
+            ["tmux", "paste-buffer", "-p", "-d", "-b", buffer_name, "-t", target],
+            capture_output=True, text=True
+        )
+        if pasted.returncode != 0:
+            subprocess.run(["tmux", "delete-buffer", "-b", buffer_name], capture_output=True)
+            raise RuntimeError(f"tmux paste-buffer failed: {pasted.stderr.strip()}")
         time.sleep(1)
 
         subprocess.run(

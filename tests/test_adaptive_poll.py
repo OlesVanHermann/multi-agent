@@ -81,6 +81,36 @@ def _make_agent():
 
 
 class TestSendKeysAdaptive:
+    def test_long_multiline_uses_bracketed_paste_and_trims_outer_blank_lines(self, monkeypatch):
+        """Les gros prompts ne passent jamais dans argv de send-keys.
+
+        Les lignes vides internes sont préservées ; seules celles en tête/fin
+        sont retirées avant le collage atomique.
+        """
+        import agent as agent_mod
+        a = _make_agent()
+        calls = []
+        prompt = "\n\r\nligne 1\n\n" + ("x" * 200_000) + "\nligne finale\n\n"
+
+        def fake_run(cmd, **kw):
+            calls.append((cmd, kw))
+            if "display-message" in cmd:
+                return MagicMock(stdout="0\n", returncode=0)
+            if "capture-pane" in cmd:
+                return MagicMock(stdout="› \n", returncode=0)
+            return MagicMock(stdout="", stderr="", returncode=0)
+
+        monkeypatch.setattr(agent_mod.subprocess, "run", fake_run)
+        a._send_keys(prompt)
+
+        load = next((kw for cmd, kw in calls if "load-buffer" in cmd), None)
+        assert load is not None
+        assert load["input"].startswith("ligne 1\n\n")
+        assert load["input"].endswith("ligne finale")
+        assert len(load["input"]) > 200_000
+        assert any("paste-buffer" in cmd and "-p" in cmd for cmd, _ in calls)
+        assert not any("send-keys" in cmd and "-l" in cmd for cmd, _ in calls)
+
     def test_exits_quickly_when_submitted(self, monkeypatch):
         """L'input est soumis immédiatement → pas de palier fixe d'1s+."""
         import agent as agent_mod
