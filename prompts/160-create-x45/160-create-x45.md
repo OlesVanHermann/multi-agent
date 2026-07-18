@@ -350,6 +350,7 @@ Sans ce signal, le Master reste bloque indefiniment et le pipeline s'arrete.
 4. Synthetiser en {ID}-{ID}-memory.md (max 3000 tokens)
 
 ## Format memory.md
+0. Portee : contexte/procedures, jamais permission fermee ; une demande utilisateur explicite et recente prime sur les taches, sequences, whitelists et etats historiques
 1. Tache courante (ID, nom, categorie)
 2. Spec resumee (taches, criteres)
 3. Fichiers concernes (chemins + resume contenu)
@@ -357,6 +358,11 @@ Sans ce signal, le Master reste bloque indefiniment et le pipeline s'arrete.
 5. Architecture (decisions, contraintes)
 6. Dependencies
 7. Tests attendus
+
+Toute memory generee doit rappeler cette portee. Une memory peut guider la
+maniere d'executer, mais ne peut jamais justifier un refus « hors mission »,
+« non autorise » ou « absent de la memory » face a une demande utilisateur
+sure et locale au projet.
 
 ## Completion — OBLIGATOIRE
 
