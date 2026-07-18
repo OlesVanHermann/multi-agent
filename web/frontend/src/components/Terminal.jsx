@@ -178,11 +178,15 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
     }
     syncInFlightRef.current = true
     try {
-      await fetch(api(`api/agent/${agentId}/input`), {
+      const res = await fetch(api(`api/agent/${agentId}/input`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: value, previous: lastSentInput.current, submit: false })
       })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.detail || `HTTP ${res.status}`)
+      }
       lastSentInput.current = value
     } catch (err) {
       console.error('Sync error:', err)
@@ -247,11 +251,15 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       const message = input.trim()
       if (message) {
         log.action('submit', { agentId, len: message.length })
-        await fetch(api(`api/agent/${agentId}/input`), {
+        const res = await fetch(api(`api/agent/${agentId}/input`), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: message, previous: lastSentInput.current, submit: true })
         })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error(data.detail || `HTTP ${res.status}`)
+        }
       } else {
         // Empty input: just send Enter
         log.action('enter', { agentId })
@@ -262,6 +270,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       lastSentInput.current = ''
     } catch (err) {
       console.error('Submit error:', err)
+      alert(`Envoi impossible : ${err.message}`)
     } finally {
       setSending(false)
       requestAnimationFrame(() => {

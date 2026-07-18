@@ -391,8 +391,9 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
         data.text = _sanitize(data.text)
     if data.previous:
         data.previous = _sanitize(data.previous)
-    if data.text and len(data.text) > 20000:
-        raise HTTPException(status_code=400, detail="input too long (max 20000)")
+    max_length = 1_000_000 if data.submit else 20_000
+    if data.text and len(data.text) > max_length:
+        raise HTTPException(status_code=400, detail=f"input too long (max {max_length})")
     session_name = f"{cfg.MA_PREFIX}-agent-{agent_id}"
     target = f"{session_name}:0.0"
 
@@ -403,36 +404,37 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
             raise HTTPException(status_code=404, detail=f"Agent {agent_id} session not found")
 
         if data.submit:
-            # On submit: send Enter — the incremental sync already placed the text.
-            # Codex TUI : un Enter qui suit immédiatement la frappe est absorbé
-            # par la détection de collage (paste burst) et insère un retour à la
-            # ligne au lieu de soumettre. Même séquence que le bridge
-            # (agent.py _send_to_claude) : courte pause, Enter, vérification que
-            # la ligne du curseur s'est vidée, renvois bornés sinon. Sans effet
-            # pour Claude Code (la pause est imperceptible, l'Enter de renvoi
-            # tombe sur un composer déjà vide).
-            await asyncio.sleep(0.35)
+            # Soumission atomique : ne pas dependre d'une co-edition encore en
+            # vol. Le bracketed-paste preserve les prompts Markdown longs et la
+            # pause separe l'Enter de la rafale de collage detectee par Codex.
+            text = (data.text or "").strip("\n")
+            await _run_subprocess(["tmux", "send-keys", "-t", target, "C-u"], check=True)
+            buffer_name = f"ma-web-{agent_id}-{time.time_ns()}"
             await _run_subprocess(
-                ["tmux", "send-keys", "-t", target, "Enter"], check=True
+                ["tmux", "load-buffer", "-b", buffer_name, "-"],
+                input=text, text=True, check=True,
             )
-            snippet = (data.text or "")[:40]
-            for delay in (0.5, 1.0, 2.0):
+            await _run_subprocess(
+                ["tmux", "paste-buffer", "-p", "-d", "-b", buffer_name, "-t", target],
+                check=True,
+            )
+            await asyncio.sleep(0.75)
+            await _run_subprocess(["tmux", "send-keys", "-t", target, "Enter"], check=True)
+
+            tail = " ".join(text.splitlines()[-2:]).strip()
+            snippet = tail[-16:]
+            for delay in (0.75, 1.5, 3.0):
                 if not snippet:
                     break
                 await asyncio.sleep(delay)
                 try:
-                    cy = (await _run_subprocess(
-                        ["tmux", "display-message", "-t", target, "-p", "#{cursor_y}"],
-                        text=True,
-                    )).stdout.strip()
                     pane = (await _run_subprocess(
                         ["tmux", "capture-pane", "-t", target, "-p"], text=True,
-                    )).stdout.split("\n")
-                    cursor_line = pane[int(cy)] if cy.isdigit() and int(cy) < len(pane) else ""
+                    )).stdout
                 except Exception:
                     break
-                if snippet not in cursor_line:
-                    break  # soumis : le texte a quitté la ligne de saisie
+                if snippet not in pane:
+                    break
                 await _run_subprocess(
                     ["tmux", "send-keys", "-t", target, "Enter"], check=True
                 )
