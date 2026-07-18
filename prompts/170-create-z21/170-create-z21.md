@@ -1321,7 +1321,8 @@ Ce repertoire contient un triangle z21 complet (6 satellites × 3 fichiers + sym
 18. **JAMAIS oublier les weighted criteria** dans le Reviewer — adapter C2 au domaine
 19. **JAMAIS oublier git commit avant DONE** dans le Dev template
 20. **JAMAIS utiliser json.dumps() sur JSONB params asyncpg** — documenter dans Dev + Tester + Reviewer
-21. **TOUJOURS ajouter les 2 lignes INTERDIT** en tete de CHAQUE system.md cree : (a) sleep en background interdit (b) tmux capture-pane en boucle interdit
+21. **TOUJOURS ajouter le contrat événementiel complet** en tête de CHAQUE system.md créé : après dispatch rendre la main ; aucun contrôle post-dispatch ni timeout de complétion ; communication via `send.sh`/`done.sh`.
+21b. **TOUJOURS ajouter à chaque memory.md** : contexte non bloquant, jamais whitelist ; instruction utilisateur claire exécutable sans TASK/CYCLE/CORR ; methodology adaptable ; aucune réponse Redis vers `cli`.
 22. **TOUJOURS ajouter la ligne Agent 140 (Compress Video)** dans le header du Master ({ID}-1{XX}-system.md), apres les INTERDIT
 23. **TOUJOURS inclure la clause anti-hallucination** dans chaque section Completion : "INTERDIT : repondre signal envoye sans avoir EXECUTE send.sh via l'outil Bash" — un agent qui DIT avoir envoye sans EXECUTER bloque le pipeline indefiniment
 24. **TOUJOURS inclure la reprise événementielle** — retour immédiat après dispatch, aucun timeout/re-dispatch ; le bridge seul détecte la stagnation

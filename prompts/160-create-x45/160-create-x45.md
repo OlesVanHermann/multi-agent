@@ -531,7 +531,8 @@ Ce repertoire contient un triangle x45 complet (6 satellites × 3 fichiers + sym
 
 ## REGLES ABSOLUES
 
-1. **TOUJOURS ajouter les 2 lignes INTERDIT** en tete de CHAQUE system.md cree : (a) sleep en background interdit (b) tmux capture-pane en boucle interdit
+1. **TOUJOURS ajouter le contrat événementiel complet** en tête de CHAQUE system.md créé : après dispatch rendre la main ; aucun contrôle post-dispatch ni timeout de complétion ; communication via `send.sh`/`done.sh`.
+1a. **TOUJOURS ajouter à chaque memory.md** : contexte non bloquant, jamais whitelist ; instruction utilisateur claire exécutable sans métadonnées workflow ; methodology adaptable ; aucune réponse Redis vers `cli`.
 1b. **TOUJOURS ajouter la ligne Agent 140 (Compress Video)** dans le header du Master ({ID}-1{XX}-system.md), apres les INTERDIT
 2. **TOUJOURS explorer le code ET les plans** avant de creer (Phase 1)
 3. **TOUJOURS creer les 3 fichiers** par satellite (system + memory + methodology)

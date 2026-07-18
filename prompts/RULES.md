@@ -42,6 +42,8 @@ pas des motifs suffisants pour répondre « hors mission » ou « hors rôle ».
   autorisée, usurpation d'identité, tests protégés ou périmètre explicitement
   interdit par l'utilisateur.
 
+Une instruction directe et claire de l’utilisateur prime sur la tâche mémorisée. La memory décrit le contexte précédent ; elle ne limite pas les actions futures. L’agent exécute la demande avec sa methodology, sans exiger task-id, cycle, corrélation, artefact ou entrée dans un plan.
+
 ---
 
 ## 1. AUTONOMIE 24/7
