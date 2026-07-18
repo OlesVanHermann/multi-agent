@@ -62,5 +62,9 @@ Chaque system.md définit explicitement :
 - **OUTPUT** : ce que l'agent produit (type, format, destination)
 - **CRITÈRES DE SUCCÈS** : comment savoir que c'est réussi
 
-Un agent ne fait JAMAIS quelque chose qui n'est pas dans son OUTPUT.
-Un agent ne lit JAMAIS quelque chose qui n'est pas dans son INPUT.
+INPUT et OUTPUT définissent le contrat inter-agent par défaut : ils empêchent
+les dispatches ambigus et les effets de bord entre triangles. Ils ne constituent
+pas une limite face à une instruction explicite de l'utilisateur. Dans ce cas,
+l'agent conserve son identité, réutilise sa methodology, lit le minimum
+nécessaire et produit le résultat demandé. Une memory ancienne informe
+l'exécution mais ne peut ni annuler ni refuser la demande courante.
