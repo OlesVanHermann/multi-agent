@@ -117,6 +117,33 @@ def _next_poll_interval(current, changed):
     return min(current * 1.5, POLL_MAX)
 
 
+def _composer_contains_text(viewport, cursor_y, snippet):
+    """Return whether ``snippet`` is still in the active TUI composer.
+
+    A long Codex/Claude prompt can wrap over many physical terminal rows and
+    leave the cursor on an otherwise empty row. Looking at the cursor row alone
+    therefore mistakes an unsubmitted prompt for an accepted one. The active
+    composer is the nearest ``›``/``❯`` prompt at or above the cursor; inspect
+    that complete block instead.
+
+    If the composer cannot be identified, remain conservative: the caller must
+    retry Enter rather than silently losing the task.
+    """
+    lines = viewport.splitlines()
+    if not lines or not isinstance(cursor_y, int) or cursor_y < 0:
+        return True
+    cursor_y = min(cursor_y, len(lines) - 1)
+    composer_start = None
+    for idx in range(cursor_y, -1, -1):
+        if lines[idx].lstrip().startswith(("›", "❯")):
+            composer_start = idx
+            break
+    if composer_start is None:
+        return True
+    composer = " ".join(lines[composer_start:cursor_y + 1])
+    return snippet in composer
+
+
 def _plan_mode_active(out, markers):
     """Détecte uniquement l'indicateur actif, dans la zone UI récente.
 
@@ -518,9 +545,9 @@ class TmuxAgent:
             capture_output=True
         )
 
-        # Verify Enter was submitted by checking the CURSOR LINE only.
-        # The previous version checked "any line in last 3 lines", which matched
-        # scrollback echo (false positive) and missed busy/streaming states.
+        # Verify Enter was submitted by checking the complete active composer.
+        # A wrapped prompt may leave the cursor on an empty physical row: the
+        # cursor row alone then produces a false positive (task not submitted).
         # A2: adaptive loop — exit as soon as the input line is clear,
         # resend Enter on an escalating cadence (1/2/4/8s), same ~15s budget.
         target_pane = f"{self.session_name}:0"
@@ -544,12 +571,12 @@ class TmuxAgent:
                     ["tmux", "capture-pane", "-t", target_pane, "-p"],
                     capture_output=True, text=True
                 ).stdout
-                lines = viewport.split('\n')
-                cursor_line = lines[int(cy)] if cy.isdigit() and int(cy) < len(lines) else ''
+                cursor_y = int(cy) if cy.isdigit() else -1
             except Exception:
-                cursor_line = ''
-            if check_snippet not in cursor_line:
-                break  # submitted (text no longer on the input line)
+                viewport = ''
+                cursor_y = -1
+            if not _composer_contains_text(viewport, cursor_y, check_snippet):
+                break  # submitted (text no longer in the active composer)
             if time.time() >= next_resend:
                 self._log(f"Enter not received after {resend_delay:.0f}s — resending")
                 subprocess.run(

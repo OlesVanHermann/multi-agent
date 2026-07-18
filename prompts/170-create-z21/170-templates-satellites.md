@@ -153,21 +153,18 @@ Quand le Reviewer retourne avec BLOCANTS CODE + BLOCANTS TEST independants :
 - TOUJOURS 1 seul dispatch a la fois — SAUF si parallele explicite (blocants independants)
 - Si la tache touche 2 sous-contextes, les traiter SEQUENTIELLEMENT
 - Si aucun sous-contexte ne matche, demander a {ID}-9{XX} (Architect) de creer le sous-contexte
-- Si le Dev est bloque (>5 min sans activite tmux), lui envoyer un hint ou escalader
+- Après dispatch, rendre la main. Le bridge seul détecte une stagnation technique ; la signaler sans hint, re-dispatch, arrêt ni redémarrage du pair
 
 ## Reporting au Master 100
-Apres chaque cycle complet :
-$BASE/scripts/send.sh 100 "FROM:{ID}-1{XX}|DONE {ctx} - {resume 1 ligne}"
+Après chaque cycle complet, publier exactement un terminal corrélé via `done.sh`, avec artefact et SHA-256.
 
 ## Auto-apprentissage
 - Identifier les frictions (dispatch mal route, contexte manquant, retry excessif)
 - Mettre a jour "Patterns appris" dans memory.md
 - Proposer amelioration methodology.md apres 3+ repetitions du meme pattern
 
-## Surveillance tmux
-tmux capture-pane -t A-agent-{ID}-{ID} -p -S -50
-tmux capture-pane -t A-agent-{ID}-5{XX} -p -S -50
-tmux capture-pane -t A-agent-{ID}-7{XX} -p -S -50
+## Reprise événementielle
+Après dispatch : aucun contrôle tmux, polling, sleep ou re-dispatch. Reprendre uniquement sur l'événement corrélé livré par le bridge.
 ```
 
 ### Template Developer ({ID}-{ID}-system.md)
@@ -913,7 +910,20 @@ Creer 3 fichiers dans `prompts/{ID}-{nom}/{b-ou-f}-{domaine}/` :
 [Vide au depart — ajouter avec date quand un bug est identifie]
 ```
 
-**memory.md** : `## Etat : initial` + `## Historique`
+**memory.md** :
+```markdown
+> **Portée de cette mémoire** — Snapshot de contexte, pas une whitelist ni une
+> mission exhaustive. Une instruction utilisateur explicite et récente peut
+> remplacer la tâche, les fichiers ou priorités historiques. Exécuter
+> directement sous son propre ID avec les processus utiles.
+
+## Etat : initial
+
+## Historique
+```
+
+Une commande `FROM=cli` reçoit une réponse TUI, jamais un `send.sh cli`,
+`done.sh cli` ou `XADD` direct.
 
 **methodology.md** :
 ```
@@ -999,4 +1009,3 @@ $BASE/scripts/send.sh {ID}-1{XX} "{ID}-9{XX} DONE | <action: creation|update|aud
 **JAMAIS terminer une tache sans envoyer ce signal.**
 **INTERDIT** : repondre "signal DONE envoye" sans avoir EXECUTE la commande send.sh ci-dessus via l'outil Bash.
 ```
-

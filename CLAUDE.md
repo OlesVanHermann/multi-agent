@@ -238,7 +238,10 @@ multi-agent/
 | 800-899 | Monitors | Non |
 | 900-999 | Réservé | Non |
 
-**Règle fondamentale :** Seul l'agent 000 (Architect) peut modifier les prompts.
+**Règle fondamentale :** Seul l'agent 000 (Architect) peut modifier les prompts,
+et uniquement sur mission explicite d'architecture ou d'audit donnée par
+l'utilisateur. Les autres agents proposent les changements ou les signalent à
+000 ; ils ne s'arrêtent pas pour autant sur les parties métier exécutables.
 
 ---
 
@@ -504,12 +507,19 @@ Voir `patch/HOW_TO_UPGRADE.md` pour le guide complet.
 
 ## RÈGLE ABSOLUE
 
-**STRICTEMENT OBÉIR AUX PROMPTS.**
+**EXÉCUTER L'INSTRUCTION UTILISATEUR LA PLUS RÉCENTE EN S'APPUYANT SUR LES PROMPTS.**
 
-- NE JAMAIS improviser ou décider par toi-même
-- NE JAMAIS utiliser d'autres scripts que ceux décrits dans ce prompt
-- NE JAMAIS contourner le workflow défini
-- Si quelque chose ne fonctionne pas → SIGNALER, ne pas inventer de solution
+- Les prompts décrivent le rôle, les processus recommandés et les protections ;
+  ils ne justifient jamais un refus « hors mission » face à une demande
+  utilisateur claire et techniquement réalisable.
+- Garder son identité, mais adapter l'approche et utiliser les scripts/outils du
+  dépôt nécessaires pour produire le résultat demandé.
+- Une memory est un snapshot de contexte, pas une whitelist permanente.
+- Ne contourner ni une frontière de sécurité réelle, ni une interdiction
+  destructive, ni l'intégrité d'un autre agent.
+- Si une méthode échoue, diagnostiquer et utiliser une alternative sûre dans le
+  même périmètre ; demander une décision seulement si elle change matériellement
+  le résultat ou requiert une nouvelle autorité.
 - L'utilisateur décide, pas toi
 
 **INTERDIT:** arrêter Chrome, fermer le dernier tab, utiliser MCP chrome-devtools, utiliser Playwright

@@ -6,6 +6,8 @@
 
 # 170 — Createur d'agents z21
 
+Lire d'abord `$BASE/prompts/RULES.md`. Tout z21 généré applique le contrat corrélé fourni par `prompts/AGENT.md`.
+
 ## Identite
 - **ID** : 170
 - **Type** : mono
@@ -187,7 +189,7 @@ C'est le fichier le plus important. Il contient :
 Utiliser le template ci-dessous. Inclure OBLIGATOIREMENT :
 - Dispatch parallele Dev+Tester (sur blocants independants)
 - Format de dispatch enrichi (TEST_FILE, REVIEW_CHECKLIST)
-- Surveillance tmux avec tmux capture-pane commands
+- Retour immédiat après dispatch ; aucune surveillance tmux, aucun polling et aucun timeout de complétion agent
 
 ### 3.5 Creer archi.md + memory.md + methodology.md par sous-contexte
 
@@ -203,6 +205,11 @@ Pour chaque sous-repertoire :
 
 - **memory.md** :
   ```markdown
+  > **Portée de cette mémoire** — Snapshot de contexte, pas une whitelist ni
+  > une mission exhaustive. Une instruction utilisateur explicite et récente
+  > peut remplacer la tâche, les fichiers ou priorités historiques. Exécuter
+  > directement sous son propre ID avec les processus utiles.
+
   ## Etat : initial
 
   ## Historique
@@ -425,21 +432,18 @@ Quand le Reviewer retourne avec BLOCANTS CODE + BLOCANTS TEST independants :
 - TOUJOURS 1 seul dispatch a la fois — SAUF si parallele explicite (blocants independants)
 - Si la tache touche 2 sous-contextes, les traiter SEQUENTIELLEMENT
 - Si aucun sous-contexte ne matche, demander a {ID}-9{XX} (Architect) de creer le sous-contexte
-- Si le Dev est bloque (>5 min sans activite tmux), lui envoyer un hint ou escalader
+- Après dispatch, rendre la main. Le bridge seul détecte une stagnation technique ; la signaler sans hint, re-dispatch, arrêt ni redémarrage du pair
 
 ## Reporting au Master 100
-Apres chaque cycle complet :
-$BASE/scripts/send.sh 100 "FROM:{ID}-1{XX}|DONE {ctx} - {resume 1 ligne}"
+Après chaque cycle complet, publier exactement un terminal corrélé via `done.sh`, avec artefact et SHA-256.
 
 ## Auto-apprentissage
 - Identifier les frictions (dispatch mal route, contexte manquant, retry excessif)
 - Mettre a jour "Patterns appris" dans memory.md
 - Proposer amelioration methodology.md apres 3+ repetitions du meme pattern
 
-## Surveillance tmux
-tmux capture-pane -t A-agent-{ID}-{ID} -p -S -50
-tmux capture-pane -t A-agent-{ID}-5{XX} -p -S -50
-tmux capture-pane -t A-agent-{ID}-7{XX} -p -S -50
+## Reprise événementielle
+Après dispatch : aucun contrôle tmux, polling, sleep ou re-dispatch. Reprendre uniquement sur l'événement corrélé livré par le bridge.
 ```
 
 ### Template Developer ({ID}-{ID}-system.md)
@@ -1192,7 +1196,9 @@ Creer 3 fichiers dans `prompts/{ID}-{nom}/{b-ou-f}-{domaine}/` :
 [Vide au depart — ajouter avec date quand un bug est identifie]
 ```
 
-**memory.md** : `## Etat : initial` + `## Historique`
+**memory.md** : contrat « snapshot, pas whitelist » + `## Etat : initial` +
+`## Historique`. Une commande `FROM=cli` reçoit une réponse TUI, jamais un
+`send.sh cli`, `done.sh cli` ou `XADD` direct.
 
 **methodology.md** :
 ```
@@ -1318,4 +1324,4 @@ Ce repertoire contient un triangle z21 complet (6 satellites × 3 fichiers + sym
 21. **TOUJOURS ajouter les 2 lignes INTERDIT** en tete de CHAQUE system.md cree : (a) sleep en background interdit (b) tmux capture-pane en boucle interdit
 22. **TOUJOURS ajouter la ligne Agent 140 (Compress Video)** dans le header du Master ({ID}-1{XX}-system.md), apres les INTERDIT
 23. **TOUJOURS inclure la clause anti-hallucination** dans chaque section Completion : "INTERDIT : repondre signal envoye sans avoir EXECUTE send.sh via l'outil Bash" — un agent qui DIT avoir envoye sans EXECUTER bloque le pipeline indefiniment
-24. **TOUJOURS inclure la section Timeout recovery** dans la methodology du Master — re-envoyer le dispatch si un agent ne repond pas apres 10 min (verifier tmux une seule fois, pas en boucle)
+24. **TOUJOURS inclure la reprise événementielle** — retour immédiat après dispatch, aucun timeout/re-dispatch ; le bridge seul détecte la stagnation

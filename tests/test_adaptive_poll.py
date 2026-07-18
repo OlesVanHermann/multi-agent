@@ -44,6 +44,33 @@ class TestNextPollInterval:
         assert STABLE_PLAN_SECS == 15.0
 
 
+class TestComposerContainsText:
+    def test_wrapped_prompt_with_empty_cursor_row_is_still_pending(self):
+        from agent import _composer_contains_text
+        viewport = "\n".join([
+            "› [ENVELOPPE BRIDGE]",
+            "  FROM=348-348",
+            "  unique-message-tail",
+            "",
+            "  gpt-5.6-sol xhigh",
+        ])
+        assert _composer_contains_text(viewport, 3, "unique-message-tail")
+
+    def test_empty_active_composer_means_previous_prompt_was_submitted(self):
+        from agent import _composer_contains_text
+        viewport = "\n".join([
+            "› previous unique-message-tail",
+            "  previous continuation",
+            "› ",
+            "  gpt-5.6-sol xhigh",
+        ])
+        assert not _composer_contains_text(viewport, 2, "unique-message-tail")
+
+    def test_unknown_composer_is_conservatively_pending(self):
+        from agent import _composer_contains_text
+        assert _composer_contains_text("plain terminal output", 0, "message-tail")
+
+
 def _make_agent():
     from agent import TmuxAgent
     agent = object.__new__(TmuxAgent)
@@ -58,8 +85,12 @@ class TestSendKeysAdaptive:
         """L'input est soumis immédiatement → pas de palier fixe d'1s+."""
         import agent as agent_mod
         a = _make_agent()
-        # cursor_y=0, ligne 0 vide → le texte n'est plus sur la ligne d'input
-        run_mock = MagicMock(return_value=MagicMock(stdout="0\n", returncode=0))
+        # Composeur actif vide : le texte a bien été soumis.
+        def fake_run(cmd, **kw):
+            if "capture-pane" in cmd:
+                return MagicMock(stdout="› \n", returncode=0)
+            return MagicMock(stdout="0\n", returncode=0)
+        run_mock = MagicMock(side_effect=fake_run)
         monkeypatch.setattr(agent_mod.subprocess, "run", run_mock)
         monkeypatch.setattr(a, "_capture_pane", lambda n: "❯ \nbypass permissions\n", raising=False)
 
@@ -79,7 +110,7 @@ class TestSendKeysAdaptive:
         def fake_run(cmd, **kw):
             calls.append(cmd)
             if "capture-pane" in cmd:
-                return MagicMock(stdout="hello world\n", returncode=0)
+                return MagicMock(stdout="› hello world\n", returncode=0)
             return MagicMock(stdout="0\n", returncode=0)
 
         monkeypatch.setattr(agent_mod.subprocess, "run", fake_run)
@@ -109,9 +140,9 @@ class TestSendKeysAdaptive:
         def fake_run(cmd, **kw):
             calls.append(cmd)
             if "display-message" in cmd:
-                return MagicMock(stdout="1\n", returncode=0)
+                return MagicMock(stdout="2\n", returncode=0)
             if "capture-pane" in cmd:
-                return MagicMock(stdout="old scrollback\nunique-message-tail\n", returncode=0)
+                return MagicMock(stdout="old scrollback\n› wrapped prefix\nunique-message-tail\n", returncode=0)
             return MagicMock(stdout="", returncode=0)
 
         monkeypatch.setattr(agent_mod.subprocess, "run", fake_run)

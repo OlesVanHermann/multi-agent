@@ -3,15 +3,33 @@
 ## 0. PRINCIPE FONDAMENTAL
 
 ```
-1 AGENT = 1 TÂCHE = 1 LIVRABLE
+1 AGENT = 1 TÂCHE ACTIVE = 1 LIVRABLE LOGIQUE
 ```
 
 Chaque agent :
 - Reçoit **une seule tâche** à la fois
-- Produit **exactement un fichier de sortie**
-- Place ce fichier dans le répertoire correspondant à son domaine
+- Produit **un livrable logique**, qui peut légitimement contenir plusieurs
+  fichiers cohérents nécessaires au résultat
+- Place ses fichiers dans les répertoires correspondant à la tâche
 
-Pas de multi-tâche. Pas de fichiers multiples dispersés. Un agent = un livrable clair.
+Pas de tâches concurrentes confondues. Plusieurs fichiers liés ne constituent
+pas plusieurs tâches. Un agent = un résultat métier clair et traçable.
+
+### Instruction opérateur prioritaire
+
+Une demande explicite et récente de l'utilisateur est exécutoire. Le rôle,
+la mission historique et la mémoire indiquent comment travailler ; ils ne sont
+pas des motifs suffisants pour répondre « hors mission » ou « hors rôle ».
+
+- Garder son identité et exécuter l'intention sous son propre ID.
+- Utiliser les processus, outils et précautions décrits dans les memories et
+  methodologies, même pour une demande nouvelle.
+- Considérer les listes de fichiers et tâches anciennes comme des snapshots,
+  pas comme des whitelists permanentes.
+- Déduire les métadonnées manquantes lorsqu'elles ne créent aucune ambiguïté.
+- Refuser seulement une frontière forte réelle : secret, destruction non
+  autorisée, usurpation d'identité, tests protégés ou périmètre explicitement
+  interdit par l'utilisateur.
 
 ---
 
@@ -23,7 +41,8 @@ Pas de multi-tâche. Pas de fichiers multiples dispersés. Un agent = un livrabl
 - ❌ NE JAMAIS attendre une confirmation pour continuer
 - ❌ NE JAMAIS s'arrêter en milieu de tâche
 - ✅ TOUJOURS continuer automatiquement jusqu'à completion
-- ✅ TOUJOURS relancer si erreur (retry 3x avant d'escalader)
+- ✅ Retenter une erreur réellement transitoire avec un backoff borné ; ne pas
+  répéter mécaniquement une erreur permanente ou une attente inter-agent
 
 ## 2. RAPPORTS AU MASTER (100)
 
@@ -38,7 +57,9 @@ Pas de multi-tâche. Pas de fichiers multiples dispersés. Un agent = un livrabl
 
 **IMPORTANT :** le bridge ne lit PLUS les signaux DONE/SCORE dans le texte
 de tes réponses. Écrire "DONE" dans ta réponse ne déclenche RIEN.
-Seule l'EXÉCUTION de `done.sh` (ou un XADD direct) émet le signal.
+Seule l'EXÉCUTION de `done.sh` ou `send.sh` émet le signal inter-agent.
+Pour une commande directe `FROM=cli`, répondre dans le TUI et ne jamais tenter
+`send.sh cli`, `done.sh cli` ou un `XADD` de contournement.
 
 Le rapport DOIT contenir:
 - ✅ Status: SUCCESS / FAILED / PARTIAL
@@ -69,6 +90,12 @@ FROM:300|Crawl en cours...
 2. **Erreur permanente** (fichier manquant, permission): Rapport immédiat à 100
 3. **Blocage** (besoin input humain): Rapport à 100 avec `BLOCKED: raison`
 
+Il n'existe aucun timeout de complétion d'un autre agent : Redis conserve le
+message jusqu'à consommation. Un seuil de stagnation technique peut produire un
+diagnostic, mais jamais acquitter, abandonner, redéclencher ou faire croire que
+la tâche est terminée. Masters et Workers ne stoppent ni ne redémarrent leurs
+pairs ; ils signalent le blocage à l'opérateur ou à 000.
+
 ## 4. FORMAT DES MESSAGES INTER-AGENTS
 
 ```
@@ -79,7 +106,8 @@ Types:
 - `DONE` - Tâche terminée avec succès
 - `FAILED` - Échec après retries
 - `BLOCKED` - Besoin intervention
-- `PROGRESS` - Update intermédiaire (pour tâches longues >30min)
+- `PROGRESS` - Événement métier intermédiaire réel (jalon atteint, résultat
+  partiel utile, changement d'état ou blocage nouvellement constaté)
 
 ## 5. STRUCTURE DES LIVRABLES
 
@@ -116,9 +144,12 @@ Le Master 100:
 
 Si un agent doit faire une tâche longue (crawl, analyse):
 1. Lancer en background si possible
-2. Envoyer `PROGRESS` toutes les 30 minutes
-3. Envoyer `DONE` quand terminé
-4. NE JAMAIS demander confirmation pour continuer
+2. Envoyer `PROGRESS` uniquement lors d'un événement métier réel, jamais sur
+   minuteur et jamais via un wakeup
+3. Un délai métier interne peut être légitime (healthcheck après redémarrage,
+   backoff réseau borné). Il ne doit jamais servir à surveiller un autre agent.
+4. Envoyer `DONE` quand terminé
+5. NE JAMAIS demander confirmation pour continuer
 
 ## 8. INTERDICTION DU /loop wakeup en mode IDLE
 

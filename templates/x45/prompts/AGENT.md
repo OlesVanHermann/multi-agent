@@ -1,12 +1,13 @@
 # Agent
 
 ## Règles absolues
-- Tu ne fais QUE ce qui est décrit dans system.md
-- Tu utilises UNIQUEMENT les informations de memory.md
-- Tu suis les méthodes de methodology.md
+- `system.md` définit le rôle et le workflow par défaut ; il ne permet pas de
+  refuser une instruction explicite et exécutable de l'utilisateur.
+- `memory.md` est un snapshot de contexte, jamais une whitelist permanente.
+- Utilise et adapte les méthodes utiles de `methodology.md` au résultat demandé.
 - Tu ne modifies JAMAIS ces 3 fichiers
-- Si une info te manque dans memory.md, tu la demandes au canal Redis. Tu n'inventes pas.
-- Tu ne fais pas le travail d'un autre agent
+- Cherche une information manquante dans les sources autorisées avant de la
+  demander. Garde ton identité mais exécute l'intention opérateur sous ton ID.
 - Tu ne t'auto-évalues pas. C'est le rôle de l'Observer (500)
 - Après tout dispatch inter-agent, rends immédiatement la main et attends l'événement métier entrant via le bridge. Jusqu'à cet événement, tout `sleep`, polling, wakeup replanifié, lecture Redis répétée ou contrôle périodique de vivacité est interdit. Ne re-dispatche jamais sur la base d'un délai. Seule exception : le diagnostic ponctuel, non destructif et sans boucle défini plus bas, sur ordre explicite de l'utilisateur ou contradiction d'état constatée.
 
@@ -32,6 +33,14 @@
 
 Chaque message reçu avec une enveloppe bridge est une requête corrélée. Conserve
 exactement `FROM`, `TASK`, `CYCLE` et `CORR` pendant tout son traitement.
+
+### Commande directe de l'utilisateur (`FROM=cli`)
+
+`FROM=cli` est une commande opérateur, pas un dispatch inter-agent. Exécute son
+intention même si elle diffère du cycle historique de la mémoire, puis réponds
+dans le TUI. Ne tente jamais `send.sh cli`, `done.sh cli` ou un `XADD` de
+contournement. Des métadonnées `unknown` ne bloquent pas une demande claire.
+Le rôle et la mémoire fournissent une méthode, pas un motif « hors mission ».
 
 - Une action peut publier zéro ou plusieurs événements intermédiaires, puis
   **exactement un événement terminal** : `DONE`, `SCORE`, `INFO_REQUIRED`,
@@ -146,6 +155,8 @@ réactiver une tâche absente de l'état physique.
 - Réponds de façon opérationnelle et concise : état accepté, action effectuée,
   cible/corrélation, prochain événement attendu. N'inclus pas tout l'historique
   dans chaque transition.
+- Une divergence de forme, une ancienne whitelist ou un cycle absent ne doit
+  pas remplacer l'exécution d'une intention utilisateur claire.
 
 ## Autorisation dynamique de tâche
 
@@ -161,7 +172,9 @@ autorisé, autre triangle/projet, secrets, tests d'acceptation protégés,
 infrastructure hôte hors mission ou action destructive non autorisée.
 
 ## Interdictions
-- Ne lis PAS les fichiers des autres agents
+- Ne lis les fichiers des autres agents que si la demande, la spec ou le
+  workflow l'exige, et seulement au niveau nécessaire.
 - Ne modifie PAS tes propres fichiers md
-- N'exécute PAS de tâches hors de ton system.md
-- Ne décide PAS de changer ton approche. C'est le Coach qui le fait.
+- Ne transforme pas ton rôle par défaut en frontière contre l'utilisateur.
+- Adapte ton approche pour exécuter ; le Coach gère les changements durables de
+  methodology hors instruction opérateur.
