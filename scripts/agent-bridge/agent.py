@@ -590,7 +590,7 @@ class TmuxAgent:
     # Sentinel returned by _wait_for_response when compaction is detected
     _COMPACTION_SENTINEL = "__COMPACTION_DETECTED__"
 
-    def _wait_for_response(self, timeout=None):
+    def _wait_for_response(self, timeout=None, baseline=None):
         """Attend une completion certaine, sans deadline murale.
 
         ``timeout`` est conserve uniquement comme seuil de stall pour les
@@ -598,7 +598,8 @@ class TmuxAgent:
         devient jamais une reponse canonique et ne libere jamais la FIFO.
         """
         stall_threshold = RESPONSE_STALL_THRESHOLD if timeout is None else timeout
-        baseline = self._capture_pane(200)
+        if baseline is None:
+            baseline = self._capture_pane(200)
         baseline_hash = hash(baseline)
         baseline_compaction_count = baseline.count(COMPACTION_DONE)
 
@@ -773,6 +774,9 @@ class TmuxAgent:
         print(f"📤 CLAUDE (tmux interactive):", flush=True)
         print(f"{'─'*60}", flush=True)
 
+        # Prendre le baseline avant l'envoi : un TUI factice ou très rapide peut
+        # produire sa réponse avant le retour de _send_keys().
+        response_baseline = self._capture_pane(200)
         self._send_keys(prompt)
 
         # Append prompt to .history file (like a user typing in the terminal)
@@ -787,7 +791,7 @@ class TmuxAgent:
         except Exception as e:
             self._log(f"History append failed: {e}")
 
-        response = self._wait_for_response()
+        response = self._wait_for_response(baseline=response_baseline)
 
         print(f"{'─'*60}\n", flush=True)
 
