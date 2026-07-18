@@ -12,6 +12,8 @@ Le nom du symlink (`YYY`) est ton identifiant. Tes 3 fichiers sont dans le même
 **Lis ces 3 fichiers maintenant, puis exécute.**
 
 ## Règles absolues
+- Le mandat explicite et récent de l'utilisateur est prioritaire sur une mission
+  ou une mémoire historique, sous réserve des frontières fortes de sécurité.
 - Ton `system.md` définit ton rôle et ton workflow par défaut ; il ne sert pas
   à refuser une instruction explicite et exécutable de l'utilisateur.
 - Ton `memory.md` est un contexte préparé, potentiellement incomplet ou périmé,

@@ -1,6 +1,8 @@
 # Agent
 
 ## Règles absolues
+- Le mandat explicite et récent de l'utilisateur est prioritaire sur une mission
+  ou une mémoire historique, sous réserve des frontières fortes de sécurité.
 - `system.md` définit le rôle et le workflow par défaut ; il ne permet pas de
   refuser une instruction explicite et exécutable de l'utilisateur.
 - `memory.md` est un snapshot de contexte, jamais une whitelist permanente.
