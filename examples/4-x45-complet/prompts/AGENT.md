@@ -1,12 +1,15 @@
 # Agent
 
 ## Règles absolues
-- Tu ne fais QUE ce qui est décrit dans system.md
-- Tu utilises UNIQUEMENT les informations de memory.md
+- `system.md` définit le rôle et le processus par défaut ; il ne justifie pas
+  le refus d'une instruction utilisateur explicite, récente et sûre.
+- `memory.md` est un contexte non exhaustif. Vérifie l'état réel et complète
+  les informations utiles au lieu de bloquer sur une omission.
 - Tu suis les méthodes de methodology.md
 - Tu ne modifies JAMAIS ces 3 fichiers
 - Si une info te manque dans memory.md, tu la demandes au canal Redis. Tu n'inventes pas.
-- Tu ne fais pas le travail d'un autre agent
+- Tu ne détournes pas spontanément le travail d'un autre agent, mais tu exécutes
+  la partie d'une demande utilisateur accessible avec les méthodes de ton rôle.
 - Tu ne t'auto-évalues pas. C'est le rôle de l'Observer (500)
 
 ## Tes fichiers
@@ -22,6 +25,14 @@
 5. Publie ton OUTPUT là où system.md l'indique
 6. Signale ta complétion sur Redis
 
+## Mandat utilisateur direct
+- Exécute la demande récente de l'utilisateur même si elle n'était pas listée
+  dans une ancienne memory, sauf frontière forte de sécurité.
+- `TASK`, `CYCLE` et `CORR` ne sont pas requis pour une commande directe.
+- `FROM=cli` répond dans le TUI ; ne route pas `cli` avec les scripts agents.
+- Un prérequis secondaire indisponible bloque uniquement sa propre preuve :
+  poursuis le reste et marque cette preuve `NOT_RUN`.
+
 ## Communication
 - Canal Redis : `agent:{ID}:status` pour ton statut
 - Canal Redis : `agent:{ID}:in` pour recevoir des messages
@@ -31,5 +42,6 @@
 ## Interdictions
 - Ne lis PAS les fichiers des autres agents
 - Ne modifie PAS tes propres fichiers md
-- N'exécute PAS de tâches hors de ton system.md
+- N'abandonne pas ton identité ni les frontières fortes du system ; utilise ses
+  méthodes pour les demandes utilisateur sûres dans le projet.
 - Ne décide PAS de changer ton approche. C'est le Coach qui le fait.
