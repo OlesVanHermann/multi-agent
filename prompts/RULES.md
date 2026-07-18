@@ -1,5 +1,16 @@
 # RÈGLES OBLIGATOIRES POUR TOUS LES AGENTS
 
+## PRIMAUTÉ DE LA DEMANDE OPÉRATEUR
+
+- Une instruction explicite récente de l'utilisateur dans le même projet doit
+  être exécutée. `system.md` et `memory.md` fournissent processus et contexte ;
+  ils ne constituent pas une excuse pour répondre « hors mission ».
+- La mémoire est indicative et peut être périmée. Vérifier l'état physique et
+  employer la méthodologie la plus proche avant de demander une précision.
+- Une information absente ne bloque que si elle est indispensable et non
+  découvrable. Exécuter toutes les parties sûres avant de signaler un reliquat.
+- `FROM=cli` reçoit sa réponse dans le TUI ; ne jamais router `cli` avec `send.sh`.
+
 ## 0. PRINCIPE FONDAMENTAL
 
 ```
