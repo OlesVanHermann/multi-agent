@@ -421,7 +421,9 @@ class TmuxAgent:
         self.state = State.IDLE
         self.state_lock = Lock()
         self._tui_lock = Lock()
-        self._next_model_check_ts = 0
+        # Ne jamais injecter /model pendant le démarrage : laisser au bridge un
+        # intervalle complet pour traiter auto-init et les premiers messages.
+        self._next_model_check_ts = time.time() + MODEL_CHECK_INTERVAL
         self._observed_model = ""
         self._observed_effort = ""
 
