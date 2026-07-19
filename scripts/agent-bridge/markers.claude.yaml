@@ -34,6 +34,19 @@ ready_markers: ['❯', 'Try "']
 # Ligne de statut affichée en mode normal (agent prêt ou occupé)
 status_line: 'bypass permissions'
 
+# Claude Code n'affiche pas le modèle dans son footer normal.
+runtime_model_pattern: '(?!)'
+runtime_effort_pattern: '(?!)'
+
+# Contrôle horaire, uniquement lorsque le TUI est immédiatement disponible.
+# [Source: réponses réelles Claude Code fournies par l'opérateur]
+model_check_command: '/model'
+effort_check_command: '/effort'
+model_check_history_pattern: '^\s*❯\s*/model\s*$'
+effort_check_history_pattern: '^\s*❯\s*/effort\s*$'
+model_check_response_pattern: 'Set model to ([^\n]+?) and saved as your default'
+effort_check_response_pattern: 'Set effort level to ([A-Za-z]+)'
+
 # Indicateurs "occupé" dans la ligne de statut
 busy_markers: ['esc to interrupt']
 

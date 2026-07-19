@@ -7,6 +7,7 @@ export function getStatusColor(status) {
   switch (status) {
     case 'has_bashes': return 'green'
     case 'busy': return 'lightgreen'
+    case 'model_mismatch': return 'yellow'
     case 'active': return 'gray'
     case 'idle': case 'stale': return 'gray'
     case 'starting': return 'white'

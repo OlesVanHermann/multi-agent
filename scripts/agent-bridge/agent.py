@@ -159,8 +159,66 @@ def _plan_mode_active(out, markers):
                and not any(x in line for x in exclusions)
                for line in scope.splitlines())
 
+
+def _configured_value(agent_id, extension, default=""):
+    """Résout une configuration selon la cascade canonique, sans mutation."""
+    prompts = BASE_DIR / "prompts"
+    base_id = str(agent_id).split('-')[0]
+    agent_dir = prompts / base_id
+    if not agent_dir.is_dir():
+        matches = sorted(p for p in prompts.glob(f"{base_id}-*") if p.is_dir())
+        agent_dir = matches[0] if matches else None
+    candidates = []
+    if agent_dir:
+        candidates.append(agent_dir / f"{agent_id}.{extension}")
+    candidates.extend((prompts / f"{agent_id}.{extension}",
+                       prompts / f"default.{extension}"))
+    for path in candidates:
+        try:
+            if path.exists() or path.is_symlink():
+                return path.read_text().strip()
+        except OSError:
+            continue
+    return default
+
+
+def _configured_model(agent_id):
+    return _configured_value(agent_id, "model")
+
+
+def _configured_effort(agent_id):
+    return _configured_value(agent_id, "effort", "H")
+
+
+def _expected_effort_name(effort):
+    return {"L": "medium", "M": "high", "H": "xhigh"}.get(
+        str(effort).strip().upper(), str(effort).strip().lower())
+
+
+def _normalize_model_name(model):
+    value = re.sub(r'[^a-z0-9]+', '-', str(model).strip().lower()).strip('-')
+    return value if value.startswith(('claude-', 'gpt-')) else f"claude-{value}"
+
+
+def _runtime_value_from_pane(out, marker_key, markers=None):
+    m = markers if markers is not None else MARKERS
+    pattern = m.get(marker_key, '__NON_APPLICABLE__')
+    if pattern == '__NON_APPLICABLE__':
+        return ""
+    matches = re.findall(pattern, out, re.MULTILINE)
+    return matches[-1] if matches else ""
+
+
+def _runtime_model_from_pane(out, markers=None):
+    return _runtime_value_from_pane(out, 'runtime_model_pattern', markers)
+
+
+def _runtime_effort_from_pane(out, markers=None):
+    return _runtime_value_from_pane(out, 'runtime_effort_pattern', markers)
+
 # EF-003 : intervalle heartbeat enrichi (CA-004: toutes les 10s ± 2s)
 HEARTBEAT_INTERVAL = 10
+MODEL_CHECK_INTERVAL = int(os.environ.get("MODEL_CHECK_INTERVAL", 3600))
 
 # EF-001 : port de base pour health endpoint (port = base + agent_id numérique)
 HEALTH_PORT_BASE = int(os.environ.get("AGENT_HEALTH_PORT_BASE", 9100))
@@ -362,6 +420,10 @@ class TmuxAgent:
         self.session_name = f"{MA_PREFIX}-agent-{agent_id}"
         self.state = State.IDLE
         self.state_lock = Lock()
+        self._tui_lock = Lock()
+        self._next_model_check_ts = 0
+        self._observed_model = ""
+        self._observed_effort = ""
 
         # EF-001: start time for uptime
         self._start_time = time.time()
@@ -880,7 +942,78 @@ class TmuxAgent:
                 capture_output=True, text=True, timeout=10).stdout.strip()
         except Exception:
             return None
-        return _parse_pane_state(out, pane_cmd, self.agent_id)
+        pane_state = _parse_pane_state(out, pane_cmd, self.agent_id)
+        now = time.time()
+        if now >= self._next_model_check_ts:
+            # Même en cas d'abandon, aucun nouvel essai avant une heure.
+            self._next_model_check_ts = now + MODEL_CHECK_INTERVAL
+            if AGENT_CLI == 'codex':
+                self._observed_model = _runtime_model_from_pane(out)
+                self._observed_effort = _runtime_effort_from_pane(out)
+            else:
+                self._check_claude_model_effort(out)
+        configured_model = _configured_model(self.agent_id)
+        configured_effort = _expected_effort_name(_configured_effort(self.agent_id))
+        pane_state.update({
+            "runtime_model": self._observed_model,
+            "runtime_effort": self._observed_effort,
+            "configured_model": configured_model,
+            "configured_effort": configured_effort,
+            "model_mismatch": bool(
+                (self._observed_model and configured_model and
+                 self._observed_model != configured_model)
+                or (self._observed_effort and configured_effort and
+                    self._observed_effort.lower() != configured_effort.lower())),
+        })
+        return pane_state
+
+    def _check_claude_model_effort(self, recent_pane):
+        """Contrôle actif non bloquant ; tout conflit entraîne un abandon."""
+        model_cmd = MARKERS['model_check_command']
+        effort_cmd = MARKERS['effort_check_command']
+        recent_pane = self._capture_pane(200) or recent_pane
+        model_already_run = re.search(
+            MARKERS['model_check_history_pattern'], recent_pane, re.MULTILINE)
+        effort_already_run = re.search(
+            MARKERS['effort_check_history_pattern'], recent_pane, re.MULTILINE)
+        if model_already_run and effort_already_run:
+            self._log("Model check skipped: commands already visible in recent pane")
+            return
+        with self.state_lock:
+            unavailable = self.state != State.IDLE or self.current_task is not None
+        if unavailable or not self.prompt_queue.empty():
+            self._log("Model check skipped: agent running or queue not empty")
+            return
+        if not self._tui_lock.acquire(blocking=False):
+            self._log("Model check skipped: TUI already in use")
+            return
+        claimed = False
+        try:
+            with self.state_lock:
+                if self.state != State.IDLE or self.current_task is not None:
+                    return
+                self.state = State.BUSY
+                claimed = True
+            if not self.prompt_queue.empty():
+                return
+            with self.state_lock:
+                if self.current_task is not None:
+                    return
+            model_response = self._run_claude(model_cmd)
+            effort_response = self._run_claude(effort_cmd)
+            model_match = re.search(MARKERS['model_check_response_pattern'], model_response)
+            effort_match = re.search(MARKERS['effort_check_response_pattern'], effort_response)
+            if model_match:
+                self._observed_model = _normalize_model_name(model_match.group(1))
+            if effort_match:
+                self._observed_effort = effort_match.group(1).lower()
+        finally:
+            if claimed:
+                with self.state_lock:
+                    if self.current_task is None:
+                        self.state = State.IDLE
+                self._set_redis_status()
+            self._tui_lock.release()
 
     def _heartbeat_loop(self):
         """Thread: heartbeat enrichi toutes les 10s — EF-003, CA-004.
@@ -1189,8 +1322,14 @@ class TmuxAgent:
                     continue
 
             with self.state_lock:
-                self.state = State.BUSY
-                self.current_task = task
+                tui_reserved = self.state == State.BUSY
+                if not tui_reserved:
+                    self.state = State.BUSY
+                    self.current_task = task
+            if tui_reserved:
+                self.prompt_queue.put(task)
+                time.sleep(0.1)
+                continue
 
             self._set_redis_status()
             src = f"[{task.get('from_agent', 'local')}]"
@@ -1236,7 +1375,8 @@ class TmuxAgent:
                             "[FIN ENVELOPPE]\n\n"
                             f"{task['prompt']}"
                         )
-                    response = self._run_claude(delivered_prompt)
+                    with self._tui_lock:
+                        response = self._run_claude(delivered_prompt)
                 except Exception as e:
                     self._log(f"ERROR running Claude: {e}")
                     if self.metrics:

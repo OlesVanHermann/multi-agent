@@ -8,6 +8,7 @@ const ROWS = [
   ['white',               'Blanc',          'starting — Démarrage en cours'],
   ['green',               'Vert foncé',     "has_bashes — Bashes en cours d'exécution"],
   ['lightgreen',          'Vert clair',     'busy — Claude en cours (esc to interrupt)'],
+  ['yellow',              'Jaune',          'model_mismatch — Modèle actif différent du modèle configuré'],
   ['gray border-orange',  'Bordure orange', 'context_warning — Contexte restant 1-10% (idle ou busy)'],
   ['gray border-blue',    'Bordure bleue',  'selected — Terminal ouvert'],
   ['red',                 'Rouge',          'context_compacted — Contexte compacté'],
@@ -36,6 +37,7 @@ function ColorLegend() {
       <ol style={{margin:'0.5rem 0',paddingLeft:'1.5rem',color:'#ccc',fontSize:'0.85rem'}}>
         <li>context_limit / api_error</li>
         <li>context_compacted (compacting)</li>
+        <li>model_mismatch (modèle actif différent)</li>
         <li>plan_mode</li>
         <li>has_bashes</li>
         <li>busy</li>

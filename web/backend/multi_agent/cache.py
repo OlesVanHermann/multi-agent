@@ -231,6 +231,7 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
             done_compacting = st.get('done_compacting', False)
             context_limit = st.get('context_limit', False)
             api_error = st.get('api_error', False)
+            model_mismatch = st.get('model_mismatch', False)
             flag_ts = float(reload_flags[i]) if reload_flags[i] else 0
 
             if ctx >= 0 or is_compacting or done_compacting or context_limit or api_error:
@@ -261,6 +262,10 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
                     overrides[aid] = "busy"
                 else:
                     overrides[aid] = "active"     # gray — idle after compacting, clear stale Redis
+            # Jaune : le TUI tourne sur un autre modèle que la configuration.
+            # Signalement uniquement, aucune commande ni correction automatique.
+            elif model_mismatch:
+                overrides[aid] = "model_mismatch"
             elif st.get('waiting_approval'):
                 overrides[aid] = "waiting_approval"  # blue — interactive prompt (Enter to select)
             elif st.get('plan_mode'):
@@ -465,7 +470,7 @@ async def _refresh_cache_once():
 
     # --- Build agent list ---
     # context_compacted removed: when redis_status=="stopped", stopped wins (gray bg + red border via ctx=0)
-    CRITICAL_OVERRIDES = {"needs_clear", "context_warning"}
+    CRITICAL_OVERRIDES = {"needs_clear", "context_warning", "model_mismatch"}
     agents = []
     for agent_id in agent_ids:
         data = agent_redis_data.get(agent_id, {})
@@ -487,6 +492,11 @@ async def _refresh_cache_once():
             "id": agent_id,
             "status": status,
             "ctx": st.get('context_pct', -1),
+            "runtime_model": st.get('runtime_model', ''),
+            "runtime_effort": st.get('runtime_effort', ''),
+            "configured_model": st.get('configured_model', ''),
+            "configured_effort": st.get('configured_effort', ''),
+            "model_mismatch": st.get('model_mismatch', False),
             "has_down": st.get('has_down', False),
             "last_seen": int(data.get("last_seen", 0)) or now,
             "queue_size": int(data.get("queue_size", 0)),

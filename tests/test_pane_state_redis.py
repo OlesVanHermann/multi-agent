@@ -84,6 +84,18 @@ class TestParsePaneState:
         assert st['context_limit'] is True
         assert st['model_change'] is True
 
+    def test_codex_runtime_model_is_read_from_footer(self):
+        from agent import _runtime_effort_from_pane, _runtime_model_from_pane
+        from engines import load_markers
+        out = "› Implement feature\n  gpt-5.6-luna low · ~/multi-agent\n"
+        assert _runtime_model_from_pane(out, load_markers("codex")) == "gpt-5.6-luna"
+        assert _runtime_effort_from_pane(out, load_markers("codex")) == "low"
+
+    def test_claude_runtime_model_remains_unknown_without_tui_interaction(self):
+        from agent import _runtime_model_from_pane
+        from engines import load_markers
+        assert _runtime_model_from_pane("bypass permissions", load_markers("claude")) == ""
+
 
 class TestPaneStatesFromRedis:
     @pytest.fixture(scope="class")

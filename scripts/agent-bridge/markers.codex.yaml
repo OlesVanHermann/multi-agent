@@ -66,6 +66,19 @@ busy_markers: ['to interrupt']
 #  de vie concluait api_error=true en permanence.]
 status_line: ' · '
 
+# Modèle réellement actif, lu passivement dans le footer. Groupe 1 = modèle.
+# [Source: capture-pane réel codex-cli 0.144.4]
+runtime_model_pattern: '^\s*(gpt-[A-Za-z0-9._-]+)\s+[^·]+\s+·\s+'
+runtime_effort_pattern: '^\s*gpt-[A-Za-z0-9._-]+\s+([^·\s]+)\s+·\s+'
+
+# Codex expose déjà modèle et effort dans son footer : aucune commande active.
+model_check_command: '__NON_APPLICABLE__'
+effort_check_command: '__NON_APPLICABLE__'
+model_check_history_pattern: '__NON_APPLICABLE__'
+effort_check_history_pattern: '__NON_APPLICABLE__'
+model_check_response_pattern: '__NON_APPLICABLE__'
+effort_check_response_pattern: '__NON_APPLICABLE__'
+
 # ── [D] Composer ────────────────────────────────────────────────────────────
 # Préfixe du composer : « › » (U+203A). Les marqueurs génériques sont conservés
 # comme chez claude : repli quand le pane retombe sur un shell.
