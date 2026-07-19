@@ -1377,7 +1377,11 @@ class TmuxAgent:
                             "[FIN ENVELOPPE]\n\n"
                             f"{task['prompt']}"
                         )
-                    with self._tui_lock:
+                    tui_lock = getattr(self, '_tui_lock', None)
+                    if tui_lock is None:
+                        tui_lock = Lock()
+                        self._tui_lock = tui_lock
+                    with tui_lock:
                         response = self._run_claude(delivered_prompt)
                 except Exception as e:
                     self._log(f"ERROR running Claude: {e}")
