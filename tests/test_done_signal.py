@@ -39,7 +39,6 @@ class TestOriginField:
 class TestDoneShValidation:
     def _run(self, *args, env_extra=None):
         env = dict(os.environ)
-        env['MA_PREFIX'] = 'TESTA7'
         env.pop('TMUX', None)
         if env_extra:
             env.update(env_extra)
@@ -95,12 +94,11 @@ class TestDoneShIntegration:
                         password=os.environ.get('REDIS_PASSWORD') or None,
                         decode_responses=True)
         prefix = 'TESTA7'
-        completion = f'{prefix}:completion'
-        inbox = f'{prefix}:agent:100:inbox'
+        completion = 'completion'
+        inbox = 'agent:100:inbox'
         r.delete(completion, inbox)
         try:
             env = dict(os.environ)
-            env['MA_PREFIX'] = prefix
             env['FROM_AGENT'] = '300'
             env['CORRELATION_ID'] = 'corr-a7'
             env['TASK_ID'] = 'task-a7'

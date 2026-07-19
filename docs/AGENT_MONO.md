@@ -104,7 +104,7 @@ Fichier vide créé à l'initialisation (`touch`). C'est un **placeholder** — 
 
 ### Ce qui se passe au démarrage
 
-1. `agent.sh` crée une session tmux `{MA_PREFIX}-agent-{ID}` (ex : `A-agent-150`)
+1. `agent.sh` crée une session tmux `agent-{ID}` (ex : `agent-150`)
 2. Fenêtre `0` : `claude --dangerously-skip-permissions` (avec le bon `CLAUDE_CONFIG_DIR` si `.login` est défini)
 3. Fenêtre `bridge` : `python3 scripts/agent-bridge/agent.py {ID}`
 
@@ -128,7 +128,7 @@ fi
 
 if [ "$agent_type" = "mono" ]; then
     # Session = bare 3-digit ID
-    SESSION="${MA_PREFIX}-agent-${base_id}"
+    SESSION="$agent-${base_id}"
 fi
 ```
 
@@ -146,12 +146,12 @@ Un agent mono est identifié par son **ID nu** (3 chiffres), contrairement aux a
 ./scripts/watch.sh 150
 
 # Attacher à la session tmux
-tmux attach -t A-agent-150
+tmux attach -t agent-150
 ```
 
 **Redis Streams** (format direct) :
 ```bash
-redis-cli XADD "A:agent:150:inbox" '*' \
+redis-cli XADD "agent:150:inbox" '*' \
     prompt "CREER mono 910-project-memory pour ..." \
     from_agent "100" \
     timestamp "$(date +%s)"

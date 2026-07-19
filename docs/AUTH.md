@@ -163,7 +163,7 @@ L'Origin est contrôlé contre la whitelist CORS.
 
 300 requêtes / 60 s par IP (`web/backend/multi_agent/ratelimit.py`),
 compteur **partagé entre workers** dans Redis
-(`{MA_PREFIX}:ratelimit:{ip}`), avec fallback local par process si Redis est
+(`ratelimit:{ip}`), avec fallback local par process si Redis est
 indisponible. Appliqué :
 
 - sur toutes les requêtes `/api/*` (HTTP 429) ;

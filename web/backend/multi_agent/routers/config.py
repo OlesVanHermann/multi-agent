@@ -556,13 +556,13 @@ async def update_effort(data: EffortUpdate):
     applied = False
     reason = "session absente"
     if data.agent_id != "default":
-        session = f"{cfg.MA_PREFIX}-agent-{data.agent_id}"
+        session = f"agent-{data.agent_id}"
         alive = await _run_subprocess(["tmux", "has-session", "-t", session])
         if alive.returncode == 0:
             busy = False
             if state.redis_pool:
                 try:
-                    ps = await state.redis_pool.hget(f"{cfg.MA_PREFIX}:agent:{data.agent_id}", "pane_state")
+                    ps = await state.redis_pool.hget(f"agent:{data.agent_id}", "pane_state")
                     busy = bool(json.loads(ps).get("busy")) if ps else False
                 except Exception:
                     busy = False
@@ -781,8 +781,8 @@ async def get_keepalive():
         )
         if result.returncode == 0:
             for line in result.stdout.strip().split("\n"):
-                if line.startswith(f"{cfg.MA_PREFIX}-agent-002-"):
-                    running_sessions.add(line.replace(f"{cfg.MA_PREFIX}-agent-002-", ""))
+                if line.startswith(f"agent-002-"):
+                    running_sessions.add(line.replace(f"agent-002-", ""))
     except Exception:
         pass
 
@@ -818,7 +818,7 @@ async def start_keepalive(data: dict):
     if not profile_dir.exists():
         raise HTTPException(status_code=404, detail="profile directory not found")
 
-    session = f"{cfg.MA_PREFIX}-agent-002-{profile}"
+    session = f"agent-002-{profile}"
 
     # Check if already running
     result = await _run_subprocess(["tmux", "has-session", "-t", session], text=True)
@@ -872,7 +872,7 @@ async def stop_keepalive(data: dict):
     if not PROFILE_RE.match(profile):
         raise HTTPException(status_code=400, detail="invalid profile")
 
-    session = f"{cfg.MA_PREFIX}-agent-002-{profile}"
+    session = f"agent-002-{profile}"
     await _run_subprocess(["tmux", "kill-session", "-t", session], text=True)
 
     # Move keepalive file to suspended

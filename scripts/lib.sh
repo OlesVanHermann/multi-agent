@@ -7,13 +7,19 @@
 #
 # Usage: source "$SCRIPT_DIR/lib.sh"
 
-# Format d'ID agent : NNN ou NNN-NNN (ex. 300, 345-500)
+# Format d'ID agent : NNN ou NNN-NNN.
 AGENT_ID_REGEX='^[0-9]{3}(-[0-9]{3})?$'
 
 # Retourne 0 si l'ID est valide, 1 sinon (silencieux)
 is_valid_agent_id() {
     [[ "$1" =~ $AGENT_ID_REGEX ]]
 }
+
+# Adressage canonique : l'identifiant complet suffit, sans préfixe d'installation.
+agent_session_name() { printf 'agent-%s\n' "$1"; }
+agent_status_key()   { printf 'agent:%s\n' "$1"; }
+agent_inbox_key()    { printf 'agent:%s:inbox\n' "$1"; }
+agent_outbox_key()   { printf 'agent:%s:outbox\n' "$1"; }
 
 # Triangle auto-resolve — règle partagée send.sh / done.sh.
 # Depuis un émetteur en triangle (NNN-XXX), une cible nue YYY est résolue en
@@ -26,14 +32,14 @@ is_valid_agent_id() {
 #      par le consumer group, comportement historique conservé).
 # Cible finale sur stdout ; le WARNING éventuel part sur stderr.
 resolve_triangle_target() {
-    local from="$1" to="$2" prefix="$3" caller="${4:-send.sh}"
+    local from="$1" to="$2" caller="${3:-send.sh}"
     local triangle resolved
     if [[ "$from" =~ ^([0-9]+)-[0-9]+$ ]]; then
         triangle="${BASH_REMATCH[1]}"
         if [[ "$to" =~ ^[0-9]+$ ]]; then
             resolved="${triangle}-${to}"
-            if tmux has-session -t "=${prefix}-agent-${resolved}" 2>/dev/null \
-               || ! tmux has-session -t "=${prefix}-agent-${to}" 2>/dev/null; then
+            if tmux has-session -t "=$(agent_session_name "$resolved")" 2>/dev/null \
+               || ! tmux has-session -t "=$(agent_session_name "$to")" 2>/dev/null; then
                 echo "[$caller] WARNING: auto-resolved $to -> $resolved (sender $from is in triangle $triangle)" >&2
                 to="$resolved"
             fi

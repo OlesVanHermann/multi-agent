@@ -29,8 +29,8 @@ def _make_agent():
     from agent import TmuxAgent
     agent = object.__new__(TmuxAgent)
     agent.agent_id = "300"
-    agent.inbox = "A:agent:300:inbox"
-    agent.outbox = "A:agent:300:outbox"
+    agent.inbox = "agent:300:inbox"
+    agent.outbox = "agent:300:outbox"
     agent.group = "bridge"
     agent.consumer = "agent-300"
     agent.running = True
@@ -139,7 +139,7 @@ class TestQueuedMessageWaitsIdle:
         assert t.is_alive()
         assert result == []
         agent.redis.hset.assert_any_call(
-            f"A:agent:{agent.agent_id}", "status", "stalled")
+            f"agent:{agent.agent_id}", "status", "stalled")
         # Log unique, pas de spam.
         waits = [c for c in agent._log.call_args_list
                  if "waiting for idle" in str(c)]

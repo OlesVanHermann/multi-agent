@@ -228,9 +228,9 @@ class TestInjectionSafety:
 
 
 class TestGeneratedScanShape:
-    def test_scan_uses_ma_prefix(self):
+    def test_scan_uses_canonical_address(self):
         s = engines.build_pane_scan(MARKERS, 'Z')
-        assert '${s#Z-agent-}' in s
+        assert '${s#agent-}' in s
 
     def test_scan_captures_once_per_agent(self):
         """Contrat de perf historique : un seul capture-pane par agent."""

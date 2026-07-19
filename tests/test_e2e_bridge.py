@@ -10,7 +10,7 @@ Scénarios couverts (markers.yaml) :
 - survey : "How is Claude doing" → auto-rejet ("0") puis réponse
 - plan : "Would you like to proceed" → statut waiting_approval, approbation, réponse
 
-Tests isolés : redis-server privé sur port libre, MA_PREFIX et session tmux
+Tests isolés : redis-server privé sur port libre et session tmux dédiée
 uniques par test, LOG_DIR dans tmp_path, nettoyage systématique. Skippés si
 tmux ou redis-server manquent (CI : .github/workflows/e2e.yml les installe).
 """
@@ -90,7 +90,7 @@ def bridge(redis_server, tmp_path):
 
     def _start(scenario, agent_id):
         prefix = f"G1{agent_id}"
-        session = f"{prefix}-agent-{agent_id}"
+        session = f"agent-{agent_id}"
         fake_log = tmp_path / f"fake_{agent_id}.log"
         fake_log.touch()
         log_dir = tmp_path / f"logs_{agent_id}"
@@ -106,7 +106,7 @@ def bridge(redis_server, tmp_path):
         env = dict(
             os.environ,
             REDIS_HOST="127.0.0.1", REDIS_PORT=str(port), REDIS_PASSWORD="",
-            MA_PREFIX=prefix, LOG_DIR=str(log_dir),
+            LOG_DIR=str(log_dir),
             RESPONSE_TIMEOUT="60", POLL_MIN="0.1", POLL_MAX="0.5",
             STABLE_READY_SECS="1", STABLE_FALLBACK_SECS="3",
             RETRY_BACKOFF_SECS="1", AGENT_HEALTH_PORT_BASE="19100")
@@ -120,8 +120,8 @@ def bridge(redis_server, tmp_path):
 
         h = SimpleNamespace(
             prefix=prefix, session=session, agent_id=agent_id, client=client,
-            inbox=f"{prefix}:agent:{agent_id}:inbox",
-            outbox=f"{prefix}:agent:{agent_id}:outbox",
+            inbox=f"agent:{agent_id}:inbox",
+            outbox=f"agent:{agent_id}:outbox",
             fake_log=fake_log, log_dir=log_dir, proc=proc)
 
         # A4 : le groupe est créé avec id='$' — envoyer avant sa création
@@ -176,7 +176,7 @@ def _wait_response(h, corr, timeout=45):
 
 
 def _wait_status(h, value, timeout=30):
-    key = f"{h.prefix}:agent:{h.agent_id}"
+    key = f"agent:{h.agent_id}"
     _wait_for(lambda: h.client.hget(key, "status") == value, timeout,
               f"statut '{value}' jamais observé sur {key} "
               f"(actuel: {h.client.hget(key, 'status')})\n"

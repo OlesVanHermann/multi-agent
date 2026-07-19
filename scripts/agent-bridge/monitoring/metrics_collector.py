@@ -4,9 +4,9 @@ EF-003 (heartbeats enrichis), EF-008 (extraction monitoring)
 Tâche 004 — Métriques : latence, erreurs, throughput, historique
 
 Stockage Redis :
-  - Hash {prefix}:metrics:{agent_id} : métriques courantes
-  - List {prefix}:metrics:{agent_id}:latency_log : dernières N latences
-  - Hash {prefix}:metrics:global : agrégats globaux
+  - Hash metrics:{agent_id} : métriques courantes
+  - List metrics:{agent_id}:latency_log : dernières N latences
+  - Hash metrics:global : agrégats globaux
 
 CT-002 : Préfixe mi: pour streams monitoring
 CT-004 : Préfixe configurable, isolation tests
@@ -15,10 +15,6 @@ CT-009 : XTRIM MAXLEN ~1000 sur streams heartbeat
 
 import time
 import json
-import os
-
-# Configurable prefix (CT-002: mi: pour monitoring, CT-004: test isolation)
-DEFAULT_PREFIX = os.environ.get("MA_PREFIX", "mi")
 
 # Timing constants (R-TIMING)
 LATENCY_HISTORY_MAX = 100
@@ -32,22 +28,21 @@ class MetricsCollector:
     CT-002 préfixe mi:, CT-004 isolation, CT-009 XTRIM.
     """
 
-    def __init__(self, redis_client, prefix=None):
+    def __init__(self, redis_client):
         """Args: redis_client (redis.Redis), prefix (str, défaut mi: CT-002)."""
         self.redis = redis_client
-        self.prefix = prefix or DEFAULT_PREFIX
 
     def _metrics_key(self, agent_id):
         """Clé Redis pour les métriques d'un agent."""
-        return f"{self.prefix}:metrics:{agent_id}"
+        return f"metrics:{agent_id}"
 
     def _latency_key(self, agent_id):
         """Clé Redis pour l'historique de latence d'un agent."""
-        return f"{self.prefix}:metrics:{agent_id}:latency_log"
+        return f"metrics:{agent_id}:latency_log"
 
     def _global_key(self):
         """Clé Redis pour les métriques globales."""
-        return f"{self.prefix}:metrics:global"
+        return f"metrics:global"
 
     def record_task_start(self, agent_id, task_id=None):
         """
@@ -285,13 +280,13 @@ class MetricsCollector:
 
         Tâche 004 : dashboard temps réel
         """
-        pattern = f"{self.prefix}:metrics:*"
+        pattern = f"metrics:*"
         all_metrics = {}
         for key in self.redis.scan_iter(match=pattern):
             # Filtrer les sous-clés (latency_log, etc.)
             parts = key.split(':')
-            if len(parts) == 3:  # {prefix}:metrics:{agent_id}
-                agent_id = parts[2]
+            if len(parts) == 2:  # metrics:{agent_id}
+                agent_id = parts[1]
                 if agent_id != "global":
                     all_metrics[agent_id] = self.get_metrics(agent_id)
         return all_metrics

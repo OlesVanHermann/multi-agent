@@ -4,7 +4,7 @@ CT-004 : pytest + unittest.mock
 CT-010 : Mock Redis, pas de pollution prod
 
 Vérifie : COLORS, agent_color(), c(), truncate(), format_message()
-EF-003 : Vérification format 7 champs heartbeat stream ({MA_PREFIX}:agent:{id}:heartbeat)
+EF-003 : Vérification format 7 champs heartbeat stream (agent:{id}:heartbeat)
 """
 import pytest
 import sys
@@ -140,7 +140,7 @@ class TestFormatMessage:
             'from_agent': '100',
             'type': 'prompt'
         }
-        result = format_message('ma:agent:300:inbox', '1-0', data)
+        result = format_message('agent:300:inbox', '1-0', data)
 
         assert result is not None
         assert '[300]' in result
@@ -153,7 +153,7 @@ class TestFormatMessage:
             'to_agent': '100',
             'type': 'response'
         }
-        result = format_message('ma:agent:300:outbox', '1-0', data)
+        result = format_message('agent:300:outbox', '1-0', data)
 
         assert result is not None
         assert '[300]' in result
@@ -169,7 +169,7 @@ class TestFormatMessage:
             'response': 'x' * 200,
             'from_agent': '345'
         }
-        result = format_message('ma:agent:300:inbox', '1-0', data)
+        result = format_message('agent:300:inbox', '1-0', data)
 
         assert result is not None
         assert '200 chars' in result
@@ -177,8 +177,8 @@ class TestFormatMessage:
     def test_format_compact_mode(self):
         """EF-007 : Mode compact tronque plus court."""
         data = {'prompt': 'a' * 100, 'from_agent': '100'}
-        normal = format_message('ma:agent:300:inbox', '1-0', data, compact=False)
-        compact = format_message('ma:agent:300:inbox', '1-0', data, compact=True)
+        normal = format_message('agent:300:inbox', '1-0', data, compact=False)
+        compact = format_message('agent:300:inbox', '1-0', data, compact=True)
 
         # Compact should have shorter content
         assert len(compact) < len(normal)
@@ -207,8 +207,7 @@ class TestHeartbeatStreamFormat:
         assert len(heartbeat) == 7
 
     def test_heartbeat_stream_key_format(self):
-        """CT-002 : Stream heartbeat utilise le MA_PREFIX configuré."""
-        prefix = "A"
-        agent_id = "300"
-        expected = f"{prefix}:agent:{agent_id}:heartbeat"
-        assert expected == "A:agent:300:heartbeat"
+        """CT-002 : Stream heartbeat utilise l'adressage canonique."""
+        agent_id = "742"
+        expected = f"agent:{agent_id}:heartbeat"
+        assert expected == "agent:742:heartbeat"

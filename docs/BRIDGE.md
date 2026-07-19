@@ -2,19 +2,19 @@
 
 `scripts/agent-bridge/agent.py` est le pont entre Redis et un Claude Code
 **interactif tournant dans tmux**. Il n'exécute pas `claude` lui-même : il
-suppose qu'une session tmux nommée `{MA_PREFIX}-agent-{id}` existe déjà
+suppose qu'une session tmux nommée `agent-{id}` existe déjà
 (créée par `./scripts/agent.sh start <id>`) et dialogue avec elle via
 `tmux send-keys` / `tmux capture-pane`.
 
 ```
-Redis Streams                    tmux session "{MA_PREFIX}-agent-{id}"
-{MA_PREFIX}:agent:{id}:inbox ──► agent.py ──send-keys──► Claude Code (CLI)
-{MA_PREFIX}:agent:{id}:outbox ◄─ agent.py ◄─capture-pane─┘
+Redis Streams                    tmux session "agent-{id}"
+agent:{id}:inbox ──► agent.py ──send-keys──► Claude Code (CLI)
+agent:{id}:outbox ◄─ agent.py ◄─capture-pane─┘
 ```
 
 ```bash
 python3 scripts/agent-bridge/agent.py 300
-# Prérequis : session tmux "{MA_PREFIX}-agent-300" avec Claude lancé
+# Prérequis : session tmux "agent-300" avec Claude lancé
 # (sinon le bridge sort immédiatement avec une erreur)
 ```
 
@@ -27,9 +27,9 @@ Quatre threads démons + un serveur health HTTP :
 | Thread | Rôle |
 |--------|------|
 | `redis_listener` | Lit l'inbox Streams via consumer group (XREADGROUP) et alimente la queue |
-| `legacy_listener` | Lit l'inbox legacy (List `{MA_PREFIX}:inject:{id}`, BLPOP) — best-effort, sans ack |
+| `legacy_listener` | Lit l'inbox legacy (List `inject:{id}`, BLPOP) — best-effort, sans ack |
 | `queue_processor` | Dépile la queue, envoie à Claude (tmux), publie la réponse, XACK |
-| `heartbeat` | Publie toutes les 10 s sur `mi:agent:{id}:heartbeat` + `pane_state` (B6) |
+| `heartbeat` | Publie toutes les 10 s sur `agent:{id}:heartbeat` + `pane_state` (B6) |
 | `health_server` | HTTP `GET /health` sur `127.0.0.1:{AGENT_HEALTH_PORT_BASE + id}` (token `HEALTH_TOKEN` requis) |
 
 Le thread principal (`run()`) lit stdin : lignes normales = prompts locaux,
@@ -119,7 +119,7 @@ Le corps du parsing est désormais **généré** depuis les marqueurs :
 
 ```python
 engines.build_pane_eval(markers)              # $out, $pane_cmd → 14 champs
-engines.build_pane_scan(markers, MA_PREFIX)   # + capture tmux, 1 fork pour N agents
+engines.build_pane_scan(markers)   # + capture tmux, 1 fork pour N agents
 ```
 
 `tests/test_pane_scan.py` exécute le bash généré **et** `_parse_pane_state()` sur
@@ -140,7 +140,7 @@ rafraîchi ; un état faux est simplement affiché.
 ```bash
 ./scripts/send.sh 300 "Analyse le README"
 # ou
-redis-cli XADD "A:agent:300:inbox" MAXLEN '~' 10000 '*' \
+redis-cli XADD "agent:300:inbox" MAXLEN '~' 10000 '*' \
   prompt "Analyse le README" from_agent "cli" \
   correlation_id "$(uuidgen)" timestamp "$(date +%s)"
 ```
@@ -152,7 +152,7 @@ Champs : `prompt` (requis), `from_agent`, `correlation_id` (F2, optionnel),
 ### Réponse (outbox)
 
 ```
-{MA_PREFIX}:agent:{id}:outbox
+agent:{id}:outbox
   response, from_agent, to_agent, timestamp, chars
   correlation_id   # F2 : écho du correlation_id de la requête
 ```
@@ -202,8 +202,6 @@ Toute autre ligne stdin est traitée comme un prompt local (`from_agent=manual`)
 | Variable | Défaut | Rôle |
 |----------|--------|------|
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` | `localhost` / `6379` / vide | Connexion Redis |
-| `MA_PREFIX` | `A` | Préfixe des clés métier (`A:agent:300:inbox`…) |
-| `MONITORING_PREFIX` | `mi` | Préfixe des streams monitoring |
 | `LOG_DIR` | `logs/` | Logs : `{LOG_DIR}/{id}/bridge_{ts}.log` + `events.jsonl` |
 | `RESPONSE_STALL_THRESHOLD` | valeur de `RESPONSE_TIMEOUT`, sinon `300` | Silence du pane avant diagnostic `stalled` ; ne termine ni n'acquitte la tâche |
 | `RESPONSE_TIMEOUT` | `300` | Alias de compatibilité du seuil de stall ; ce n'est plus une deadline de complétion |
@@ -222,7 +220,7 @@ Valeur acceptée : entier de 30 à 86400 secondes ; absence = défaut bridge 300
 | `VERIFY_MAX_RETRIES` | `3` | V3 : budget de retries verify par tâche |
 | `VERIFY_TIMEOUT` | `600` | V3 : timeout (s) d'un `verify_cmd` |
 | `PROJECT_DIR` | `$BASE/project` | V3 : cwd du verify + règles anti-hacking |
-| `WAL_MAXLEN` | `100000` | V3 : borne du stream `{MA_PREFIX}:wal` |
+| `WAL_MAXLEN` | `100000` | V3 : borne du stream `wal` |
 | `WATCHDOG_STALL_THRESHOLD` | `600` | V3 : silence WAL (s) avant nudge watchdog |
 
 Boucle verify, WAL et détection de stall : voir `docs/V3.md`.
@@ -232,11 +230,11 @@ Boucle verify, WAL et détection de stall : voir `docs/V3.md`.
 ## Keepalive des logins (crontab-scheduler)
 
 Le scheduler (`scripts/crontab-scheduler.py`, session tmux
-`{MA_PREFIX}-agent-001`) balaie tous les profils `login/claude*` :
+`agent-001`) balaie tous les profils `login/claude*` :
 
 - **Sweep** toutes les `MA_KEEPALIVE_SWEEP_MIN` minutes (défaut `720` = 12 h,
   `0` = désactivé) : pour chaque profil, démarre (ou réutilise) la session
-  tmux `{MA_PREFIX}-agent-002-{profil}`, envoie un « hello » (vrai appel API
+  tmux `agent-002-{profil}`, envoie un « hello » (vrai appel API
   → la session OAuth ne s'endort pas), scrape `/status` (usage + identité)
   et écrit `keepalive/usage_{profil}.json`, `info_{profil}.json` et un
   récapitulatif `keepalive/sweep_report.json`.
@@ -255,12 +253,12 @@ Le scheduler (`scripts/crontab-scheduler.py`, session tmux
 
 ## Monitoring
 
-- **Heartbeat** : `mi:agent:{id}:heartbeat` toutes les 10 s (statut, mémoire,
+- **Heartbeat** : `agent:{id}:heartbeat` toutes les 10 s (statut, mémoire,
   CPU via psutil, compteurs de messages), borné à 1000 entrées.
 - **État dashboard (B6)** : le bridge dérive l'état du pane (`pane_state`)
-  et le publie dans le hash `{MA_PREFIX}:agent:{id}` — le dashboard lit
+  et le publie dans le hash `agent:{id}` — le dashboard lit
   Redis, sans re-scanner tmux.
-- **Statuts** dans `{MA_PREFIX}:agent:{id}` (`status`) : `idle`, `busy`,
+- **Statuts** dans `agent:{id}` (`status`) : `idle`, `busy`,
   `waiting_approval`, `api_error_retry`, `context_compacted`, `has_bashes`,
   `stopped`.
 - **Health HTTP** : `GET http://127.0.0.1:{base+id}/health?token=…` →

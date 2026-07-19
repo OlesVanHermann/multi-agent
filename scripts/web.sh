@@ -24,12 +24,6 @@ WEB_DIR="$BASE_DIR/web"
 LOG_DIR="$BASE_DIR/logs/000"
 PID_FILE="$LOG_DIR/dashboard.pid"
 
-# Auto-detect MA_PREFIX from project-config.md if not set
-if [ -z "${MA_PREFIX:-}" ] && [ -f "$BASE_DIR/project-config.md" ]; then
-    MA_PREFIX=$(grep '^MA_PREFIX=' "$BASE_DIR/project-config.md" 2>/dev/null | cut -d= -f2 | tr -d ' ' || true)
-fi
-MA_PREFIX="${MA_PREFIX:-A}"
-
 # Colors
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; NC='\033[0m'
@@ -79,7 +73,6 @@ do_start() {
     # Start uvicorn
     log_info "Starting dashboard..."
     cd "$WEB_DIR/backend"
-    MA_PREFIX=$MA_PREFIX \
         python3 -m uvicorn multi_agent.backend:app --host 127.0.0.1 --port 8050 \
         --ws-ping-interval 25 --ws-ping-timeout 90 \
         >> "$LOG_DIR/dashboard.log" 2>&1 &

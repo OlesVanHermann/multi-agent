@@ -27,8 +27,8 @@
 6. Signale ta complétion sur Redis
 
 ## Communication
-- Canal Redis : `{MA_PREFIX}:agent:{ID}:inbox` pour recevoir des messages
-- Canal Redis : `{MA_PREFIX}:agent:{ID}:outbox` pour publier tes résultats
+- Canal Redis : `agent:{ID}:inbox` pour recevoir des messages
+- Canal Redis : `agent:{ID}:outbox` pour publier tes résultats
 - Format : JSON `{"from": "{ID}", "type": "status|done|error", "payload": "..."}`
 
 ## Contrat absolu de réponse inter-agent

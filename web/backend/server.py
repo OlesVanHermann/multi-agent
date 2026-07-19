@@ -44,7 +44,6 @@ from multi_agent.tmuxio import _tmux_server_alive
 # === Ré-exports compat tests (lecture seule) ===
 from multi_agent.config import (  # noqa: F401
     BASE_DIR,
-    MA_PREFIX,
     _EXPECTED_AUDIENCE,
     _EXPECTED_ISSUER,
 )
@@ -76,8 +75,8 @@ async def lifespan(app: FastAPI):
     state._cache_task = asyncio.create_task(_cache_loop())
     print(f"Background cache started (refresh every {cfg.CACHE_REFRESH_INTERVAL}s)")
 
-    # Start crontab-scheduler if not already running (one per MA_PREFIX)
-    _crontab_session = f"{cfg.MA_PREFIX}-agent-001"
+    # Start crontab-scheduler if not already running.
+    _crontab_session = f"agent-001"
     _crontab_script = cfg.BASE_DIR / "scripts" / "crontab-scheduler.py"
     _crontab_log = cfg.BASE_DIR / "logs" / "crontab-scheduler.log"
     try:
@@ -105,10 +104,9 @@ async def lifespan(app: FastAPI):
             _log = shlex.quote(str(_crontab_log))
             _envf = shlex.quote(str(_env_file))
             _source_env = f"set -a; source {_envf} 2>/dev/null; set +a; " if _env_file.exists() else ""
-            _prefix = shlex.quote(cfg.MA_PREFIX)
             subprocess.run([
                 "tmux", "new-session", "-d", "-s", _crontab_session,
-                f"cd {_base} && {_source_env}MA_PREFIX={_prefix} python3 -u {_script} 2>&1 | tee -a {_log}"
+                f"cd {_base} && {_source_env}python3 -u {_script} 2>&1 | tee -a {_log}"
             ], timeout=5)
             print(f"Crontab scheduler started: {_crontab_session}")
         else:

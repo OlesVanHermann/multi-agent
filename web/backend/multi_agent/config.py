@@ -36,9 +36,21 @@ _KEYCLOAK_ALLOWED_PREFIXES = (
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
-MA_PREFIX = os.environ.get("MA_PREFIX", "A")
-if not re.match(r'^[A-Za-z0-9]+$', MA_PREFIX):
-    raise ValueError(f"Invalid MA_PREFIX: {MA_PREFIX}")
+
+def agent_session(agent_id: str) -> str:
+    return f"agent-{agent_id}"
+
+
+def agent_key(agent_id: str) -> str:
+    return f"agent:{agent_id}"
+
+
+def agent_inbox(agent_id: str) -> str:
+    return f"agent:{agent_id}:inbox"
+
+
+def agent_outbox(agent_id: str) -> str:
+    return f"agent:{agent_id}:outbox"
 
 BASE_DIR = Path(os.environ.get("MA_BASE", Path.home() / "multi-agent"))
 # sessions/ est un repertoire PROJET (jamais touche par upgrade.sh) — l'ancien
@@ -47,8 +59,8 @@ BASE_DIR = Path(os.environ.get("MA_BASE", Path.home() / "multi-agent"))
 PANEL_CONFIG_PATH = BASE_DIR / "sessions" / "panel-config.json"
 PANEL_CONFIG_PATH_LEGACY = BASE_DIR / "web" / "panel-config.json"
 
-PROMPT_HISTORY_STREAM = f"{MA_PREFIX}:prompt:history"
-CHAT_STREAM = f"{MA_PREFIX}:devchat"
+PROMPT_HISTORY_STREAM = "prompt:history"
+CHAT_STREAM = "devchat"
 
 # Background cache
 CACHE_REFRESH_INTERVAL = int(os.environ.get("CACHE_REFRESH_INTERVAL", "15"))  # seconds (normal)

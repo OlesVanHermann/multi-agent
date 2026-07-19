@@ -74,7 +74,7 @@ class TestWsTicketEndpoint:
                                   headers={"Authorization": f"Bearer {good_token}"})
         assert r.status_code == 200
         ticket = r.json()["ticket"]
-        key = f"{cfg.MA_PREFIX}:wsticket:{ticket}"
+        key = f"wsticket:{ticket}"
         assert key in stub_redis.store
         assert stub_redis.ttls[key] == 30
 
@@ -92,7 +92,7 @@ class TestTicketConsumption:
         from multi_agent import config as cfg
         from multi_agent.routers.ws import _consume_ws_ticket
         ticket = "a" * 43
-        stub_redis.store[f"{cfg.MA_PREFIX}:wsticket:{ticket}"] = "1"
+        stub_redis.store[f"wsticket:{ticket}"] = "1"
         assert await _consume_ws_ticket(ticket) is True
         # Rejoué → refusé (le DEL a invalidé le ticket)
         assert await _consume_ws_ticket(ticket) is False
@@ -127,7 +127,7 @@ class TestWsAuthenticated:
         from multi_agent import config as cfg
         from multi_agent.routers.ws import _ws_authenticated
         ticket = "d" * 43
-        stub_redis.store[f"{cfg.MA_PREFIX}:wsticket:{ticket}"] = "1"
+        stub_redis.store[f"wsticket:{ticket}"] = "1"
         assert await _ws_authenticated(self._ws(ticket=ticket)) is True
 
     async def test_cookie_fallback(self, stub_redis, srv, monkeypatch):

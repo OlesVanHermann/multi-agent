@@ -20,7 +20,7 @@ _WS_ALLOWED_ORIGINS = set(cfg._ALLOWED_ORIGINS + cfg._ALLOWED_ORIGINS_LOCAL_DEV)
 
 # Sessions keepalive « 002-<profil> » (claude1a…codex4b) : observables dans le
 # panneau Keep Alive comme un agent — l'ID ne matche pas AGENT_ID_RE (NNN-NNN)
-# mais la session tmux existe bel et bien ({MA_PREFIX}-agent-002-<profil>).
+# mais la session tmux existe bel et bien (agent-002-<profil>).
 _KEEPALIVE_ID_RE = re.compile(r"^002-(?:claude|codex)\d[a-z]$")
 
 # B4 : ticket WS à usage unique — le JWT ne transite plus jamais en query
@@ -30,7 +30,7 @@ _WS_TICKET_RE = re.compile(r"^[A-Za-z0-9_-]{20,100}$")
 
 
 def _ws_ticket_key(ticket: str) -> str:
-    return f"{cfg.MA_PREFIX}:wsticket:{ticket}"
+    return f"wsticket:{ticket}"
 
 
 @router.post("/api/ws-ticket")

@@ -12,7 +12,7 @@ Periods and their alignment:
   120 -> even hours (00:00, 02:00, 04:00, ...)
 
 Launch in tmux:
-  tmux new-session -d -s ${MA_PREFIX}-agent-001-crontab \
+  tmux new-session -d -s agent-001-crontab \
     "python3 $BASE/scripts/crontab-scheduler.py"
 """
 
@@ -39,7 +39,6 @@ KEEPALIVE_DIR = os.environ.get("KEEPALIVE_DIR", os.path.join(os.path.dirname(__f
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
-MA_PREFIX = os.environ.get("MA_PREFIX", "A")
 
 VALID_PERIODS = {10, 30, 60, 120}
 KEEPALIVE_PERIOD = 1440  # 24 hours (unused — kept for reference)
@@ -84,7 +83,7 @@ def fire_key(hour, minute, period):
 
 def _agent_is_busy(agent_id):
     """Return the engine-specific busy state read from the interactive TUI."""
-    session = f"{MA_PREFIX}-agent-{agent_id}"
+    session = f"agent-{agent_id}"
     try:
         check = subprocess.run(
             ["tmux", "has-session", "-t", session],
@@ -117,7 +116,7 @@ def _agent_is_busy(agent_id):
 
 def _count_pending_crontab(r, agent_id, max_check=10):
     """Count how many of the last messages in inbox are from crontab."""
-    stream = f"{MA_PREFIX}:agent:{agent_id}:inbox"
+    stream = f"agent:{agent_id}:inbox"
     try:
         # Read last max_check messages
         msgs = r.xrevrange(stream, '+', '-', count=max_check)
@@ -202,7 +201,7 @@ def scan_and_execute(r):
             continue
 
         # Send via Redis XADD
-        stream = f"{MA_PREFIX}:agent:{agent_id}:inbox"
+        stream = f"agent:{agent_id}:inbox"
         try:
             r.xadd(stream, {
                 "prompt": prompt,
@@ -540,7 +539,7 @@ def scan_keepalive():
     for filepath in sorted(glob.glob(pattern)):
         filename = os.path.basename(filepath)
         profile = filename.replace(".active", "")
-        session = f"{MA_PREFIX}-agent-002-{profile}"
+        session = f"agent-002-{profile}"
         check = subprocess.run(
             ["tmux", "has-session", "-t", session],
             capture_output=True, timeout=5
@@ -601,7 +600,7 @@ def _pane_text(session, lines=30):
 
 def _ensure_profile_session(profile):
     """Return (session, created). Start Claude with the profile if not running."""
-    session = f"{MA_PREFIX}-agent-002-{profile}"
+    session = f"agent-002-{profile}"
     check = subprocess.run(
         ["tmux", "has-session", "-t", session],
         capture_output=True, timeout=5
@@ -863,7 +862,7 @@ def scan_usage(r):
                 last_activity = 0
 
             # Publish per-session
-            session_key = f"{MA_PREFIX}:usage:session:{session_id}"
+            session_key = f"usage:session:{session_id}"
             try:
                 r.hset(session_key, mapping={
                     "project": project_name,
@@ -891,13 +890,13 @@ def scan_usage(r):
     # Publish global totals
     global_totals["last_scan"] = int(time.time())
     try:
-        r.hset(f"{MA_PREFIX}:usage:global", mapping=global_totals)
+        r.hset(f"usage:global", mapping=global_totals)
         # Update active sessions set
         if active_sessions:
-            r.delete(f"{MA_PREFIX}:usage:sessions")
-            r.sadd(f"{MA_PREFIX}:usage:sessions", *active_sessions)
+            r.delete(f"usage:sessions")
+            r.sadd(f"usage:sessions", *active_sessions)
         else:
-            r.delete(f"{MA_PREFIX}:usage:sessions")
+            r.delete(f"usage:sessions")
     except Exception:
         pass
 
@@ -921,7 +920,7 @@ def main():
         pass
     print(f"Starting scheduler (tick={TICK_INTERVAL}s, dir={CRONTAB_DIR})")
     print(f"Keepalive dir: {KEEPALIVE_DIR}")
-    print(f"Redis: {REDIS_HOST}:{REDIS_PORT}, prefix: {MA_PREFIX}")
+    print(f"Redis: {REDIS_HOST}:{REDIS_PORT}")
 
     r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD or None, decode_responses=True)
 

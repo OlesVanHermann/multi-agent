@@ -67,7 +67,7 @@ W="web/backend/multi_agent/routers/ws.py"
 # ── 4. sessions live : history-limit 10000 (effet immediat, sans restart) ──
 info "4/4 sessions tmux live : history-limit 10000"
 n=0
-for s in $(tmux list-sessions -F "#{session_name}" 2>/dev/null | grep "^${MA_PREFIX:-A}-agent-"); do
+for s in $(tmux list-sessions -F "#{session_name}" 2>/dev/null | grep '^agent-'); do
     tmux set-option -t "$s" history-limit 10000 2>/dev/null && n=$((n+1)) || true
 done
 ok "  history-limit applique a $n sessions live"
@@ -80,4 +80,4 @@ echo "Pour la profondeur de capture backend, RELANCER le dashboard :"
 echo "    ./scripts/web.sh stop && ./scripts/web.sh start"
 echo ""
 echo "Verifier ensuite qu'un pane est bien en buffer normal (scrollback) :"
-echo "    tmux display-message -p -t ${MA_PREFIX:-A}-agent-300-500:0 '#{alternate_on}'   # doit afficher 0"
+echo "    tmux display-message -p -t agent-NNN-NNN:0 '#{alternate_on}'   # doit afficher 0"

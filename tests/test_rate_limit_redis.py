@@ -77,7 +77,7 @@ class TestSharedRedisCounter:
             pytest.skip("Redis indisponible")
         from multi_agent import config as cfg
         ip = "203.0.113.7"
-        key = f"{cfg.MA_PREFIX}:ratelimit:{ip}"
+        key = f"ratelimit:{ip}"
 
         async def scenario():
             import redis.asyncio as aredis

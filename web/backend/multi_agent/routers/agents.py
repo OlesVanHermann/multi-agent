@@ -216,7 +216,7 @@ async def get_agent(agent_id: str = ValidAgentId):
     if not state.redis_pool:
         raise HTTPException(status_code=503, detail="Redis not available")
 
-    key = f"{cfg.MA_PREFIX}:agent:{agent_id}"
+    key = f"agent:{agent_id}"
     data = await state.redis_pool.hgetall(key)
 
     if not data:
@@ -266,7 +266,7 @@ async def _agent_lifecycle(agent_id: str, action: str):
         # Rendre la main sur l'ÉTAT RÉEL, pas sur un délai : la session tmux
         # doit exister (start/restart) ou avoir disparu (stop). Le front
         # réactive les boutons à la réponse — jamais sur un compte à rebours.
-        session = f"{cfg.MA_PREFIX}-agent-{agent_id}"
+        session = f"agent-{agent_id}"
         want_alive = action in ("start", "restart")
         alive = not want_alive
         verified = False
@@ -346,7 +346,7 @@ async def send_to_agent(msg: SendMessage, agent_id: str = ValidAgentId):
     base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
     if len(msg.message) > _SEND_MAX_LENGTH:
         raise HTTPException(status_code=400, detail=f"Message too long (max {_SEND_MAX_LENGTH})")
-    session_name = f"{cfg.MA_PREFIX}-agent-{agent_id}"
+    session_name = f"agent-{agent_id}"
     target = f"{session_name}:0.0"
 
     try:
@@ -394,7 +394,7 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
     max_length = 1_000_000 if data.submit else 20_000
     if data.text and len(data.text) > max_length:
         raise HTTPException(status_code=400, detail=f"input too long (max {max_length})")
-    session_name = f"{cfg.MA_PREFIX}-agent-{agent_id}"
+    session_name = f"agent-{agent_id}"
     target = f"{session_name}:0.0"
 
     try:
@@ -551,7 +551,7 @@ async def send_keys_to_agent(data: SendKeys, agent_id: str = ValidAgentId):
     base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
     if len(data.keys) > _SEND_KEYS_MAX:
         raise HTTPException(status_code=400, detail=f"Too many keys (max {_SEND_KEYS_MAX})")
-    session_name = f"{cfg.MA_PREFIX}-agent-{agent_id}"
+    session_name = f"agent-{agent_id}"
     target = f"{session_name}:0.0"
 
     try:

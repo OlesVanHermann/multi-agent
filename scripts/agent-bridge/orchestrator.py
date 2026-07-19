@@ -25,7 +25,6 @@ import workflow_engine
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
-MA_PREFIX = os.environ.get("MA_PREFIX", "A")
 IO_STREAM_MAXLEN = int(os.environ.get("IO_STREAM_MAXLEN", 10000))
 
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD or None, decode_responses=True)
@@ -41,7 +40,7 @@ def send_and_wait(to_agent, prompt, from_agent=0, timeout=120,
     Sans verify_cmd : comportement v2 inchangé."""
 
     # Marquer le dernier message avant d'envoyer
-    outbox = f"{MA_PREFIX}:agent:{to_agent}:outbox"
+    outbox = f"agent:{to_agent}:outbox"
     last_id = '$'
     correlation_id = str(uuid.uuid4())
 
@@ -55,7 +54,7 @@ def send_and_wait(to_agent, prompt, from_agent=0, timeout=120,
     if verify_cmd:
         fields['verify_cmd'] = verify_cmd
         fields['task_id'] = task_id or correlation_id[:8]
-    r.xadd(f"{MA_PREFIX}:agent:{to_agent}:inbox", fields,
+    r.xadd(f"agent:{to_agent}:inbox", fields,
            maxlen=IO_STREAM_MAXLEN, approximate=True)
     print(f"[{from_agent}] -> [{to_agent}]: {prompt[:60]}...")
 
@@ -86,7 +85,7 @@ def send_and_wait(to_agent, prompt, from_agent=0, timeout=120,
 def broadcast(agents, prompt, from_agent=0):
     """Envoie le même prompt à plusieurs agents"""
     for agent in agents:
-        r.xadd(f"{MA_PREFIX}:agent:{agent}:inbox", {
+        r.xadd(f"agent:{agent}:inbox", {
             'prompt': prompt,
             'from_agent': from_agent,
             'timestamp': int(time.time())
@@ -96,7 +95,7 @@ def broadcast(agents, prompt, from_agent=0):
 
 def collect_responses(agents, timeout=60):
     """Collecte les réponses de plusieurs agents"""
-    streams = {f"{MA_PREFIX}:agent:{a}:outbox": '$' for a in agents}
+    streams = {f"agent:{a}:outbox": '$' for a in agents}
     responses = {}
     start = time.time()
 
@@ -104,7 +103,7 @@ def collect_responses(agents, timeout=60):
         result = r.xread(streams, block=2000, count=10)
         if result:
             for stream, messages in result:
-                agent_id = stream.split(':')[2]  # A:agent:XXX:outbox
+                agent_id = stream.split(':')[1]  # agent:XXX:outbox
                 for msg_id, data in messages:
                     streams[stream] = msg_id
                     if 'response' in data and agent_id not in responses:

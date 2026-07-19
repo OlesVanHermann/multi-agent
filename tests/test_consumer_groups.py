@@ -30,8 +30,8 @@ def _make_agent():
     from agent import TmuxAgent
     agent = object.__new__(TmuxAgent)
     agent.agent_id = "300"
-    agent.inbox = "A:agent:300:inbox"
-    agent.outbox = "A:agent:300:outbox"
+    agent.inbox = "agent:300:inbox"
+    agent.outbox = "agent:300:outbox"
     agent.group = "bridge"
     agent.consumer = "agent-300"
     agent.running = True
@@ -207,7 +207,7 @@ class TestCrashRecoveryRealRedis:
 
     def test_unacked_replayed_acked_not_duplicated(self, real_redis):
         r = real_redis
-        stream, group, consumer = "G2:agent:300:inbox", "bridge", "agent-300"
+        stream, group, consumer = "agent:300:inbox", "bridge", "agent-300"
         r.xgroup_create(stream, group, id='$', mkstream=True)
 
         id1 = r.xadd(stream, {"prompt": "tache 1", "from_agent": "cli"})
@@ -238,7 +238,7 @@ class TestCrashRecoveryRealRedis:
         """Le groupe est créé avec id='$' : seuls les messages postérieurs
         sont consommés (comportement assumé du bridge, A4)."""
         r = real_redis
-        stream, group = "G2:agent:301:inbox", "bridge"
+        stream, group = "agent:301:inbox", "bridge"
         r.xadd(stream, {"prompt": "avant groupe", "from_agent": "cli"})
         r.xgroup_create(stream, group, id='$', mkstream=True)
         after = r.xadd(stream, {"prompt": "apres groupe", "from_agent": "cli"})

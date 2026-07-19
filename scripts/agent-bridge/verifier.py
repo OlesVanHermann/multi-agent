@@ -5,7 +5,7 @@ verifier.py — V3/C1 : la complétion se prouve, ne se déclare pas.
 Appelé par le bridge (agent.py) quand une tâche porte un verify_cmd :
   1. règles déterministes anti-hacking sur le diff git (rapides, gratuites) ;
   2. exécution du verify_cmd (timeout, capture) ;
-  3. vert  -> checkpoint git + audit stream {PREFIX}:completion (origin=verify)
+  3. vert  -> checkpoint git + audit stream completion (origin=verify)
      rouge -> rapport d'échec renvoyé au bridge (qui décide retry/escalade).
 
 Une tâche SANS verify_cmd ne passe jamais ici (flux v2 inchangé).
@@ -76,25 +76,25 @@ def checkpoint(task_id, cwd=None):
          cwd)
 
 
-def audit(redis_cli, prefix, agent_id, task_id, signal, origin="verify"):
+def audit(redis_cli, agent_id, task_id, signal, origin="verify"):
     """Journalise dans le stream de complétion — seul origin=verify fait foi
     sur une tâche à verify_cmd (le SCORE origin=agent devient consultatif)."""
-    redis_cli.xadd(f"{prefix}:completion",
+    redis_cli.xadd("completion",
                    {"from": str(agent_id), "to": "-", "signal": signal,
                     "task_id": str(task_id or "-"), "origin": origin,
                     "timestamp": int(time.time())},
                    maxlen=1000, approximate=True)
 
 
-def run(task, redis_cli, prefix, agent_id, cwd=None):
+def run(task, redis_cli, agent_id, cwd=None):
     """Point d'entrée bridge. Retourne (green, hacked, rapport)."""
     cwd = cwd or PROJECT_DIR
     hacked, reasons = hacking_rules(cwd)
     if hacked:
-        audit(redis_cli, prefix, agent_id, task.get("task_id"), "HACK_DETECTED")
+        audit(redis_cli, agent_id, task.get("task_id"), "HACK_DETECTED")
         return (False, True, "[verify] anti-hacking:\n- " + "\n- ".join(reasons))
     green, rapport = run_cmd(task["verify_cmd"], cwd)
     if green:
         checkpoint(task.get("task_id", "?"), cwd)
-        audit(redis_cli, prefix, agent_id, task.get("task_id"), "SCORE 100")
+        audit(redis_cli, agent_id, task.get("task_id"), "SCORE 100")
     return (green, False, rapport)

@@ -24,7 +24,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "agent-bridge"))
 import engines  # noqa: E402
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-MA_PREFIX = os.environ.get("MA_PREFIX", "A")
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
@@ -55,7 +54,7 @@ def detect_tmux(agent_id):
     deux ont dérivé — c'est ainsi qu'un outil de diagnostic finit par mentir.
     Elles partagent désormais engines.build_pane_eval().
     """
-    session = f"{MA_PREFIX}-agent-{agent_id}"
+    session = f"agent-{agent_id}"
     cli = engines.agent_engine(BASE_DIR / "prompts", agent_id)
     markers = engines.load_markers(cli)   # fail-fast si non relevés
 
@@ -118,8 +117,8 @@ def get_redis(agent_id):
         if REDIS_PASSWORD:
             kwargs["password"] = REDIS_PASSWORD
         r = redis.Redis(**kwargs)
-        data = r.hgetall(f"{MA_PREFIX}:agent:{agent_id}")
-        reload_flag = r.get(f"{MA_PREFIX}:agent:{agent_id}:reload_sent")
+        data = r.hgetall(f"agent:{agent_id}")
+        reload_flag = r.get(f"agent:{agent_id}:reload_sent")
         return data, reload_flag
     except Exception as e:
         print(f"  [redis error] {e}")
@@ -173,7 +172,7 @@ def main():
         sys.exit(1)
 
     agent_id = sys.argv[1]
-    session  = f"{MA_PREFIX}-agent-{agent_id}"
+    session  = f"agent-{agent_id}"
 
     print(f"\n{'='*65}")
     print(f"  AGENT {agent_id}   SESSION {session}")

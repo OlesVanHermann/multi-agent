@@ -2,7 +2,7 @@
 # redis.sh — Wrapper for redis-cli with auto-auth from scripts/secrets.cfg
 # Usage: source this file then use $REDIS_CLI instead of redis-cli
 #        or run directly: ./scripts/redis.sh PING
-#                         ./scripts/redis.sh XADD A:agent:300:inbox '*' prompt "go"
+#                         ./scripts/redis.sh XADD agent:NNN:inbox '*' prompt "go"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

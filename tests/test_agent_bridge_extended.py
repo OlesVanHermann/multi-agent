@@ -46,13 +46,12 @@ class TestNominalStartup:
 
     def test_config_defaults(self):
         """Vérifie les valeurs par défaut de la configuration (EF-001)"""
-        from agent import REDIS_HOST, REDIS_PORT, MA_PREFIX, MAX_HISTORY
+        from agent import REDIS_HOST, REDIS_PORT, MAX_HISTORY
         from agent import RESPONSE_TIMEOUT, POLL_INTERVAL, PROMPT_MARKERS
 
         assert REDIS_HOST == "localhost" or isinstance(REDIS_HOST, str)
         assert isinstance(REDIS_PORT, int)
         assert REDIS_PORT > 0
-        assert MA_PREFIX == "A" or isinstance(MA_PREFIX, str)
         assert MAX_HISTORY == 50
         assert 30 <= RESPONSE_TIMEOUT <= 900  # configurable via env
         assert POLL_INTERVAL == 1.0
@@ -122,9 +121,9 @@ class TestNominalStartup:
             agent = TmuxAgent("302")
             agent.running = False
 
-        assert agent.inbox == "A:agent:302:inbox"
-        assert agent.outbox == "A:agent:302:outbox"
-        assert agent.legacy_inbox == "A:inject:302"
+        assert agent.inbox == "agent:302:inbox"
+        assert agent.outbox == "agent:302:outbox"
+        assert agent.legacy_inbox == "inject:302"
 
     @patch('agent.subprocess.run')
     @patch('agent.redis.Redis')
@@ -217,7 +216,7 @@ class TestRedisConnectionLoss:
 
         agent = object.__new__(TmuxAgent)
         agent.agent_id = "402"
-        agent.inbox = "A:agent:402:inbox"
+        agent.inbox = "agent:402:inbox"
         agent.group = "bridge"
         agent.consumer = "agent-402"
         agent.running = True
@@ -448,7 +447,7 @@ class TestCommandErrors:
 
         agent.redis.xadd.assert_called_once()
         call_args = agent.redis.xadd.call_args
-        assert call_args[0][0] == "A:agent:400:inbox"
+        assert call_args[0][0] == "agent:400:inbox"
         assert call_args[0][1]['prompt'] == "hello from 300"
         assert call_args[0][1]['from_agent'] == "300"
 
@@ -459,7 +458,7 @@ class TestCommandErrors:
         agent = object.__new__(TmuxAgent)
         agent.agent_id = "100"
         agent.redis = MagicMock()
-        agent.redis.scan_iter.return_value = iter(["A:agent:300", "A:agent:301", "A:agent:100"])
+        agent.redis.scan_iter.return_value = iter(["agent:300", "agent:301", "agent:100"])
         agent._log = MagicMock()
 
         agent.send_to_agent("all", "broadcast message")

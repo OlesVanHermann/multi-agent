@@ -23,12 +23,6 @@ LOG_DIR="$BASE_DIR/logs"
 PROMPTS_DIR="$BASE_DIR/prompts"
 PROFILES_DIR="$BASE_DIR/login"
 
-# Auto-detect MA_PREFIX from project-config.md if not set
-if [ -z "${MA_PREFIX:-}" ] && [ -f "$BASE_DIR/project-config.md" ]; then
-    MA_PREFIX=$(grep '^MA_PREFIX=' "$BASE_DIR/project-config.md" 2>/dev/null | cut -d= -f2 | tr -d ' ' || true)
-fi
-MA_PREFIX="${MA_PREFIX:-A}"
-
 # Read tmux width from prompts/tmux.width if present
 if [ -f "$PROMPTS_DIR/tmux.width" ]; then
     TMUX_COLS=$(cat "$PROMPTS_DIR/tmux.width" | tr -d '[:space:]')
@@ -50,15 +44,6 @@ validate_agent_id() {
         return 1
     fi
 }
-
-validate_ma_prefix() {
-    if [[ ! "$MA_PREFIX" =~ ^[A-Za-z0-9]+$ ]]; then
-        log_error "Invalid MA_PREFIX: $MA_PREFIX"
-        exit 1
-    fi
-}
-
-validate_ma_prefix
 
 # ── Helpers ──
 
@@ -221,7 +206,7 @@ start_remote() {
     fi
     local remote_session
     remote_session=$(cat "$rf" | tr -d '[:space:]')
-    local SESSION_NAME="${MA_PREFIX}-agent-${agent_id}"
+    local SESSION_NAME="agent-${agent_id}"
 
     if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
         log_warn "$SESSION_NAME already exists, skipping"
@@ -247,7 +232,7 @@ start_remote() {
 start_single() {
     local agent_id=$1
     validate_agent_id "$agent_id" || return 1
-    local SESSION_NAME="${MA_PREFIX}-agent-$agent_id"
+    local SESSION_NAME="agent-$agent_id"
 
     if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
         log_warn "$SESSION_NAME already exists, skipping"
@@ -301,7 +286,7 @@ start_single() {
     AGENT_TIMEOUT=$(resolve_agent_timeout "$agent_id") || return 1
 
     tmux new-window -t "$SESSION_NAME" -n bridge
-    tmux send-keys -t "$SESSION_NAME:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX='$MA_PREFIX' AGENT_CLI='$CLI' ${AGENT_TIMEOUT:+RESPONSE_TIMEOUT='$AGENT_TIMEOUT' }REDIS_PASSWORD='${REDIS_PASSWORD:-}' REDIS_PORT='${REDIS_PORT:-6379}' HEALTH_TOKEN='${HEALTH_TOKEN:-}' python3 '$BRIDGE_SCRIPT' '$agent_id' 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
+    tmux send-keys -t "$SESSION_NAME:bridge" "cd '$BASE_DIR' && sleep 3 && AGENT_CLI='$CLI' ${AGENT_TIMEOUT:+RESPONSE_TIMEOUT='$AGENT_TIMEOUT' }REDIS_PASSWORD='${REDIS_PASSWORD:-}' REDIS_PORT='${REDIS_PORT:-6379}' HEALTH_TOKEN='${HEALTH_TOKEN:-}' python3 '$BRIDGE_SCRIPT' '$agent_id' 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
     tmux select-window -t "$SESSION_NAME:0"
 
     log_ok "Agent $agent_id started: $SESSION_NAME ($CLI)"
@@ -377,7 +362,7 @@ start_all() {
         # Skip duplicates (e.g. 390-rapport.md + 390-PLAN-MAXIMAL.md)
         [[ " ${agents[*]} " == *" $agent_id "* ]] && continue
         # Skip already running
-        local SESSION_NAME="${MA_PREFIX}-agent-$agent_id"
+        local SESSION_NAME="agent-$agent_id"
         if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
             log_warn "$SESSION_NAME already exists, skipping"
             continue
@@ -396,7 +381,7 @@ start_all() {
         # Skip duplicates (already found in flat format or verbose duplicate)
         if ! [[ " ${agents[*]} " == *" $agent_id "* ]]; then
             # Skip already running
-            local SESSION_NAME="${MA_PREFIX}-agent-$agent_id"
+            local SESSION_NAME="agent-$agent_id"
             if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
                 log_warn "$SESSION_NAME already exists, skipping"
             else
@@ -411,7 +396,7 @@ start_all() {
             local sat_name=$(basename "$sat_link" .md)  # e.g. 345-500
             is_protected "$sat_name" && continue
             [[ " ${agents[*]} " == *" $sat_name "* ]] && continue
-            local SAT_SESSION="${MA_PREFIX}-agent-$sat_name"
+            local SAT_SESSION="agent-$sat_name"
             if tmux has-session -t "$SAT_SESSION" 2>/dev/null; then
                 log_warn "$SAT_SESSION already exists, skipping"
                 continue
@@ -446,7 +431,7 @@ start_all() {
                 continue
             fi
 
-            local SESSION="${MA_PREFIX}-agent-$agent_id"
+            local SESSION="agent-$agent_id"
             mkdir -p "$LOG_DIR/$agent_id"
 
             # E1 : moteur + commande de lancement (cf. build_launch_cmd)
@@ -479,7 +464,7 @@ start_all() {
                     continue
                 fi
                 tmux new-window -t "$SESSION" -n bridge
-                tmux send-keys -t "$SESSION:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX='$MA_PREFIX' AGENT_CLI='$CLI' ${AGENT_TIMEOUT:+RESPONSE_TIMEOUT='$AGENT_TIMEOUT' }REDIS_PASSWORD='${REDIS_PASSWORD:-}' REDIS_PORT='${REDIS_PORT:-6379}' HEALTH_TOKEN='${HEALTH_TOKEN:-}' python3 '$BRIDGE_SCRIPT' '$agent_id' 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
+                tmux send-keys -t "$SESSION:bridge" "cd '$BASE_DIR' && sleep 3 && AGENT_CLI='$CLI' ${AGENT_TIMEOUT:+RESPONSE_TIMEOUT='$AGENT_TIMEOUT' }REDIS_PASSWORD='${REDIS_PASSWORD:-}' REDIS_PORT='${REDIS_PORT:-6379}' HEALTH_TOKEN='${HEALTH_TOKEN:-}' python3 '$BRIDGE_SCRIPT' '$agent_id' 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
                 tmux select-window -t "$SESSION:0"
 
                 log_ok "  Agent $agent_id ready ($CLI)"
@@ -518,7 +503,7 @@ ensure_infra() {
     fi
 
     # Agent 000
-    if ! tmux has-session -t "${MA_PREFIX}-agent-000" 2>/dev/null; then
+    if ! tmux has-session -t "agent-000" 2>/dev/null; then
         log_warn "Agent 000 not running. Start infra first: ./scripts/infra.sh start"
     fi
 
@@ -553,15 +538,15 @@ do_start() {
         done
     fi
     echo ""
-    echo "  List:   tmux ls | grep ${MA_PREFIX}-agent"
-    echo "  Attach: tmux attach -t ${MA_PREFIX}-agent-<id>"
+    echo "  List:   tmux ls | grep agent"
+    echo "  Attach: tmux attach -t agent-<id>"
 }
 
 # ── Stop ──
 
 stop_single() {
     local agent_id=$1
-    local SESSION="${MA_PREFIX}-agent-$agent_id"
+    local SESSION="agent-$agent_id"
 
     if is_protected "$agent_id" && [ "${ALLOW_PROTECTED_000:-0}" != "1" ]; then
         log_warn "Cannot stop $agent_id (use ./scripts/infra.sh stop)"
@@ -577,8 +562,8 @@ stop_single() {
 
 stop_all() {
     log_info "Stopping agents (000 is NEVER stopped)..."
-    tmux ls 2>/dev/null | grep "^${MA_PREFIX}-agent-" | cut -d: -f1 | while read session; do
-        local agent_id="${session#${MA_PREFIX}-agent-}"
+    tmux ls 2>/dev/null | grep "^agent-" | cut -d: -f1 | while read session; do
+        local agent_id="${session#agent-}"
         if is_protected "$agent_id"; then
             log_warn "Skipping $session (protected)"
             continue
@@ -587,7 +572,7 @@ stop_all() {
     done
 
     # Update Redis status
-    for key in $($REDIS_CLI KEYS "${MA_PREFIX}:agent:*" 2>/dev/null | grep -E "^${MA_PREFIX}:agent:[0-9]+(-[0-9]+)?$"); do
+    for key in $($REDIS_CLI KEYS "agent:*" 2>/dev/null | grep -E "^agent:[0-9]+(-[0-9]+)?$"); do
         $REDIS_CLI HSET "$key" status "stopped" > /dev/null 2>&1
     done
 }

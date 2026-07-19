@@ -42,7 +42,7 @@ class TestCheckAgentsExisting:
     @patch('healthcheck.r')
     def test_check_agents_detects_active(self, mock_r):
         """EF-005 : Détection agent actif (heartbeat < 30s)."""
-        mock_r.keys.return_value = ["ma:agent:300"]
+        mock_r.keys.return_value = ["agent:300"]
         mock_r.hgetall.return_value = {
             "status": "idle",
             "last_seen": str(int(time.time()) - 10),
@@ -60,7 +60,7 @@ class TestCheckAgentsExisting:
     @patch('healthcheck.r')
     def test_check_agents_detects_stale(self, mock_r):
         """EF-005 : Détection agent inactif (heartbeat > 30s)."""
-        mock_r.keys.return_value = ["ma:agent:300"]
+        mock_r.keys.return_value = ["agent:300"]
         mock_r.hgetall.return_value = {
             "status": "busy",
             "last_seen": str(int(time.time()) - 60),
@@ -86,9 +86,9 @@ class TestCheckAgentsExisting:
     def test_check_agents_filters_subkeys(self, mock_r):
         """EF-005 : Filtre les sous-clés (inbox, outbox)."""
         mock_r.keys.return_value = [
-            "ma:agent:300",
-            "ma:agent:300:inbox",
-            "ma:agent:300:outbox"
+            "agent:300",
+            "agent:300:inbox",
+            "agent:300:outbox"
         ]
         mock_r.hgetall.return_value = {
             "status": "idle",
@@ -108,7 +108,7 @@ class TestWatchdogInit:
     def test_default_configuration(self):
         """EF-002 : Configuration par défaut du watchdog."""
         redis_mock = MagicMock()
-        wd = AgentWatchdog(redis_mock, prefix="test")
+        wd = AgentWatchdog(redis_mock)
 
         assert wd.poll_interval == WATCHDOG_POLL_INTERVAL
         assert wd.fail_threshold == WATCHDOG_FAIL_THRESHOLD
@@ -118,7 +118,7 @@ class TestWatchdogInit:
     def test_custom_configuration(self):
         """EF-002 : Seuils personnalisables."""
         redis_mock = MagicMock()
-        wd = AgentWatchdog(redis_mock, prefix="test",
+        wd = AgentWatchdog(redis_mock,
                            poll_interval=10, fail_threshold=5,
                            max_restarts=5, breaker_window=600)
 
@@ -132,13 +132,13 @@ class TestWatchdogDiscovery:
     """EF-002 — Découverte des agents."""
 
     def test_discover_via_redis_heartbeat(self):
-        """EF-002 : Découverte via {MA_PREFIX}:agent:*:heartbeat (source de vérité)."""
+        """EF-002 : Découverte via agent:*:heartbeat (source de vérité)."""
         redis_mock = MagicMock()
         redis_mock.scan_iter.return_value = iter([
-            "A:agent:300:heartbeat",
-            "A:agent:345:heartbeat"
+            "agent:300:heartbeat",
+            "agent:345:heartbeat"
         ])
-        wd = AgentWatchdog(redis_mock, prefix="A")
+        wd = AgentWatchdog(redis_mock)
 
         agents = wd.discover_agents()
 
@@ -151,8 +151,8 @@ class TestWatchdogDiscovery:
         redis_mock.scan_iter.side_effect = Exception("Redis down")
         mock_run.return_value = MagicMock(
             returncode=0,
-            stdout="A-agent-300\nA-agent-345\nother-session\n")
-        wd = AgentWatchdog(redis_mock, prefix="A")
+            stdout="agent-300\nagent-345\nother-session\n")
+        wd = AgentWatchdog(redis_mock)
 
         agents = wd.discover_agents()
 
@@ -163,7 +163,7 @@ class TestWatchdogDiscovery:
         """EF-002 : Aucun agent actif → liste vide."""
         redis_mock = MagicMock()
         redis_mock.scan_iter.return_value = iter([])
-        wd = AgentWatchdog(redis_mock, prefix="test")
+        wd = AgentWatchdog(redis_mock)
 
         agents = wd.discover_agents()
 
@@ -185,7 +185,7 @@ class TestWatchdogHealthCheck:
         mock_urlopen.return_value = mock_resp
 
         redis_mock = MagicMock()
-        wd = AgentWatchdog(redis_mock, prefix="test")
+        wd = AgentWatchdog(redis_mock)
 
         result = wd.check_health("300")
 
@@ -199,7 +199,7 @@ class TestWatchdogHealthCheck:
         mock_urlopen.side_effect = URLError("Connection refused")
 
         redis_mock = MagicMock()
-        wd = AgentWatchdog(redis_mock, prefix="test")
+        wd = AgentWatchdog(redis_mock)
 
         result = wd.check_health("300")
 
@@ -208,7 +208,7 @@ class TestWatchdogHealthCheck:
     def test_invalid_agent_id(self):
         """EF-002 : Agent ID non numérique retourne None."""
         redis_mock = MagicMock()
-        wd = AgentWatchdog(redis_mock, prefix="test")
+        wd = AgentWatchdog(redis_mock)
 
         result = wd.check_health("abc")
 
@@ -217,7 +217,7 @@ class TestWatchdogHealthCheck:
     def test_compound_agent_id_port(self):
         """EF-002 : Agent composé 345-500 → port calculé depuis 345."""
         redis_mock = MagicMock()
-        wd = AgentWatchdog(redis_mock, prefix="test", health_port_base=9100)
+        wd = AgentWatchdog(redis_mock, health_port_base=9100)
 
         with patch('healthcheck.urlopen') as mock_url:
             mock_url.side_effect = OSError("connection refused")  # R-REGTEST C3: use caught exception type
@@ -236,7 +236,7 @@ class TestWatchdogRestart:
         """EF-002, CA-002 : Restart réussi via tmux."""
         mock_run.return_value = MagicMock(returncode=0)
         redis_mock = MagicMock()
-        wd = AgentWatchdog(redis_mock, prefix="test")
+        wd = AgentWatchdog(redis_mock)
 
         result = wd.restart_agent("300")
 
@@ -248,7 +248,7 @@ class TestWatchdogRestart:
         """EF-002 : Restart échoué."""
         mock_run.side_effect = FileNotFoundError("tmux not found")
         redis_mock = MagicMock()
-        wd = AgentWatchdog(redis_mock, prefix="test")
+        wd = AgentWatchdog(redis_mock)
 
         result = wd.restart_agent("300")
 
@@ -261,14 +261,14 @@ class TestWatchdogCircuitBreaker:
     def test_circuit_closed_by_default(self):
         """CA-003 : Circuit fermé par défaut (restarts autorisés)."""
         redis_mock = MagicMock()
-        wd = AgentWatchdog(redis_mock, prefix="test", max_restarts=3, breaker_window=300)
+        wd = AgentWatchdog(redis_mock, max_restarts=3, breaker_window=300)
 
         assert wd.is_circuit_open("300") is False
 
     def test_circuit_opens_after_max_restarts(self):
         """CA-003 : Circuit s'ouvre après 3 restarts en 5 min."""
         redis_mock = MagicMock()
-        wd = AgentWatchdog(redis_mock, prefix="test", max_restarts=3, breaker_window=300)
+        wd = AgentWatchdog(redis_mock, max_restarts=3, breaker_window=300)
 
         now = time.time()
         wd._restart_history["300"] = [now - 100, now - 50, now - 10]
@@ -279,7 +279,7 @@ class TestWatchdogCircuitBreaker:
     def test_circuit_respects_window(self):
         """CA-003 : Restarts hors fenêtre ne comptent pas."""
         redis_mock = MagicMock()
-        wd = AgentWatchdog(redis_mock, prefix="test", max_restarts=3, breaker_window=300)
+        wd = AgentWatchdog(redis_mock, max_restarts=3, breaker_window=300)
 
         now = time.time()
         # 3 restarts mais les 2 premiers hors fenêtre (>300s ago)
@@ -290,7 +290,7 @@ class TestWatchdogCircuitBreaker:
     def test_record_restart_tracks_history(self):
         """CA-003 : _record_restart enregistre le timestamp."""
         redis_mock = MagicMock()
-        wd = AgentWatchdog(redis_mock, prefix="test")
+        wd = AgentWatchdog(redis_mock)
 
         wd._record_restart("300")
 
@@ -299,7 +299,7 @@ class TestWatchdogCircuitBreaker:
     def test_record_restart_cleans_old(self):
         """CA-003 : _record_restart nettoie les vieux timestamps."""
         redis_mock = MagicMock()
-        wd = AgentWatchdog(redis_mock, prefix="test", breaker_window=60)
+        wd = AgentWatchdog(redis_mock, breaker_window=60)
 
         now = time.time()
         wd._restart_history["300"] = [now - 100, now - 80]  # All > 60s ago
@@ -320,7 +320,7 @@ class TestWatchdogProcessAgent:
         mock_urlopen.return_value = mock_resp
 
         redis_mock = MagicMock()
-        wd = AgentWatchdog(redis_mock, prefix="test")
+        wd = AgentWatchdog(redis_mock)
         wd._fail_counts["300"] = 2
 
         result = wd.process_agent("300")
@@ -335,7 +335,7 @@ class TestWatchdogProcessAgent:
         mock_urlopen.side_effect = URLError("refused")
 
         redis_mock = MagicMock()
-        wd = AgentWatchdog(redis_mock, prefix="test", fail_threshold=3)
+        wd = AgentWatchdog(redis_mock, fail_threshold=3)
 
         result = wd.process_agent("300")
 
@@ -351,7 +351,7 @@ class TestWatchdogProcessAgent:
         mock_run.return_value = MagicMock(returncode=0)
 
         redis_mock = MagicMock()
-        wd = AgentWatchdog(redis_mock, prefix="test", fail_threshold=3)
+        wd = AgentWatchdog(redis_mock, fail_threshold=3)
         wd._fail_counts["300"] = 2  # Will become 3 → threshold
 
         result = wd.process_agent("300")
@@ -368,7 +368,7 @@ class TestWatchdogProcessAgent:
         mock_urlopen.side_effect = URLError("refused")
 
         redis_mock = MagicMock()
-        wd = AgentWatchdog(redis_mock, prefix="test", fail_threshold=3,
+        wd = AgentWatchdog(redis_mock, fail_threshold=3,
                            max_restarts=3, breaker_window=300)
         wd._fail_counts["300"] = 2
         wd._circuit_open["300"] = True
@@ -388,7 +388,7 @@ class TestWatchdogProcessAgent:
         mock_urlopen.return_value = mock_resp
 
         redis_mock = MagicMock()
-        wd = AgentWatchdog(redis_mock, prefix="test")
+        wd = AgentWatchdog(redis_mock)
         wd._fail_counts["300"] = 3
         wd._circuit_open["300"] = True
 
@@ -404,7 +404,7 @@ class TestWatchdogEvents:
     def test_publish_event_uses_xtrim(self):
         """CT-009 : xadd avec maxlen=1000, approximate=True."""
         redis_mock = MagicMock()
-        wd = AgentWatchdog(redis_mock, prefix="test")
+        wd = AgentWatchdog(redis_mock)
 
         wd._publish_event("agent_restart", "300", {"reason": "test"})
 
@@ -415,14 +415,14 @@ class TestWatchdogEvents:
     def test_publish_event_format(self):
         """CT-002 : Format from/type/agent_id/timestamp/payload."""
         redis_mock = MagicMock()
-        wd = AgentWatchdog(redis_mock, prefix="test")
+        wd = AgentWatchdog(redis_mock)
 
         wd._publish_event("agent_restart", "300", {"reason": "test"})
 
         call_args = redis_mock.xadd.call_args
         stream = call_args[0][0]
         data = call_args[0][1]
-        assert stream == "test:monitoring:restart"
+        assert stream == "monitoring:restart"
         assert data["from"] == "watchdog"
         assert data["type"] == "agent_restart"
         assert data["agent_id"] == "300"
@@ -431,14 +431,14 @@ class TestWatchdogEvents:
     def test_publish_alert_stream(self):
         """CT-002 : Alerte publiée sur mi:monitoring:alerts."""
         redis_mock = MagicMock()
-        wd = AgentWatchdog(redis_mock, prefix="test")
+        wd = AgentWatchdog(redis_mock)
 
         wd._publish_alert("critical", "300", "test alert")
 
         call_args = redis_mock.xadd.call_args
         stream = call_args[0][0]
         data = call_args[0][1]
-        assert stream == "test:monitoring:alerts"
+        assert stream == "monitoring:alerts"
         assert data["type"] == "alert:critical"
 
 
@@ -453,8 +453,8 @@ class TestWatchdogRunCycle:
         mock_urlopen.return_value = mock_resp
 
         redis_mock = MagicMock()
-        redis_mock.scan_iter.return_value = iter(["test:agent:300:heartbeat"])
-        wd = AgentWatchdog(redis_mock, prefix="test")
+        redis_mock.scan_iter.return_value = iter(["agent:300:heartbeat"])
+        wd = AgentWatchdog(redis_mock)
 
         results = wd.run_cycle()
 

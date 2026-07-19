@@ -7,9 +7,6 @@ Ref spec 342 : CA-005 (alertes logguées), Tâche 004 §2 (agents bloqués >2 cy
 
 import time
 import json
-import os
-
-DEFAULT_PREFIX = os.environ.get("MA_PREFIX", "mi")
 
 # Seuils configurables (Tâche 004 §2, R-TIMING)
 STALE_THRESHOLD = 120       # 2 min sans heartbeat → stale
@@ -26,28 +23,27 @@ class AlertManager:
     Heuristique stuck: expected_cycle_time = max(avg_latency*10, 300) — P4 documenté.
     """
 
-    def __init__(self, redis_client, prefix=None,
+    def __init__(self, redis_client,
                  stale_threshold=None, stuck_cycles=None,
                  error_burst_threshold=None, error_burst_window=None):
         self.redis = redis_client
-        self.prefix = prefix or DEFAULT_PREFIX
         self.stale_threshold = stale_threshold or STALE_THRESHOLD
         self.stuck_cycles = stuck_cycles or STUCK_CYCLES
         self.error_burst_threshold = error_burst_threshold or ERROR_BURST_THRESHOLD
         self.error_burst_window = error_burst_window or ERROR_BURST_WINDOW
 
     def _stream_key(self):
-        return f"{self.prefix}:alerts:stream"
+        return f"alerts:stream"
 
     def _active_set_key(self):
-        return f"{self.prefix}:alerts:active"
+        return f"alerts:active"
 
     def _alerts_key(self, alert_id):
-        return f"{self.prefix}:alerts:{alert_id}"
+        return f"alerts:{alert_id}"
 
     def check_agent_stale(self, agent_id):
         """Vérifie heartbeat récent — EF-004, CA-004."""
-        data = self.redis.hgetall(f"{self.prefix}:agent:{agent_id}")
+        data = self.redis.hgetall(f"agent:{agent_id}")
         if not data or "last_seen" not in data:
             return None
         age = time.time() - float(data["last_seen"])
@@ -60,7 +56,7 @@ class AlertManager:
 
     def check_agent_stuck(self, agent_id):
         """Vérifie progression cycles — EF-004, Tâche 004 §2 (>2 cycles)."""
-        metrics = self.redis.hgetall(f"{self.prefix}:metrics:{agent_id}")
+        metrics = self.redis.hgetall(f"metrics:{agent_id}")
         if not metrics or "last_cycle_time" not in metrics:
             return None
         avg_lat = float(metrics.get("avg_latency", "60"))
@@ -77,7 +73,7 @@ class AlertManager:
 
     def check_error_burst(self, agent_id):
         """Vérifie burst d'erreurs récent — EF-004."""
-        metrics = self.redis.hgetall(f"{self.prefix}:metrics:{agent_id}")
+        metrics = self.redis.hgetall(f"metrics:{agent_id}")
         if not metrics:
             return None
         errors = int(metrics.get("errors_total", "0"))
@@ -93,10 +89,10 @@ class AlertManager:
     def check_all_agents(self):
         """Scanne tous les agents, retourne alertes — EF-004, Tâche 004."""
         alerts, seen = [], set()
-        for key in self.redis.scan_iter(match=f"{self.prefix}:agent:*"):
+        for key in self.redis.scan_iter(match=f"agent:*"):
             parts = key.split(':')
-            if len(parts) == 3:
-                aid = parts[2]
+            if len(parts) == 2:
+                aid = parts[1]
                 if aid not in seen:
                     seen.add(aid)
                     for fn in (self.check_agent_stale, self.check_agent_stuck,

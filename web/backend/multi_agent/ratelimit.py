@@ -40,7 +40,7 @@ async def _check_rate_limit(client_ip: str) -> bool:
     """
     if state.redis_pool is not None:
         try:
-            key = f"{cfg.MA_PREFIX}:ratelimit:{client_ip}"
+            key = f"ratelimit:{client_ip}"
             pipe = state.redis_pool.pipeline()
             pipe.incr(key)
             pipe.expire(key, _RATE_WINDOW, nx=True)

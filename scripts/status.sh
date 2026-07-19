@@ -28,12 +28,6 @@ LOG_DIR="$BASE_DIR/logs"
 source "$SCRIPT_DIR/redis.sh"
 source "$SCRIPT_DIR/lib.sh"
 
-# Auto-detect MA_PREFIX from project-config.md if not set
-if [ -z "${MA_PREFIX:-}" ] && [ -f "$BASE_DIR/project-config.md" ]; then
-    MA_PREFIX=$(grep '^MA_PREFIX=' "$BASE_DIR/project-config.md" 2>/dev/null | cut -d= -f2 | tr -d ' ' || true)
-fi
-MA_PREFIX="${MA_PREFIX:-A}"
-
 # Dashboard URL
 DASH_URL="http://127.0.0.1:8050"
 
@@ -58,7 +52,7 @@ header() {
 do_quick() {
     echo ""
     echo -e "${BLUE}═══════════════════════════════════════${NC}"
-    echo -e "${BLUE}   Multi-Agent Status (${MA_PREFIX})${NC}"
+    echo -e "${BLUE}   Multi-Agent Status${NC}"
     echo -e "${BLUE}═══════════════════════════════════════${NC}"
 
     header "Redis"
@@ -98,14 +92,14 @@ do_quick() {
     fi
 
     header "Agents"
-    SESSIONS=$(tmux ls 2>/dev/null | grep "^${MA_PREFIX}-agent-" | cut -d: -f1 || true)
+    SESSIONS=$(tmux ls 2>/dev/null | grep "^agent-" | cut -d: -f1 || true)
     if [ -z "$SESSIONS" ]; then
         fail "Agents" "no sessions found"
     else
         TOTAL=0; BUSY=0
         ARCHITECTS=""; MASTERS=""; WORKERS=""
         while IFS= read -r session; do
-            ID="${session#${MA_PREFIX}-agent-}"
+            ID="${session#agent-}"
             TOTAL=$((TOTAL + 1))
             STATUS="idle"
             CAPTURE=$(tmux capture-pane -t "${session}:0.0" -p -S -5 2>/dev/null || true)
@@ -154,7 +148,7 @@ do_quick() {
 do_full() {
     echo ""
     echo -e "${CYAN}═══════════════════════════════════════════════════${NC}"
-    echo -e "${CYAN}   Multi-Agent FULL Diagnostic (${MA_PREFIX})${NC}"
+    echo -e "${CYAN}   Multi-Agent FULL Diagnostic${NC}"
     echo -e "${CYAN}═══════════════════════════════════════════════════${NC}"
 
     ERRORS=0
@@ -166,12 +160,8 @@ do_full() {
         KEYS=$($REDIS_CLI DBSIZE 2>/dev/null | grep -o '[0-9]*')
         ok "ping" "PONG ($KEYS keys)"
 
-        # Check MA_PREFIX keys
-        MA_KEYS=$($REDIS_CLI KEYS "${MA_PREFIX}:*" 2>/dev/null | wc -l | tr -d ' ')
-        ok "keys" "$MA_KEYS keys with prefix ${MA_PREFIX}:"
-
         # Check agent status hashes
-        AGENT_HASHES=$($REDIS_CLI KEYS "${MA_PREFIX}:agent:*" 2>/dev/null | grep -cE "^${MA_PREFIX}:agent:[0-9]+$" 2>/dev/null || true)
+        AGENT_HASHES=$($REDIS_CLI KEYS "agent:*" 2>/dev/null | grep -cE "^agent:[0-9]+$" 2>/dev/null || true)
         info "hashes" "${AGENT_HASHES:-0} agent status hashes"
     else
         fail "ping" "NOT RUNNING"
@@ -305,7 +295,7 @@ do_full() {
     header "5. WebSocket"
 
     # Get first agent ID
-    FIRST_AGENT=$(tmux ls 2>/dev/null | grep "^${MA_PREFIX}-agent-" | head -1 | sed "s/${MA_PREFIX}-agent-//" | cut -d: -f1)
+    FIRST_AGENT=$(tmux ls 2>/dev/null | grep "^agent-" | head -1 | sed "s/agent-//" | cut -d: -f1)
 
     # Validate agent ID format before use in python/curl
     if [[ -n "$FIRST_AGENT" ]] && ! is_valid_agent_id "$FIRST_AGENT"; then
@@ -469,14 +459,14 @@ asyncio.run(test())
 
     # ── 7. Tmux agents ──
     header "7. Agent Sessions"
-    SESSIONS=$(tmux ls 2>/dev/null | grep "^${MA_PREFIX}-agent-" | cut -d: -f1 || true)
+    SESSIONS=$(tmux ls 2>/dev/null | grep "^agent-" | cut -d: -f1 || true)
     if [ -z "$SESSIONS" ]; then
-        fail "tmux" "no ${MA_PREFIX}-agent-* sessions"
+        fail "tmux" "no agent-* sessions"
         ERRORS=$((ERRORS + 1))
     else
         TOTAL=0; OK_AGENTS=0; FAIL_AGENTS=""
         while IFS= read -r session; do
-            ID="${session#${MA_PREFIX}-agent-}"
+            ID="${session#agent-}"
             TOTAL=$((TOTAL + 1))
 
             # Check capture-pane works

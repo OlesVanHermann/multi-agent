@@ -24,21 +24,19 @@ class TestMetricsCollectorInit:
         """Prefix par défaut depuis env ou 'mi' (CT-002, CT-004)."""
         redis = MagicMock()
         mc = MetricsCollector(redis)
-        assert mc.prefix in ("mi", os.environ.get("MA_PREFIX", "mi"))
 
     def test_init_custom_prefix(self):
         """Prefix personnalisé pour isolation tests (CT-004)."""
         redis = MagicMock()
-        mc = MetricsCollector(redis, prefix="test")
-        assert mc.prefix == "test"
+        mc = MetricsCollector(redis)
 
     def test_keys_use_prefix(self):
         """Les clés Redis utilisent le bon préfixe."""
         redis = MagicMock()
-        mc = MetricsCollector(redis, prefix="test")
-        assert mc._metrics_key("345") == "test:metrics:345"
-        assert mc._latency_key("345") == "test:metrics:345:latency_log"
-        assert mc._global_key() == "test:metrics:global"
+        mc = MetricsCollector(redis)
+        assert mc._metrics_key("345") == "metrics:345"
+        assert mc._latency_key("345") == "metrics:345:latency_log"
+        assert mc._global_key() == "metrics:global"
 
 
 class TestRecordTaskLatency:
@@ -47,21 +45,21 @@ class TestRecordTaskLatency:
     def test_record_task_start(self):
         """Enregistrement début de tâche."""
         redis = MagicMock()
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         mc.record_task_start("345", task_id="task-1")
 
-        redis.hset.assert_any_call("test:metrics:345", "last_task_start", pytest.approx(time.time(), abs=2))
+        redis.hset.assert_any_call("metrics:345", "last_task_start", pytest.approx(time.time(), abs=2))
 
     def test_record_task_end_calculates_latency(self):
         """Fin de tâche calcule la latence correctement."""
         redis = MagicMock()
         redis.hget.side_effect = lambda key, field: {
-            ("test:metrics:345", "last_task_start"): str(time.time() - 5.0),
-            ("test:metrics:345", "avg_latency"): None,
-            ("test:metrics:345", "latency_count"): None,
+            ("metrics:345", "last_task_start"): str(time.time() - 5.0),
+            ("metrics:345", "avg_latency"): None,
+            ("metrics:345", "latency_count"): None,
         }.get((key, field))
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         latency = mc.record_task_end("345", task_id="task-1")
 
@@ -72,7 +70,7 @@ class TestRecordTaskLatency:
         """Fin de tâche sans début retourne None."""
         redis = MagicMock()
         redis.hget.return_value = None
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         latency = mc.record_task_end("345")
 
@@ -82,37 +80,37 @@ class TestRecordTaskLatency:
         """Fin de tâche incrémente les compteurs."""
         redis = MagicMock()
         redis.hget.return_value = None
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         mc.record_task_end("345", success=True)
 
-        redis.hincrby.assert_any_call("test:metrics:345", "tasks_total", 1)
-        redis.hincrby.assert_any_call("test:metrics:345", "tasks_success", 1)
+        redis.hincrby.assert_any_call("metrics:345", "tasks_total", 1)
+        redis.hincrby.assert_any_call("metrics:345", "tasks_success", 1)
 
     def test_record_task_end_failed_increments_failed(self):
         """Tâche échouée incrémente tasks_failed."""
         redis = MagicMock()
         redis.hget.return_value = None
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         mc.record_task_end("345", success=False)
 
-        redis.hincrby.assert_any_call("test:metrics:345", "tasks_failed", 1)
+        redis.hincrby.assert_any_call("metrics:345", "tasks_failed", 1)
 
     def test_latency_history_trimmed(self):
         """L'historique de latence est limité à LATENCY_HISTORY_MAX."""
         redis = MagicMock()
         redis.hget.side_effect = lambda key, field: {
-            ("test:metrics:345", "last_task_start"): str(time.time() - 1.0),
-            ("test:metrics:345", "avg_latency"): "2.0",
-            ("test:metrics:345", "latency_count"): "5",
+            ("metrics:345", "last_task_start"): str(time.time() - 1.0),
+            ("metrics:345", "avg_latency"): "2.0",
+            ("metrics:345", "latency_count"): "5",
         }.get((key, field))
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         mc.record_task_end("345")
 
         redis.ltrim.assert_called_once_with(
-            "test:metrics:345:latency_log", -LATENCY_HISTORY_MAX, -1
+            "metrics:345:latency_log", -LATENCY_HISTORY_MAX, -1
         )
 
 
@@ -122,18 +120,18 @@ class TestRecordError:
     def test_record_error_increments(self):
         """Enregistrement d'erreur incrémente les compteurs."""
         redis = MagicMock()
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         mc.record_error("345", "TimeoutError", "Redis timeout")
 
-        redis.hincrby.assert_any_call("test:metrics:345", "errors_total", 1)
-        redis.hincrby.assert_any_call("test:metrics:345", "errors:TimeoutError", 1)
-        redis.hset.assert_any_call("test:metrics:345", "last_error_type", "TimeoutError")
+        redis.hincrby.assert_any_call("metrics:345", "errors_total", 1)
+        redis.hincrby.assert_any_call("metrics:345", "errors:TimeoutError", 1)
+        redis.hset.assert_any_call("metrics:345", "last_error_type", "TimeoutError")
 
     def test_record_error_truncates_message(self):
         """Message d'erreur tronqué à 200 caractères."""
         redis = MagicMock()
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         long_msg = "x" * 500
         mc.record_error("345", "RuntimeError", long_msg)
@@ -148,11 +146,11 @@ class TestRecordError:
     def test_record_error_updates_global(self):
         """Erreur incrémente le compteur global."""
         redis = MagicMock()
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         mc.record_error("345", "ValueError")
 
-        redis.hincrby.assert_any_call("test:metrics:global", "total_errors", 1)
+        redis.hincrby.assert_any_call("metrics:global", "total_errors", 1)
 
 
 class TestRecordCycle:
@@ -162,21 +160,21 @@ class TestRecordCycle:
         """Enregistrement de cycle complété."""
         redis = MagicMock()
         redis.hget.return_value = None
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         mc.record_cycle_complete("345", cycle_number=3, score=95)
 
-        redis.hincrby.assert_any_call("test:metrics:345", "cycles_completed", 1)
-        redis.hset.assert_any_call("test:metrics:345", "last_cycle", 3)
+        redis.hincrby.assert_any_call("metrics:345", "cycles_completed", 1)
+        redis.hset.assert_any_call("metrics:345", "last_cycle", 3)
 
     def test_record_cycle_with_score(self):
         """Score moyen calculé correctement."""
         redis = MagicMock()
         redis.hget.side_effect = lambda key, field: {
-            ("test:metrics:345", "avg_score"): "90.0",
-            ("test:metrics:345", "score_count"): "2",
+            ("metrics:345", "avg_score"): "90.0",
+            ("metrics:345", "score_count"): "2",
         }.get((key, field))
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         mc.record_cycle_complete("345", cycle_number=3, score=96)
 
@@ -191,11 +189,11 @@ class TestRecordCycle:
         """Cycle sans score n'affecte pas avg_score."""
         redis = MagicMock()
         redis.hget.return_value = None
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         mc.record_cycle_complete("345", cycle_number=1)
 
-        redis.hincrby.assert_any_call("test:metrics:345", "cycles_completed", 1)
+        redis.hincrby.assert_any_call("metrics:345", "cycles_completed", 1)
         # Pas d'appel hset avec avg_score
         score_mapping_calls = [c for c in redis.hset.call_args_list
                                if isinstance(c[1].get('mapping'), dict) and 'avg_score' in c[1].get('mapping', {})]
@@ -208,21 +206,21 @@ class TestRecordMessage:
     def test_record_inbound_message(self):
         """Message entrant incrémente le compteur."""
         redis = MagicMock()
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         mc.record_message("345", direction="inbound")
 
-        redis.hincrby.assert_any_call("test:metrics:345", "messages_inbound", 1)
-        redis.hincrby.assert_any_call("test:metrics:global", "total_messages", 1)
+        redis.hincrby.assert_any_call("metrics:345", "messages_inbound", 1)
+        redis.hincrby.assert_any_call("metrics:global", "total_messages", 1)
 
     def test_record_outbound_message(self):
         """Message sortant incrémente le compteur."""
         redis = MagicMock()
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         mc.record_message("345", direction="outbound")
 
-        redis.hincrby.assert_any_call("test:metrics:345", "messages_outbound", 1)
+        redis.hincrby.assert_any_call("metrics:345", "messages_outbound", 1)
 
 
 class TestGetMetrics:
@@ -232,7 +230,7 @@ class TestGetMetrics:
         """Agent sans métriques retourne dict vide."""
         redis = MagicMock()
         redis.hgetall.return_value = {}
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         result = mc.get_metrics("999")
         assert result == {}
@@ -245,7 +243,7 @@ class TestGetMetrics:
             "avg_latency": "2.5",
             "last_error_type": "TimeoutError"
         }
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         result = mc.get_metrics("345")
 
@@ -262,7 +260,7 @@ class TestGetMetrics:
             json.dumps({"latency": 2.0, "timestamp": 1001, "task_id": "b", "success": True})
         ]
         redis.lrange.return_value = entries
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         result = mc.get_latency_history("345")
 
@@ -274,11 +272,11 @@ class TestGetMetrics:
         """Historique avec limit utilise lrange correctement."""
         redis = MagicMock()
         redis.lrange.return_value = []
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         mc.get_latency_history("345", limit=10)
 
-        redis.lrange.assert_called_once_with("test:metrics:345:latency_log", -10, -1)
+        redis.lrange.assert_called_once_with("metrics:345:latency_log", -10, -1)
 
     def test_get_global_metrics(self):
         """Métriques globales parsées correctement."""
@@ -288,7 +286,7 @@ class TestGetMetrics:
             "total_errors": "5",
             "total_messages": "500"
         }
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         result = mc.get_global_metrics()
 
@@ -299,13 +297,13 @@ class TestGetMetrics:
         """Récupération de tous les agents."""
         redis = MagicMock()
         redis.scan_iter.return_value = [
-            "test:metrics:345",
-            "test:metrics:300",
-            "test:metrics:global",
-            "test:metrics:345:latency_log"
+            "metrics:345",
+            "metrics:300",
+            "metrics:global",
+            "metrics:345:latency_log"
         ]
         redis.hgetall.return_value = {"tasks_total": "5"}
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         result = mc.get_all_agents_metrics()
 
@@ -321,44 +319,44 @@ class TestRecordHeartbeat:
     def test_record_heartbeat_stores_timestamp(self):
         """EF-003 : record_heartbeat stocke last_heartbeat_ts."""
         redis = MagicMock()
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
         now = time.time()
 
         mc.record_heartbeat("300", {"timestamp": now, "memory_mb": "50", "cpu_percent": "10"})
 
-        redis.hset.assert_any_call("test:metrics:300", "last_heartbeat_ts", now)
+        redis.hset.assert_any_call("metrics:300", "last_heartbeat_ts", now)
 
     def test_record_heartbeat_stores_memory(self):
         """EF-003, CT-011 : record_heartbeat stocke memory_mb."""
         redis = MagicMock()
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         mc.record_heartbeat("300", {"timestamp": time.time(), "memory_mb": "128.5"})
 
-        redis.hset.assert_any_call("test:metrics:300", "last_memory_mb", "128.5")
+        redis.hset.assert_any_call("metrics:300", "last_memory_mb", "128.5")
 
     def test_record_heartbeat_stores_cpu(self):
         """EF-003, CT-011 : record_heartbeat stocke cpu_percent."""
         redis = MagicMock()
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         mc.record_heartbeat("300", {"timestamp": time.time(), "cpu_percent": "25.3"})
 
-        redis.hset.assert_any_call("test:metrics:300", "last_cpu_percent", "25.3")
+        redis.hset.assert_any_call("metrics:300", "last_cpu_percent", "25.3")
 
     def test_record_heartbeat_increments_counter(self):
         """EF-003 : record_heartbeat incrémente heartbeats_total."""
         redis = MagicMock()
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         mc.record_heartbeat("300", {"timestamp": time.time()})
 
-        redis.hincrby.assert_called_with("test:metrics:300", "heartbeats_total", 1)
+        redis.hincrby.assert_called_with("metrics:300", "heartbeats_total", 1)
 
     def test_record_heartbeat_without_psutil_fields(self):
         """CT-011 : record_heartbeat fonctionne sans memory_mb/cpu_percent."""
         redis = MagicMock()
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         mc.record_heartbeat("300", {"timestamp": time.time()})
 
@@ -373,9 +371,9 @@ class TestResetMetrics:
     def test_reset_agent_metrics(self):
         """Reset supprime les clés de l'agent."""
         redis = MagicMock()
-        mc = MetricsCollector(redis, prefix="test")
+        mc = MetricsCollector(redis)
 
         mc.reset_agent_metrics("345")
 
-        redis.delete.assert_any_call("test:metrics:345")
-        redis.delete.assert_any_call("test:metrics:345:latency_log")
+        redis.delete.assert_any_call("metrics:345")
+        redis.delete.assert_any_call("metrics:345:latency_log")

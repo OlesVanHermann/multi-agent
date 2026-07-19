@@ -205,13 +205,6 @@ class TestAgentScript:
 class TestScriptInteractions:
     """EF-004 — Vérification de la cohérence entre les deux scripts"""
 
-    def test_both_scripts_share_ma_prefix(self):
-        """Les deux scripts utilisent MA_PREFIX pour la cohérence (EF-004)"""
-        for script_path in [INFRA_SCRIPT, AGENT_SCRIPT]:
-            with open(script_path, 'r') as f:
-                content = f.read()
-            assert 'MA_PREFIX' in content, f"{script_path} should use MA_PREFIX"
-
     def test_both_scripts_reference_base_dir(self):
         """Les deux scripts définissent BASE_DIR correctement (EF-004)"""
         for script_path in [INFRA_SCRIPT, AGENT_SCRIPT]:

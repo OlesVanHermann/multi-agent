@@ -27,16 +27,7 @@ PROFILES_DIR="$BASE_DIR/login"
 # Cadence de mise à jour : voir patch/HOW_TO_UPGRADE.md.
 KEYCLOAK_IMAGE="${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:23.0.7@sha256:14e99d6f5dd0516a5bdc82537b732cb85469ecdb15ad7fe5f11ff67521544db8}"
 
-# Auto-detect MA_PREFIX from project-config.md if not set
-if [ -z "${MA_PREFIX:-}" ] && [ -f "$BASE_DIR/project-config.md" ]; then
-    MA_PREFIX=$(grep '^MA_PREFIX=' "$BASE_DIR/project-config.md" 2>/dev/null | cut -d= -f2 | tr -d ' ' || true)
-fi
-MA_PREFIX="${MA_PREFIX:-A}"
-if [[ ! "$MA_PREFIX" =~ ^[A-Za-z0-9]+$ ]]; then
-    log_error "Invalid MA_PREFIX: $MA_PREFIX"
-    exit 1
-fi
-SESSION_NAME="${MA_PREFIX}-agent-000"
+SESSION_NAME="agent-000"
 
 # Colors
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -262,7 +253,7 @@ do_start() {
         # Prompt injection is handled by the bridge (agent.py auto-init)
 
         tmux new-window -t "$SESSION_NAME" -n bridge
-        tmux send-keys -t "$SESSION_NAME:bridge" "cd '$BASE_DIR' && sleep 3 && MA_PREFIX=$MA_PREFIX AGENT_CLI='$CLI' REDIS_PASSWORD='${REDIS_PASSWORD:-}' REDIS_PORT='${REDIS_PORT:-6379}' HEALTH_TOKEN='${HEALTH_TOKEN:-}' python3 '$BRIDGE_SCRIPT' 000 2>&1 | tee -a '$LOG_DIR/bridge.log'" Enter
+        tmux send-keys -t "$SESSION_NAME:bridge" "cd '$BASE_DIR' && sleep 3 && AGENT_CLI='$CLI' REDIS_PASSWORD='${REDIS_PASSWORD:-}' REDIS_PORT='${REDIS_PORT:-6379}' HEALTH_TOKEN='${HEALTH_TOKEN:-}' python3 '$BRIDGE_SCRIPT' 000 2>&1 | tee -a '$LOG_DIR/bridge.log'" Enter
         tmux select-window -t "$SESSION_NAME:0"
         log_ok "Agent 000 started in tmux session: $SESSION_NAME ($CLI)"
     fi

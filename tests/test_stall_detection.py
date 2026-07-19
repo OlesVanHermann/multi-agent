@@ -13,37 +13,33 @@ import pytest
 import healthcheck
 import wal
 
-PREFIX = "TSTALL"
-MON_PREFIX = "TSTALLMON"
 AGENT = "300"
 
 
 def _watchdog(redis_client):
-    return healthcheck.AgentWatchdog(redis_client, prefix=MON_PREFIX,
-                                     stall_threshold=100)
+    return healthcheck.AgentWatchdog(redis_client, stall_threshold=100)
 
 
 def _set_status(redis_client, status):
-    redis_client.hset(f"{PREFIX}:agent:{AGENT}", "status", status)
+    redis_client.hset(f"agent:{AGENT}", "status", status)
 
 
 def _inject(redis_client, event, ts, task_id="t1"):
     """Événement WAL avec ts contrôlé (wal.emit force ts=now)."""
-    redis_client.xadd(wal.stream(PREFIX),
+    redis_client.xadd(wal.stream(),
                       {"event": event, "agent_id": AGENT,
                        "task_id": task_id, "ts": int(ts)})
 
 
 def _alerts(redis_client):
-    return [d for _, d in redis_client.xrange(f"{MON_PREFIX}:monitoring:alerts")]
+    return [d for _, d in redis_client.xrange("monitoring:alerts")]
 
 
 @pytest.fixture(autouse=True)
 def _env(redis_client, monkeypatch):
-    monkeypatch.setattr(healthcheck, "MA_PREFIX", PREFIX)
-    keys = [wal.stream(PREFIX), f"{PREFIX}:agent:{AGENT}",
-            f"{PREFIX}:agent:{AGENT}:inbox",
-            f"{MON_PREFIX}:monitoring:alerts"]
+    keys = [wal.stream(), f"agent:{AGENT}",
+            f"agent:{AGENT}:inbox",
+            "monitoring:alerts"]
     redis_client.delete(*keys)
     yield
     redis_client.delete(*keys)
@@ -81,12 +77,12 @@ class TestCheckStall:
         assert len(alerts) == 1
         assert alerts[0]["type"] == "alert:warning"
         # message de nudge dans l'inbox
-        inbox = redis_client.xrange(f"{PREFIX}:agent:{AGENT}:inbox")
+        inbox = redis_client.xrange(f"agent:{AGENT}:inbox")
         assert len(inbox) == 1
         assert inbox[0][1]["from_agent"] == "watchdog"
         assert inbox[0][1]["prompt"].startswith("FROM:watchdog|")
         # le nudge est journalisé dans le WAL (réarme le compteur)
-        last = wal.last_event(redis_client, PREFIX, AGENT)
+        last = wal.last_event(redis_client, None, AGENT)
         assert last[1]["event"] == "nudge"
 
     def test_after_nudge_window_not_elapsed_stays_silent(self, redis_client):
@@ -114,7 +110,7 @@ class TestCheckStall:
         assert len(alerts) == 1
         assert alerts[0]["type"] == "alert:critical"
         # escalade journalisée dans le WAL
-        last = wal.last_event(redis_client, PREFIX, AGENT,
+        last = wal.last_event(redis_client, None, AGENT,
                               events=("escalation",))
         assert last[1]["motif"] == "stall"
 

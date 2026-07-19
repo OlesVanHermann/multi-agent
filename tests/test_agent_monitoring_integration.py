@@ -137,10 +137,6 @@ class TestHeartbeatEnriched:
         """CA-004 : intervalle = 10s."""
         assert _mod.HEARTBEAT_INTERVAL == 10
 
-    def test_monitoring_prefix_configurable(self):
-        """CT-002 : MONITORING_PREFIX vaut "mi" par défaut."""
-        assert _mod.MONITORING_PREFIX == os.environ.get("MONITORING_PREFIX", "mi")
-
     def test_heartbeat_stream_maxlen(self):
         """CT-009 : STREAM_MAXLEN = 1000."""
         assert _mod.STREAM_MAXLEN == 1000
@@ -167,15 +163,14 @@ class TestHeartbeatEnriched:
             "memory_mb": "0",
             "cpu_percent": "0",
         }
-        pfx = _mod.MONITORING_PREFIX
         ml = _mod.STREAM_MAXLEN
-        agent.redis.xadd(f"{pfx}:agent:{agent.agent_id}:heartbeat", data,
+        agent.redis.xadd(f"agent:{agent.agent_id}:heartbeat", data,
                          maxlen=ml, approximate=True)
 
         call_args = agent.redis.xadd.call_args
         stream = call_args[0][0]
         payload = call_args[0][1]
-        assert stream == f"{pfx}:agent:300:heartbeat"
+        assert stream == f"agent:{agent.agent_id}:heartbeat"
 
         required = ["agent_id", "timestamp", "status", "memory_mb",
                     "cpu_percent", "messages_processed", "last_message_ts"]
@@ -281,22 +276,6 @@ class TestAgentPsutil:
         }
         assert data["memory_mb"] == "0"
         assert len(data) == 7
-
-
-class TestRedisKeyPrefix:
-    """CT-002 — MA_PREFIX configurable pour bridge et monitoring."""
-
-    def test_bridge_uses_ma_prefix(self):
-        """CT-002 : MA_PREFIX pour inbox/outbox bridge."""
-        assert _mod.MA_PREFIX == os.environ.get("MA_PREFIX", "A")
-
-    def test_monitoring_uses_configured_prefix(self):
-        """CT-002 : MONITORING_PREFIX = "mi" par défaut."""
-        assert _mod.MONITORING_PREFIX == os.environ.get("MONITORING_PREFIX", "mi")
-
-    def test_prefix_is_string(self):
-        """CT-002 : MA_PREFIX est une chaîne non vide."""
-        assert isinstance(_mod.MA_PREFIX, str) and len(_mod.MA_PREFIX) > 0
 
 
 class TestHealthServerSetup:

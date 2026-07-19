@@ -2,7 +2,7 @@
 """
 wal.py — V3/C2 : write-ahead log des événements d'orchestration.
 
-Stream Redis {MA_PREFIX}:wal — audit + reprise. Le state_file du
+Stream Redis `wal` — audit + reprise. Le state_file du
 workflow_engine RESTE la source de vérité pour la reprise des workflows ;
 le WAL sert à l'observabilité (bench C0, détection de stall, post-mortem)
 et au diagnostic de crash du bridge.
@@ -28,8 +28,9 @@ _BATCH = 1000
 _FIELD_MAX = 500
 
 
-def stream(prefix):
-    return f"{prefix}:wal"
+def stream(prefix=None):
+    """Nom canonique ; ``prefix`` est ignoré pour compatibilité d'appel."""
+    return "wal"
 
 
 def emit(redis_cli, prefix, event, agent_id, task_id="-", **fields):

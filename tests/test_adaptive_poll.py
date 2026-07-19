@@ -75,7 +75,7 @@ def _make_agent():
     from agent import TmuxAgent
     agent = object.__new__(TmuxAgent)
     agent.agent_id = "300"
-    agent.session_name = "A-agent-300"
+    agent.session_name = "agent-300"
     agent._log = MagicMock()
     return agent
 

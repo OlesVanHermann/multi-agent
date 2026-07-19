@@ -41,8 +41,8 @@ Le nom du symlink (`YYY`) est ton identifiant. Tes 3 fichiers sont dans le même
   poursuis le reste et marque cette preuve `NOT_RUN`.
 
 ## Communication
-- Canal Redis : `{MA_PREFIX}:agent:{ID}:inbox` pour recevoir des messages
-- Canal Redis : `{MA_PREFIX}:agent:{ID}:outbox` pour publier tes résultats
+- Canal Redis : `agent:{ID}:inbox` pour recevoir des messages
+- Canal Redis : `agent:{ID}:outbox` pour publier tes résultats
 - Format : JSON `{"from": "{ID}", "type": "status|done|error", "payload": "..."}`
 
 ## Interdictions

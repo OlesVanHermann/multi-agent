@@ -17,7 +17,7 @@ pour intégrer le monitoring dashboard.
     sync_redis = redis_sync.Redis(
         host=REDIS_HOST, port=REDIS_PORT, decode_responses=True
     )
-    monitoring_router = create_monitoring_router(sync_redis, prefix="mi")
+    monitoring_router = create_monitoring_router(sync_redis)
     app.include_router(monitoring_router)
 
 --- PATCH 3: Dans lifespan() shutdown, avant redis_pool.close() (~L383) ---

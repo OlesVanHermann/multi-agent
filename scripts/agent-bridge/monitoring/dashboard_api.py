@@ -30,20 +30,20 @@ from .metrics_collector import MetricsCollector
 from .alerting import AlertManager
 
 
-def create_monitoring_router(redis_client, prefix=None):
+def create_monitoring_router(redis_client):
     """Crée un APIRouter FastAPI — EF-008, CA-009, Tâche 004.
 
     Usage dans server.py (R-INTEGRATE):
         from monitoring.dashboard_api import create_monitoring_router
-        router = create_monitoring_router(redis_client, prefix="mi")
+        router = create_monitoring_router(redis_client)
         app.include_router(router)
     """
     if not FASTAPI_AVAILABLE:
         raise ImportError("FastAPI requis pour dashboard_api. pip install fastapi")
 
     router = APIRouter(prefix="/api/monitoring", tags=["monitoring"])
-    collector = MetricsCollector(redis_client, prefix=prefix)
-    alert_mgr = AlertManager(redis_client, prefix=prefix)
+    collector = MetricsCollector(redis_client)
+    alert_mgr = AlertManager(redis_client)
 
     @router.get("/metrics")
     def get_all_metrics():

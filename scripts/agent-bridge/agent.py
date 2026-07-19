@@ -70,11 +70,6 @@ LOG_DIR = os.environ.get("LOG_DIR", str(BASE_DIR / "logs"))
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
-MA_PREFIX = os.environ.get("MA_PREFIX", "A")
-
-# Préfixe dédié monitoring (CT-002: mi: pour streams monitoring)
-MONITORING_PREFIX = os.environ.get("MONITORING_PREFIX", "mi")
-
 MAX_HISTORY = 50
 # Compatibilite de configuration : RESPONSE_TIMEOUT reste accepte mais ne
 # borne plus la duree totale d'une tache. Il devient le seuil d'inactivite
@@ -417,7 +412,7 @@ class State(Enum):
 class TmuxAgent:
     def __init__(self, agent_id):
         self.agent_id = str(agent_id)
-        self.session_name = f"{MA_PREFIX}-agent-{agent_id}"
+        self.session_name = f"agent-{agent_id}"
         self.state = State.IDLE
         self.state_lock = Lock()
         self._tui_lock = Lock()
@@ -474,8 +469,8 @@ class TmuxAgent:
 
         # Redis
         self.redis = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD or None, decode_responses=True)
-        self.inbox = f"{MA_PREFIX}:agent:{agent_id}:inbox"
-        self.outbox = f"{MA_PREFIX}:agent:{agent_id}:outbox"
+        self.inbox = f"agent:{agent_id}:inbox"
+        self.outbox = f"agent:{agent_id}:outbox"
         # A4: consumer group — survives bridge restarts (no lost/replayed messages)
         self.group = "bridge"
         self.consumer = f"agent-{agent_id}"
@@ -489,7 +484,7 @@ class TmuxAgent:
         # R-INTEGRATE: MetricsCollector pour tracking performance
         try:
             from monitoring.metrics_collector import MetricsCollector
-            self.metrics = MetricsCollector(self.redis, prefix=MONITORING_PREFIX)
+            self.metrics = MetricsCollector(self.redis)
             self._log("MetricsCollector initialized (R-INTEGRATE)")
         except ImportError:
             self.metrics = None
@@ -498,7 +493,7 @@ class TmuxAgent:
         # V3/C2 : diagnostic post-crash — tâche restée ouverte dans le WAL.
         # Log seulement : le consumer group redélivre le message pending (A4).
         try:
-            pending_task = wal.open_task(self.redis, MA_PREFIX, self.agent_id)
+            pending_task = wal.open_task(self.redis, None, self.agent_id)
             if pending_task:
                 self._log(f"WAL: tâche ouverte au démarrage: {pending_task} "
                           "(redélivrance via consumer group)")
@@ -509,7 +504,7 @@ class TmuxAgent:
         self.last_output_lines = self._get_pane_line_count()
 
         # Legacy inbox (A:inject:{id} format used by prompts)
-        self.legacy_inbox = f"{MA_PREFIX}:inject:{agent_id}"
+        self.legacy_inbox = f"inject:{agent_id}"
 
         # Threads
         self.running = True
@@ -549,7 +544,7 @@ class TmuxAgent:
         """V3/C2 : émission WAL best-effort — une panne Redis sur le WAL
         ne doit JAMAIS tuer le thread queue_processor."""
         try:
-            wal.emit(self.redis, MA_PREFIX, event, self.agent_id,
+            wal.emit(self.redis, None, event, self.agent_id,
                      task_id, **fields)
         except Exception as e:
             self._log(f"WAL emit error ({event}): {e}")
@@ -712,7 +707,7 @@ class TmuxAgent:
                     stalled_logged = False
                     try:
                         self.redis.hset(
-                            f"{MA_PREFIX}:agent:{self.agent_id}",
+                            f"agent:{self.agent_id}",
                             "status", "busy")
                     except Exception:
                         pass
@@ -731,7 +726,7 @@ class TmuxAgent:
                           inactive_for=stall_threshold)
                 try:
                     self.redis.hset(
-                        f"{MA_PREFIX}:agent:{self.agent_id}",
+                        f"agent:{self.agent_id}",
                         "status", "stalled")
                 except Exception:
                     pass
@@ -755,7 +750,7 @@ class TmuxAgent:
                     self._log("PLAN APPROVAL DETECTED — waiting for user")
                     self._plan_approval_logged = True
                 try:
-                    self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", "status", "waiting_approval")
+                    self.redis.hset(f"agent:{self.agent_id}", "status", "waiting_approval")
                 except Exception:
                     pass
 
@@ -886,7 +881,7 @@ class TmuxAgent:
     def _set_redis_status(self):
         """Update status in Redis"""
         try:
-            self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", mapping={
+            self.redis.hset(f"agent:{self.agent_id}", mapping={
                 "status": self.state.value,
                 "last_seen": int(time.time()),
                 "queue_size": self.prompt_queue.qsize(),
@@ -1020,7 +1015,7 @@ class TmuxAgent:
     def _heartbeat_loop(self):
         """Thread: heartbeat enrichi toutes les 10s — EF-003, CA-004.
 
-        Publie 7 champs sur mi:agent:{id}:heartbeat (CT-002, CT-009).
+        Publie 7 champs sur agent:{id}:heartbeat (CT-002, CT-009).
         Champs: agent_id, timestamp, status, memory_mb, cpu_percent,
                 messages_processed, last_message_ts.
         B6: publie aussi pane_state (JSON) + pane_state_ts dans le hash agent.
@@ -1046,19 +1041,19 @@ class TmuxAgent:
 
                 # Publier heartbeat enrichi (CT-002: mi: prefix, CT-009: XTRIM)
                 self.redis.xadd(
-                    f"{MONITORING_PREFIX}:agent:{self.agent_id}:heartbeat",
+                    f"agent:{self.agent_id}:heartbeat",
                     data,
                     maxlen=STREAM_MAXLEN, approximate=True
                 )
                 self._last_heartbeat_ts = int(time.time())
 
                 # Update last_seen in agent hash so dashboard doesn't show disconnected
-                self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", "last_seen", int(time.time()))
+                self.redis.hset(f"agent:{self.agent_id}", "last_seen", int(time.time()))
 
                 # B6: publish pane-derived state so the dashboard skips tmux scans
                 pane_state = self._derive_pane_state()
                 if pane_state is not None:
-                    self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", mapping={
+                    self.redis.hset(f"agent:{self.agent_id}", mapping={
                         "pane_state": json.dumps(pane_state),
                         "pane_state_ts": int(time.time()),
                     })
@@ -1253,7 +1248,7 @@ class TmuxAgent:
         """Thread: listen to legacy Redis inbox (List format: A:inject:{id})
 
         Supports FROM:xxx| prefix to identify sender:
-          RPUSH A:inject:300 "FROM:100|do something"
+          RPUSH inject:NNN "FROM:NNN|do something"
 
         A4: legacy Lists stay best-effort (BLPOP pops destructively, no ack) —
         a crash between BLPOP and processing loses the message. Use Streams.
@@ -1404,7 +1399,7 @@ class TmuxAgent:
                 self._wal("api_error_retry", task.get('task_id'),
                           retry=retry_count + 1)
                 try:
-                    self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", "status", "api_error_retry")
+                    self.redis.hset(f"agent:{self.agent_id}", "status", "api_error_retry")
                 except Exception:
                     pass
                 self.prompt_queue.put({
@@ -1433,7 +1428,7 @@ class TmuxAgent:
             if response == self._COMPACTION_SENTINEL:
                 self._log(f"COMPACTION: re-queuing with identity + context reminder")
                 try:
-                    self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", "status", "context_compacted")
+                    self.redis.hset(f"agent:{self.agent_id}", "status", "context_compacted")
                 except Exception:
                     pass
 
@@ -1515,7 +1510,7 @@ class TmuxAgent:
             # Sans verify_cmd : flux v2 inchangé (rétrocompatibilité).
             if task.get('verify_cmd') and not deadline_expired:
                 green, hacked, rapport = verifier.run(
-                    task, self.redis, MA_PREFIX, self.agent_id, PROJECT_DIR)
+                    task, self.redis, self.agent_id, PROJECT_DIR)
                 if green:
                     response += "\n[VERIFY_GREEN]"
                     self._log_event("verify_green", f"task={task.get('task_id')}")
@@ -1615,7 +1610,7 @@ class TmuxAgent:
             try:
                 pane = self._capture_pane(10)
                 if "bashes" in pane or "bash" in pane.split('\n')[-1]:
-                    self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", "status", "has_bashes")
+                    self.redis.hset(f"agent:{self.agent_id}", "status", "has_bashes")
                     self._log("Background bashes detected — status set to has_bashes")
             except Exception:
                 pass
@@ -1641,7 +1636,7 @@ class TmuxAgent:
             return False
         try:
             result = subprocess.run(
-                ['tmux', 'has-session', '-t', f'{MA_PREFIX}-agent-{agent_id}'],
+                ['tmux', 'has-session', '-t', f'agent-{agent_id}'],
                 capture_output=True
             )
             return result.returncode == 0
@@ -1652,12 +1647,12 @@ class TmuxAgent:
         """Send message to another agent. Returns 'ok' or 'ko'."""
         if to_agent == 'all':
             sent_count = 0
-            for key in self.redis.scan_iter(f'{MA_PREFIX}:agent:*', count=200):
+            for key in self.redis.scan_iter(f'agent:*', count=200):
                 parts = key.split(':')
-                if len(parts) == 3 and is_valid_agent_id(parts[2]):
-                    target_id = parts[2]
+                if len(parts) == 2 and is_valid_agent_id(parts[1]):
+                    target_id = parts[1]
                     if target_id != self.agent_id:
-                        self.redis.xadd(f"{MA_PREFIX}:agent:{target_id}:inbox", {
+                        self.redis.xadd(f"agent:{target_id}:inbox", {
                             'prompt': prompt,
                             'from_agent': self.agent_id,
                             'timestamp': int(time.time())
@@ -1668,7 +1663,7 @@ class TmuxAgent:
         else:
             to_agent = self._resolve_triangle(to_agent)
             try:
-                self.redis.xadd(f"{MA_PREFIX}:agent:{to_agent}:inbox", {
+                self.redis.xadd(f"agent:{to_agent}:inbox", {
                     'prompt': prompt,
                     'from_agent': self.agent_id,
                     'timestamp': int(time.time())
@@ -1763,7 +1758,7 @@ class TmuxAgent:
             self._log("Shutting down...")
         finally:
             self.running = False
-            self.redis.hset(f"{MA_PREFIX}:agent:{self.agent_id}", "status", "stopped")
+            self.redis.hset(f"agent:{self.agent_id}", "status", "stopped")
             if self._health_server:
                 self._health_server.server_close()
             self.logfile.close()

@@ -33,8 +33,6 @@ import wal
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
-MA_PREFIX = os.environ.get("MA_PREFIX", "A")
-MONITORING_PREFIX = os.environ.get("MONITORING_PREFIX", MA_PREFIX)
 HEALTH_PORT_BASE = int(os.environ.get("AGENT_HEALTH_PORT_BASE", 9100))
 
 # EF-002: Watchdog configuration
@@ -62,11 +60,11 @@ def check_agents():
     """Liste et vérifie tous les agents"""
     agents = {}
 
-    for key in r.keys(f"{MA_PREFIX}:agent:*"):
-        # Filtrer pour avoir seulement A:agent:XXX (pas inbox/outbox)
+    for key in r.keys(f"agent:*"):
+        # Filtrer pour avoir seulement agent:XXX (pas inbox/outbox)
         parts = key.split(':')
-        if len(parts) == 3:  # A:agent:XXX
-            agent_id = parts[2]
+        if len(parts) == 2:
+            agent_id = parts[1]
             data = r.hgetall(key)
 
             if not data:
@@ -133,7 +131,7 @@ def check_streams():
     print("Redis Streams Status")
     print("-" * 80)
 
-    for key in sorted(r.keys(f"{MA_PREFIX}:agent:*:inbox") + r.keys(f"{MA_PREFIX}:agent:*:outbox")):
+    for key in sorted(r.keys(f"agent:*:inbox") + r.keys(f"agent:*:outbox")):
         try:
             info = r.xinfo_stream(key)
             length = info.get('length', 0)
@@ -151,18 +149,17 @@ def check_streams():
 class AgentWatchdog:
     """Watchdog avec auto-restart et circuit breaker (EF-002, CA-002, CA-003).
 
-    Découvre les agents via Redis heartbeat streams (mi:agent:*:heartbeat).
+    Découvre les agents via Redis heartbeat streams (agent:*:heartbeat).
     Interroge /health de chaque agent toutes les 5s (CA-002).
     3 checks échoués → redémarrage (CA-002: détection+restart < 25s).
     Circuit breaker: 3 restarts par 5 min par agent (CA-003).
     """
 
-    def __init__(self, redis_client, prefix=None, health_port_base=None,
+    def __init__(self, redis_client, health_port_base=None,
                  poll_interval=None, fail_threshold=None, health_timeout=None,
                  max_restarts=None, breaker_window=None, stall_threshold=None):
         """EF-002 : Initialise le watchdog avec seuils configurables."""
         self.redis = redis_client
-        self.prefix = prefix or MONITORING_PREFIX
         self.health_port_base = health_port_base or HEALTH_PORT_BASE
         self.poll_interval = poll_interval or WATCHDOG_POLL_INTERVAL
         self.fail_threshold = fail_threshold or WATCHDOG_FAIL_THRESHOLD
@@ -178,15 +175,15 @@ class AgentWatchdog:
     def discover_agents(self):
         """Découvre les agents actifs via Redis heartbeat streams (EF-002).
 
-        Primary: KEYS mi:agent:*:heartbeat (source de vérité: tout agent vivant publie).
+        Primary: KEYS agent:*:heartbeat (source de vérité: tout agent vivant publie).
         Fallback: tmux list-sessions si Redis injoignable.
         """
         agents = set()
         try:
-            for key in self.redis.scan_iter(match=f"{self.prefix}:agent:*:heartbeat"):
+            for key in self.redis.scan_iter(match="agent:*:heartbeat"):
                 parts = key.split(':')
-                if len(parts) == 4:
-                    candidate = parts[2]
+                if len(parts) == 3:
+                    candidate = parts[1]
                     if is_valid_agent_id(candidate):
                         agents.add(candidate)
         except Exception:
@@ -202,8 +199,8 @@ class AgentWatchdog:
                 capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
                 for line in result.stdout.strip().split('\n'):
-                    if line.startswith("agent-") or line.startswith("A-agent-"):
-                        agent_id = line.replace("A-agent-", "").replace("agent-", "")
+                    if line.startswith("agent-"):
+                        agent_id = line.replace("agent-", "", 1)
                         agents.add(agent_id)
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass
@@ -233,7 +230,7 @@ class AgentWatchdog:
         if not is_valid_agent_id(agent_id):
             logger.warning("restart_agent: invalid agent_id format: %s", agent_id)
             return False
-        session_name = f"{MA_PREFIX}-agent-{agent_id}"
+        session_name = f"agent-{agent_id}"
         try:
             result = subprocess.run(
                 ["tmux", "send-keys", "-t", session_name, "C-c", ""],
@@ -282,7 +279,7 @@ class AgentWatchdog:
             "timestamp": str(int(time.time())),
             "payload": json.dumps(details or {})
         }
-        stream = f"{self.prefix}:monitoring:restart"
+        stream = "monitoring:restart"
         self.redis.xadd(stream, event, maxlen=STREAM_MAXLEN, approximate=True)
         return event
 
@@ -296,7 +293,7 @@ class AgentWatchdog:
             "timestamp": str(int(time.time())),
             "payload": json.dumps(details or {})
         }
-        stream = f"{self.prefix}:monitoring:alerts"
+        stream = "monitoring:alerts"
         self.redis.xadd(stream, alert, maxlen=STREAM_MAXLEN, approximate=True)
         return alert
 
@@ -310,15 +307,15 @@ class AgentWatchdog:
         puis silence (état 'escalated' — pas de spam d'alertes).
         Toute activité WAL réelle (hors nudge/escalation) réarme la machine.
 
-        Le WAL et le hash de statut vivent sous MA_PREFIX (écrits par le
-        bridge), PAS sous self.prefix (préfixe monitoring).
+        Le WAL et le hash de statut utilisent les clés canoniques écrites par
+        le bridge.
         """
         try:
-            status = self.redis.hget(f"{MA_PREFIX}:agent:{agent_id}", "status")
+            status = self.redis.hget(f"agent:{agent_id}", "status")
             if status != "busy":
                 self._nudged.pop(agent_id, None)
                 return None
-            last = wal.last_event(self.redis, MA_PREFIX, agent_id)
+            last = wal.last_event(self.redis, None, agent_id)
             if not last:
                 return None  # bridge sans WAL (v2) : pas de faux positif
             data = last[1]
@@ -335,7 +332,7 @@ class AgentWatchdog:
                     "critical", agent_id,
                     f"Agent {agent_id} toujours silencieux {int(age)}s après nudge",
                     {"age_seconds": int(age), "motif": "stall"})
-                wal.emit(self.redis, MA_PREFIX, "escalation", agent_id,
+                wal.emit(self.redis, None, "escalation", agent_id,
                          motif="stall", age_seconds=int(age))
                 self._nudged[agent_id] = "escalated"
                 return "stalled"
@@ -344,13 +341,13 @@ class AgentWatchdog:
                 f"Agent {agent_id} busy sans activité WAL depuis {int(age)}s — nudge",
                 {"age_seconds": int(age)})
             self.redis.xadd(
-                f"{MA_PREFIX}:agent:{agent_id}:inbox",
+                f"agent:{agent_id}:inbox",
                 {"prompt": ("FROM:watchdog|Où en es-tu ? Si tu es bloqué, "
                             "émets BLOCKED|task|raison|question."),
                  "from_agent": "watchdog",
                  "timestamp": int(time.time())},
                 maxlen=IO_STREAM_MAXLEN, approximate=True)
-            wal.emit(self.redis, MA_PREFIX, "nudge", agent_id)
+            wal.emit(self.redis, None, "nudge", agent_id)
             self._nudged[agent_id] = "nudged"
             return "stalled"
         except Exception as exc:

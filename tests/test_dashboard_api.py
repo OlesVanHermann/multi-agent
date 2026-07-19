@@ -38,7 +38,7 @@ def _make_app(redis):
     """Crée une app FastAPI avec le router monitoring."""
     from monitoring.dashboard_api import create_monitoring_router
     app = FastAPI()
-    router = create_monitoring_router(redis, prefix="test")
+    router = create_monitoring_router(redis)
     app.include_router(router)
     return app
 
@@ -63,7 +63,7 @@ class TestDashboardAPIMetrics:
     async def test_get_all_metrics_with_agents(self):
         """GET /metrics avec agents retourne les métriques."""
         redis = _make_mock_redis()
-        redis.scan_iter.return_value = ["test:metrics:345", "test:metrics:300"]
+        redis.scan_iter.return_value = ["metrics:345", "metrics:300"]
         redis.hgetall.return_value = {"tasks_total": "5", "avg_latency": "2.0"}
         app = _make_app(redis)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
@@ -196,16 +196,16 @@ class TestDashboardAPISummary:
     async def test_get_summary_with_data(self):
         """GET /summary avec données agrège correctement."""
         redis = _make_mock_redis()
-        redis.scan_iter.return_value = ["test:metrics:345"]
+        redis.scan_iter.return_value = ["metrics:345"]
         redis.hgetall.side_effect = lambda key: {
-            "test:metrics:345": {
+            "metrics:345": {
                 "tasks_total": "10",
                 "cycles_completed": "3",
                 "avg_score": "95.0",
                 "avg_latency": "2.5",
                 "messages_this_hour": "50"
             },
-            "test:metrics:global": {
+            "metrics:global": {
                 "total_tasks": "10",
                 "total_errors": "1",
                 "total_messages": "50"
@@ -272,7 +272,7 @@ class TestDashboardAPIEF006:
     async def test_run_check_with_alerts_detected(self):
         """EF-006, CA-007 : check détecte alertes et les retourne."""
         redis = _make_mock_redis()
-        redis.scan_iter.return_value = ["test:metrics:345"]
+        redis.scan_iter.return_value = ["metrics:345"]
         redis.hgetall.return_value = {
             "tasks_total": "0",
             "last_activity": str(int(time.time()) - 3600)

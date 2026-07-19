@@ -5,14 +5,14 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="$SCRIPT_DIR/.."
 source "$SCRIPT_DIR/redis.sh"
-# Auto-detect MA_PREFIX from project-config.md if not set
-if [ -z "${MA_PREFIX:-}" ] && [ -f "$BASE_DIR/project-config.md" ]; then
-    MA_PREFIX=$(grep '^MA_PREFIX=' "$BASE_DIR/project-config.md" 2>/dev/null | cut -d= -f2 | tr -d ' ' || true)
-fi
-MA_PREFIX="${MA_PREFIX:-A}"
+source "$SCRIPT_DIR/lib.sh"
+AGENT_ID=${1:-}
 
-AGENT_ID=${1:-300}
-STREAM="${MA_PREFIX}:agent:${AGENT_ID}:outbox"
+if [ -z "$AGENT_ID" ] || ! is_valid_agent_id "$AGENT_ID"; then
+    echo "Usage: $0 <agent_id>  # NNN ou NNN-NNN" >&2
+    exit 1
+fi
+STREAM="agent:${AGENT_ID}:outbox"
 
 echo "Watching agent $AGENT_ID responses..."
 echo "Stream: $STREAM"

@@ -37,7 +37,7 @@ class TestBridgePropagation:
         from agent import TmuxAgent
         agent = object.__new__(TmuxAgent)
         agent.agent_id = "300"
-        agent.inbox = "A:agent:300:inbox"
+        agent.inbox = "agent:300:inbox"
         agent.group = "bridge"
         agent.consumer = "agent-300"
         agent.prompt_queue = Queue()
@@ -61,7 +61,7 @@ class TestBridgePropagation:
         from agent import TmuxAgent
         agent = object.__new__(TmuxAgent)
         agent.agent_id = "300"
-        agent.inbox = "A:agent:300:inbox"
+        agent.inbox = "agent:300:inbox"
         agent.group = "bridge"
         agent.consumer = "agent-300"
         agent.prompt_queue = Queue()
@@ -79,7 +79,6 @@ class TestBridgePropagation:
 class TestSendAndWaitCorrelation:
     def _setup_orchestrator(self, monkeypatch, r):
         import orchestrator as orch
-        monkeypatch.setattr(orch, 'MA_PREFIX', PREFIX)
         monkeypatch.setattr(orch, 'r', r)
         return orch
 
@@ -87,8 +86,8 @@ class TestSendAndWaitCorrelation:
         """Concurrence : la réponse d'une AUTRE requête ne doit pas être prise."""
         r = _redis_or_skip()
         orch = self._setup_orchestrator(monkeypatch, r)
-        inbox = f"{PREFIX}:agent:300:inbox"
-        outbox = f"{PREFIX}:agent:300:outbox"
+        inbox = f"agent:300:inbox"
+        outbox = f"agent:300:outbox"
         r.delete(inbox, outbox)
 
         result = {}
@@ -136,8 +135,8 @@ class TestSendAndWaitCorrelation:
         """Compat : un bridge ancien n'écho pas correlation_id → accepté."""
         r = _redis_or_skip()
         orch = self._setup_orchestrator(monkeypatch, r)
-        inbox = f"{PREFIX}:agent:301:inbox"
-        outbox = f"{PREFIX}:agent:301:outbox"
+        inbox = f"agent:301:inbox"
+        outbox = f"agent:301:outbox"
         r.delete(inbox, outbox)
 
         result = {}

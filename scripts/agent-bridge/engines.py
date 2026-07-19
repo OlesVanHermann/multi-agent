@@ -365,12 +365,12 @@ def build_pane_eval(markers):
     )
 
 
-def build_pane_scan(markers, ma_prefix, capture_lines=30):
+def build_pane_scan(markers, ma_prefix="", capture_lines=30):
     """Script bash complet : capture les panes passés en argv, écrit une ligne
     d'état par agent. Un seul fork pour N agents (contrat de perf historique)."""
     return (
         'for s in "$@"; do '
-        f'id="${{s#{ma_prefix}-agent-}}"; '
+        'id="${s#agent-}"; '
         f'out=$(tmux capture-pane -t "$s:0.0" -p -J -S -{capture_lines} 2>/dev/null); '
         'pane_cmd=$(tmux display-message -t "$s:0.0" -p "#{pane_current_command}" 2>/dev/null || echo ""); '
         + build_pane_eval(markers) +

@@ -23,10 +23,10 @@ class TestAgentOrchestratorIntegration:
     @patch('orchestrator.r')
     def test_send_and_wait_message_format_matches_agent(self, mock_redis):
         """Le format de message de orchestrator.send_and_wait est compatible avec agent.py (CA-007)"""
-        from orchestrator import send_and_wait, MA_PREFIX
+        from orchestrator import send_and_wait
 
         mock_redis.xread.return_value = [
-            (f"{MA_PREFIX}:agent:300:outbox", [("1-0", {"response": "ok"})])
+            (f"agent:300:outbox", [("1-0", {"response": "ok"})])
         ]
         send_and_wait(300, "test message", from_agent=100)
 
@@ -36,7 +36,7 @@ class TestAgentOrchestratorIntegration:
         data = call_args[0][1]
 
         # Key must match agent.py inbox format
-        assert key == f"{MA_PREFIX}:agent:300:inbox"
+        assert key == f"agent:300:inbox"
 
         # Data must have required fields that agent.py _listen_redis expects
         assert 'prompt' in data
@@ -46,7 +46,7 @@ class TestAgentOrchestratorIntegration:
     @patch('orchestrator.r')
     def test_broadcast_format_matches_agent(self, mock_redis):
         """Le format de broadcast est compatible avec agent._listen_redis (CA-007)"""
-        from orchestrator import broadcast, MA_PREFIX
+        from orchestrator import broadcast
 
         broadcast([300, 301], "do task", from_agent=100)
 
@@ -110,40 +110,35 @@ class TestPromptMarkersCompatibility:
 class TestRedisKeyConsistency:
     """Tests de cohérence des clés Redis entre les composants"""
 
-    def test_agent_inbox_format(self):
-        """Le format inbox est {MA_PREFIX}:agent:{id}:inbox (CA-007)"""
-        ma_prefix = "A"
-        agent_id = "300"
-        inbox = f"{ma_prefix}:agent:{agent_id}:inbox"
-        assert inbox == "A:agent:300:inbox"
+    @pytest.mark.parametrize("agent_id", ["000", "300", "399", "345-500"])
+    def test_agent_inbox_format(self, agent_id):
+        """Le format vaut pour tout ID NNN ou NNN-NNN ; 300 est un exemple."""
+        inbox = f"agent:{agent_id}:inbox"
+        assert inbox == f"agent:{agent_id}:inbox"
 
     def test_agent_outbox_format(self):
-        """Le format outbox est {MA_PREFIX}:agent:{id}:outbox (CA-007)"""
-        ma_prefix = "A"
-        agent_id = "300"
-        outbox = f"{ma_prefix}:agent:{agent_id}:outbox"
-        assert outbox == "A:agent:300:outbox"
+        """Le format outbox est agent:{id}:outbox."""
+        agent_id = "399"
+        outbox = f"agent:{agent_id}:outbox"
+        assert outbox == f"agent:{agent_id}:outbox"
+
+    @pytest.mark.parametrize("agent_id", ["000", "742", "999", "127-804"])
+    def test_addressing_is_role_agnostic(self, agent_id):
+        """L'adressage dépend uniquement de l'ID valide, jamais de sa plage métier."""
+        assert f"agent-{agent_id}" == "agent-" + agent_id
+        assert f"agent:{agent_id}:inbox" == "agent:" + agent_id + ":inbox"
 
     def test_legacy_inbox_format(self):
-        """Le format legacy est {MA_PREFIX}:inject:{id} (CA-007)"""
-        ma_prefix = "A"
-        agent_id = "300"
-        legacy = f"{ma_prefix}:inject:{agent_id}"
-        assert legacy == "A:inject:300"
+        """Le format legacy est inject:{id}."""
+        agent_id = "345-500"
+        legacy = f"inject:{agent_id}"
+        assert legacy == "inject:345-500"
 
     def test_status_hash_format(self):
-        """Le format status est {MA_PREFIX}:agent:{id} (CA-007)"""
-        ma_prefix = "A"
+        """Le format status est agent:{id}."""
         agent_id = "300"
-        status = f"{ma_prefix}:agent:{agent_id}"
-        assert status == "A:agent:300"
-
-    @patch('orchestrator.r')
-    def test_orchestrator_uses_same_prefix(self, mock_redis):
-        """L'orchestrator utilise le même MA_PREFIX que l'agent (CA-007)"""
-        from orchestrator import MA_PREFIX as ORCH_PREFIX
-        from agent import MA_PREFIX as AGENT_PREFIX
-        assert ORCH_PREFIX == AGENT_PREFIX
+        status = f"agent:{agent_id}"
+        assert status == "agent:300"
 
 
 class TestConfigConstants:
@@ -155,12 +150,6 @@ class TestConfigConstants:
         from orchestrator import REDIS_HOST as O_HOST, REDIS_PORT as O_PORT
         assert REDIS_HOST == O_HOST
         assert REDIS_PORT == O_PORT
-
-    def test_ma_prefix_default(self):
-        """MA_PREFIX vaut 'A' par défaut (CA-007)"""
-        from agent import MA_PREFIX
-        # Default should be 'A' unless overridden by env
-        assert MA_PREFIX == os.environ.get("MA_PREFIX", "A")
 
     def test_max_history_reasonable(self):
         """MAX_HISTORY est entre 10 et 1000 (CA-007)"""

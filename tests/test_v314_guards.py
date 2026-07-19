@@ -37,7 +37,7 @@ GPT-5.3-Codex-Spark Weekly limit: [████] 100% left
     monkeypatch.setattr(scheduler, "_pane_text", lambda _session: pane)
     monkeypatch.setattr(scheduler.subprocess, "run", lambda *a, **k: None)
     monkeypatch.setattr(scheduler.time, "sleep", lambda _seconds: None)
-    bars, info = scheduler._scrape_codex_status("A-agent-002-codex1a")
+    bars, info = scheduler._scrape_codex_status("agent-002-codex1a")
     assert [b["percent"] for b in bars] == [21, 0]
     assert info["email"] == "user@example.com"
     assert info["login_method"] == "ChatGPT account"

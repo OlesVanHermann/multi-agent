@@ -80,7 +80,7 @@ def _pane_states_from_redis(agent_ids, agent_redis_data, now):
 
 async def _trigger_prompt_reload(agent_id: str):
     """Send 'deviens agent' + last prompt via tmux send-keys after compacting (1x, debounced 60s)."""
-    debounce_key = f"{cfg.MA_PREFIX}:agent:{agent_id}:last_reload"
+    debounce_key = f"agent:{agent_id}:last_reload"
     try:
         if state.redis_pool:
             last = await state.redis_pool.get(debounce_key)
@@ -94,7 +94,7 @@ async def _trigger_prompt_reload(agent_id: str):
         if not prompt_path:
             print(f"[reload] No prompt file found for agent {agent_id}")
             return
-        session = f"{cfg.MA_PREFIX}-agent-{agent_id}"
+        session = f"agent-{agent_id}"
         cmd = f"deviens agent {prompt_path}"
 
         # Read last prompt from .history file
@@ -203,7 +203,7 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
         # Step 1: GET reload_sent flags for ALL agents (single pipeline)
         pipe = state.redis_pool.pipeline()
         for aid, _ in agents_data:
-            pipe.get(f"{cfg.MA_PREFIX}:agent:{aid}:reload_sent")
+            pipe.get(f"agent:{aid}:reload_sent")
         reload_flags = await pipe.execute()
 
         # Step 2a: Detect transitions → log events
@@ -248,12 +248,12 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
                 overrides[aid] = "context_compacted"
                 if not flag_ts:
                     # Set timestamp flag (when compacting started)
-                    await state.redis_pool.set(f"{cfg.MA_PREFIX}:agent:{aid}:reload_sent", str(now), ex=600)
+                    await state.redis_pool.set(f"agent:{aid}:reload_sent", str(now), ex=600)
             elif ctx == 0 and not done_compacting:
                 # Red: context at 0%, compacting imminent — also set flag
                 overrides[aid] = "context_compacted"
                 if not flag_ts:
-                    await state.redis_pool.set(f"{cfg.MA_PREFIX}:agent:{aid}:reload_sent", str(now), ex=600)
+                    await state.redis_pool.set(f"agent:{aid}:reload_sent", str(now), ex=600)
             elif done_compacting:
                 # "Conversation compacted" visible → compacting finished
                 if st.get('has_bashes'):
@@ -307,7 +307,7 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
                 print(f"[reload] Agent {aid}: prompt in output after compacting ({int(elapsed)}s), no reload needed")
             else:
                 # Deep capture (100 lines) to check further back
-                session = f"{cfg.MA_PREFIX}-agent-{aid}"
+                session = f"agent-{aid}"
                 deep = await _run_subprocess(
                     ["tmux", "capture-pane", "-t", f"{session}:0.0", "-p", "-J", "-S", "-100"],
                     text=True, timeout=5
@@ -327,7 +327,7 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
         if clear_ids:
             pipe = state.redis_pool.pipeline()
             for aid in clear_ids:
-                pipe.delete(f"{cfg.MA_PREFIX}:agent:{aid}:reload_sent")
+                pipe.delete(f"agent:{aid}:reload_sent")
             await pipe.execute()
 
     except Exception as e:
@@ -370,8 +370,8 @@ async def _refresh_cache_once():
         )
         if result.returncode == 0:
             for line in result.stdout.strip().split("\n"):
-                if line.startswith(f"{cfg.MA_PREFIX}-agent-"):
-                    agent_id = line.replace(f"{cfg.MA_PREFIX}-agent-", "")
+                if line.startswith(f"agent-"):
+                    agent_id = line.replace(f"agent-", "")
                     # Accept numeric IDs (345) and compound IDs (345-500)
                     if cfg.is_valid_agent_id(agent_id):
                         agent_ids.append(agent_id)
@@ -384,7 +384,7 @@ async def _refresh_cache_once():
         try:
             pipe = state.redis_pool.pipeline()
             for agent_id in agent_ids:
-                pipe.hgetall(f"{cfg.MA_PREFIX}:agent:{agent_id}")
+                pipe.hgetall(f"agent:{agent_id}")
             results = await pipe.execute()
             for agent_id, data in zip(agent_ids, results):
                 agent_redis_data[agent_id] = data if isinstance(data, dict) else {}
@@ -414,8 +414,8 @@ async def _refresh_cache_once():
                     _MARKERS_WARNED[cli] = True
                 continue
 
-            script = engines.build_pane_scan(markers, cfg.MA_PREFIX)
-            sessions = [f"{cfg.MA_PREFIX}-agent-{aid}" for aid in ids]
+            script = engines.build_pane_scan(markers)
+            sessions = [f"agent-{aid}" for aid in ids]
             result = await _run_subprocess(
                 ["bash", "-c", script, "_", *sessions], text=True, timeout=60
             )
@@ -450,7 +450,7 @@ async def _refresh_cache_once():
         try:
             pipe = state.redis_pool.pipeline()
             for agent_id in agent_ids:
-                pipe.xlen(f"{cfg.MA_PREFIX}:agent:{agent_id}:inbox")
+                pipe.xlen(f"agent:{agent_id}:inbox")
             xlens = await pipe.execute()
             for agent_id, xlen in zip(agent_ids, xlens):
                 xlen = int(xlen) if isinstance(xlen, (int, str)) else 0
@@ -603,7 +603,7 @@ async def _cache_loop():
             if state.redis_pool:
                 # Scan for any reload_sent timestamps where elapsed >= COMPACTING_WAIT_SECS
                 keys = []
-                async for key in state.redis_pool.scan_iter(match=f"{cfg.MA_PREFIX}:agent:*:reload_sent", count=100):
+                async for key in state.redis_pool.scan_iter(match=f"agent:*:reload_sent", count=100):
                     keys.append(key)
                 for key in keys:
                     ts = await state.redis_pool.get(key)

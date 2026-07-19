@@ -22,7 +22,7 @@ pytestmark = pytest.mark.skipif(shutil.which('tmux') is None, reason='tmux absen
 
 def _resolve(from_agent, to_agent, prefix):
     out = subprocess.run(
-        ['bash', '-c', f'source "{_LIB}"; resolve_triangle_target "$1" "$2" "$3" test',
+        ['bash', '-c', f'source "{_LIB}"; resolve_triangle_target "$1" "$2" test',
          '_', from_agent, to_agent, prefix],
         capture_output=True, text=True, timeout=10)
     assert out.returncode == 0, out.stderr
@@ -31,12 +31,12 @@ def _resolve(from_agent, to_agent, prefix):
 
 @pytest.fixture
 def tmux_prefix():
-    """Préfixe MA unique + fabrique de sessions tmux jetables."""
+    """Fabrique de sessions tmux canoniques jetables."""
     prefix = f'RT{os.getpid() % 10000}'
     created = []
 
     def make(agent_id):
-        name = f'{prefix}-agent-{agent_id}'
+        name = f'agent-{agent_id}'
         subprocess.run(['tmux', 'new-session', '-d', '-s', name], check=True)
         created.append(name)
 

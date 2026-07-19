@@ -283,7 +283,7 @@ l'utilisateur. Les autres agents proposent les changements ou les signalent à
 ./scripts/send.sh 300 "Analyse le README"
 
 # Ou directement via Redis
-redis-cli XADD "ma:agent:300:inbox" '*' prompt "message" from_agent "cli" timestamp "$(date +%s)"
+redis-cli XADD "agent:300:inbox" '*' prompt "message" from_agent "cli" timestamp "$(date +%s)"
 ```
 
 ### Legacy (Redis Lists)

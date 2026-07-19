@@ -93,8 +93,8 @@ cp setup/secrets.cfg scripts/secrets.cfg
 # Éditer secrets.cfg — changer les ports si besoin
 nano scripts/secrets.cfg
 
-# Démarrer avec un prefix différent pour isoler
-MA_PREFIX=mi ./scripts/infra.sh start
+# Utiliser une instance Redis et des ports distincts pour isoler cet environnement
+./scripts/infra.sh start
 ```
 
 ## 6. Workflow quotidien
@@ -141,6 +141,6 @@ rsync -av web/ /home/ubuntu/multi-agent-inception/web/
 │   ├── remote hub  → multi-agent.git (local)
 │   └── remote origin → GitHub (SSH)
 │
-└── multi-agent-inception/   ← test broker (MA_PREFIX=mi)
+└── multi-agent-inception/   ← environnement de test isolé
     └── (rsync de multi-agent/ après chaque release)
 ```

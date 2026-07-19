@@ -129,7 +129,7 @@ async def _capture_agent_pane(agent_id: str, lines: int = 500, ansi: bool = Fals
         args = ssh_args + ["-o", "ConnectTimeout=5", inner]
         return await _run_subprocess(args, text=True)
     else:
-        target = f"{cfg.MA_PREFIX}-agent-{agent_id}:0.0"
+        target = f"agent-{agent_id}:0.0"
         if ansi:
             args = ["tmux", "capture-pane", "-t", target, "-p", "-e", "-S", "-20"]
         else:
@@ -148,7 +148,7 @@ async def _agent_session_exists(agent_id: str) -> bool:
         result = await _run_subprocess(args)
         return result.returncode == 0
     else:
-        session_name = f"{cfg.MA_PREFIX}-agent-{agent_id}"
+        session_name = f"agent-{agent_id}"
         result = await _run_subprocess(["tmux", "has-session", "-t", session_name])
         return result.returncode == 0
 

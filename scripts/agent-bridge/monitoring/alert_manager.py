@@ -3,18 +3,16 @@ alert_manager.py — Détection et gestion des alertes agents
 Tâche 004 — Alertes automatiques : agent bloqué > 2 cycles, stale, erreurs
 
 Alertes stockées dans :
-  - Hash {prefix}:alerts:{alert_id} : détail alerte
-  - Set {prefix}:alerts:active : IDs alertes actives
-  - Stream {prefix}:alerts:stream : historique (CT-006 format)
+  - Hash alerts:{alert_id} : détail alerte
+  - Set alerts:active : IDs alertes actives
+  - Stream alerts:stream : historique (CT-006 format)
 
-CT-004 : Préfixe configurable, isolation tests
+CT-004 : adressage Redis canonique
 """
 
 import time
 import json
 import os
-
-DEFAULT_PREFIX = os.environ.get("MA_PREFIX", "ma")
 STREAM_MAXLEN = int(os.environ.get("STREAM_MAXLEN", 1000))
 
 # Seuils configurables (R-TIMING: pas de valeurs hardcodées)
@@ -53,7 +51,7 @@ class AlertManager:
         manager.acknowledge_alert(alert_id)
     """
 
-    def __init__(self, redis_client, prefix=None,
+    def __init__(self, redis_client,
                  stale_threshold=None, stuck_cycles=None,
                  error_burst_threshold=None, error_burst_window=None):
         """
@@ -66,7 +64,6 @@ class AlertManager:
             error_burst_window: Fenêtre en secondes pour le burst
         """
         self.redis = redis_client
-        self.prefix = prefix or DEFAULT_PREFIX
         self.stale_threshold = stale_threshold or DEFAULT_STALE_THRESHOLD
         self.stuck_cycles = stuck_cycles or DEFAULT_STUCK_CYCLES
         self.error_burst_threshold = error_burst_threshold or DEFAULT_ERROR_BURST_THRESHOLD
@@ -74,23 +71,23 @@ class AlertManager:
 
     def _alerts_key(self, alert_id):
         """Clé Redis pour une alerte."""
-        return f"{self.prefix}:alerts:{alert_id}"
+        return f"alerts:{alert_id}"
 
     def _active_set_key(self):
         """Clé Redis pour les alertes actives."""
-        return f"{self.prefix}:alerts:active"
+        return f"alerts:active"
 
     def _stream_key(self):
         """Clé Redis pour le stream d'alertes."""
-        return f"{self.prefix}:alerts:stream"
+        return f"alerts:stream"
 
     def _agent_hash_key(self, agent_id):
         """Clé Redis du hash agent (convention existante)."""
-        return f"{self.prefix}:agent:{agent_id}"
+        return f"agent:{agent_id}"
 
     def _metrics_key(self, agent_id):
         """Clé Redis des métriques agent."""
-        return f"{self.prefix}:metrics:{agent_id}"
+        return f"metrics:{agent_id}"
 
     def check_agent_stale(self, agent_id):
         """
@@ -213,11 +210,11 @@ class AlertManager:
         checked_agents = set()
 
         # Vérifier via les hashes agents (convention existante)
-        pattern = f"{self.prefix}:agent:*"
+        pattern = f"agent:*"
         for key in self.redis.scan_iter(match=pattern):
             parts = key.split(':')
-            if len(parts) == 3:  # {prefix}:agent:{id}
-                agent_id = parts[2]
+            if len(parts) == 2:  # agent:{id}
+                agent_id = parts[1]
                 if agent_id in checked_agents:
                     continue
                 checked_agents.add(agent_id)

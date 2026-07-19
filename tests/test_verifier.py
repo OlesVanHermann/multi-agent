@@ -147,10 +147,10 @@ class TestRun:
         (repo / "feature.py").write_text("x = 1\n")
         r = _StubRedis()
         green, hacked, _ = verifier.run(
-            {"verify_cmd": "exit 0", "task_id": "t1"}, r, "T", "300", str(repo))
+            {"verify_cmd": "exit 0", "task_id": "t1"}, r, "300", str(repo))
         assert (green, hacked) == (True, False)
         stream, fields = r.entries[0]
-        assert stream == "T:completion"
+        assert stream == "completion"
         assert fields["signal"] == "SCORE 100"
         assert fields["origin"] == "verify"
         assert fields["task_id"] == "t1"
@@ -161,7 +161,7 @@ class TestRun:
     def test_red_path_returns_rapport(self, repo):
         r = _StubRedis()
         green, hacked, rapport = verifier.run(
-            {"verify_cmd": "echo KO && exit 1", "task_id": "t2"}, r, "T", "300", str(repo))
+            {"verify_cmd": "echo KO && exit 1", "task_id": "t2"}, r, "300", str(repo))
         assert (green, hacked) == (False, False)
         assert "KO" in rapport
         assert r.entries == []  # pas d'audit sur simple rouge
@@ -172,7 +172,7 @@ class TestRun:
         (target / "verify.sh").write_text("exit 0\n")
         r = _StubRedis()
         green, hacked, rapport = verifier.run(
-            {"verify_cmd": "exit 0", "task_id": "t3"}, r, "T", "300", str(repo))
+            {"verify_cmd": "exit 0", "task_id": "t3"}, r, "300", str(repo))
         assert (green, hacked) == (False, True)
         assert "anti-hacking" in rapport
         assert r.entries[0][1]["signal"] == "HACK_DETECTED"
@@ -191,8 +191,8 @@ def _make_bridge_agent(tmp_path, response="réponse simulée"):
     _run_claude/_capture_pane/_agent_alive stubbés ; le reste est réel."""
     a = object.__new__(agent_mod.TmuxAgent)
     a.agent_id = "300"
-    a.inbox = "T:agent:300:inbox"
-    a.outbox = "T:agent:300:outbox"
+    a.inbox = "agent:300:inbox"
+    a.outbox = "agent:300:outbox"
     a.group = "bridge"
     a.redis = _StubRedis()
     a.prompt_queue = Queue()
@@ -408,7 +408,7 @@ class TestWalEmissions:
     """V3/C2 : le bridge journalise task_assigned / verify_* dans le WAL."""
 
     def _wal_events(self, a):
-        stream = f"{agent_mod.MA_PREFIX}:wal"
+        stream = "wal"
         return [f['event'] for s, f in a.redis.entries if s == stream]
 
     def test_green_path_emits_assigned_then_green(self, tmp_path, monkeypatch):
@@ -449,7 +449,7 @@ class TestWalEmissions:
         monkeypatch.setattr(verifier, "run",
                             lambda *args, **kw: (True, False, ""))
         a = _make_bridge_agent(tmp_path)
-        wal_stream = f"{agent_mod.MA_PREFIX}:wal"
+        wal_stream = "wal"
         original_xadd = a.redis.xadd
 
         def failing_xadd(stream, fields, **kw):
