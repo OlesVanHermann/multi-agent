@@ -258,7 +258,7 @@ multi-agent/
 | [docs/BRIDGE.md](docs/BRIDGE.md) | Documentation technique du bridge |
 | [docs/AGENT_ROLES.md](docs/AGENT_ROLES.md) | Fonctionnement de chaque rôle en mono, x45 et z21 |
 | [docs/PROMPT_RESULT_PRIORITY.md](docs/PROMPT_RESULT_PRIORITY.md) | Pondération résultat, vérification et processus |
-| [docs/HOW TO WRITE AND REWRITE PROMPTS.md](<docs/HOW TO WRITE AND REWRITE PROMPTS.md>) | Écriture, migration upgrade et promotion publique des prompts |
+| [docs/HOW_TO_WRITE_AND_REWRITE_PROMPTS.md](docs/HOW_TO_WRITE_AND_REWRITE_PROMPTS.md) | Écriture, migration upgrade et promotion publique des prompts |
 | [docs/AGENT_MONO.md](docs/AGENT_MONO.md) | Format agent mono |
 | [prompts/CONVENTIONS.md](prompts/CONVENTIONS.md) | Convention de numérotation |
 

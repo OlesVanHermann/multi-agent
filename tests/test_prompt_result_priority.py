@@ -106,7 +106,7 @@ def test_upgrade_runs_prompt_migration_and_supports_dry_run():
 
 
 def test_normative_prompt_rewrite_document_exists():
-    path = ROOT / "docs" / "HOW TO WRITE AND REWRITE PROMPTS.md"
+    path = ROOT / "docs" / "HOW_TO_WRITE_AND_REWRITE_PROMPTS.md"
     text = path.read_text()
     assert "70 % résultat métier" in text
     assert "Obligations des créateurs 150, 160 et 170" in text

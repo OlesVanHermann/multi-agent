@@ -33,7 +33,7 @@ def write_value(destination, value, removed):
 
 
 def scaffold(base, triangle, directory_name, contradictor_login,
-             contradictor_suffix="200", create_workflow=True):
+             contradictor_suffix="200", create_workflow=True, target_suffix=None):
     prompts_root = base / "prompts"
     target = prompts_root / (directory_name or triangle)
     target.mkdir(parents=True, exist_ok=True)
@@ -41,7 +41,7 @@ def scaffold(base, triangle, directory_name, contradictor_login,
     templates = base / "templates" / "x45" / "prompts"
     agent_id = f"{triangle}-{contradictor_suffix}"
     tail = triangle[1:]
-    target_id = f"{triangle}-1{tail}"
+    target_id = f"{triangle}-{target_suffix or ('1' + tail)}"
     for kind in ("system", "memory", "methodology"):
         write_from_template(
             templates / "echo-200" / f"{kind}.md",
@@ -87,6 +87,7 @@ def main():
     parser.add_argument("--contradictor-suffix", "--echo-suffix", dest="echo_suffix",
                         default="200", help="slot Contradictor 2XX")
     parser.add_argument("--skip-workflow", action="store_true")
+    parser.add_argument("--target-suffix", help="slot Master 1XX cible (défaut: 1 + fin de NNN)")
     args = parser.parse_args()
     if len(args.triangle) != 3 or not args.triangle.isdigit():
         parser.error("triangle doit être NNN")
@@ -95,7 +96,8 @@ def main():
         parser.error("contradictor-suffix doit appartenir à 2XX")
     target, workflow = scaffold(args.base.resolve(), args.triangle,
                                 args.directory_name, args.echo_login,
-                                args.echo_suffix, not args.skip_workflow)
+                                args.echo_suffix, not args.skip_workflow,
+                                args.target_suffix)
     print(f"Prompts: {target}")
     if workflow:
         print(f"Workflow: {workflow}")

@@ -114,9 +114,13 @@ CHANGES=$(git log --oneline -n 10 "${CURRENT_TAG}..HEAD" 2>/dev/null || true)
 echo -e "${CYAN}Generating patch/checksums.sha256 (C3)...${NC}"
 FRAMEWORK_PATHS=(scripts web docs patch setup tests templates examples framework .github bench
                  'login/*/settings.json'
+                 prompts/150-create-mono prompts/160-create-x45 prompts/170-create-z21
                  prompts/RULES.md prompts/CONVENTIONS.md prompts/PATHS.md
                  prompts/AGENT.md prompts/CHROME.md
-                 requirements.txt CLAUDE.md README.md LICENSE .gitignore)
+                 prompts/agent_mono.type prompts/agent_x45.type prompts/agent_z21.type
+                 prompts/gpt-5-6-luna.model prompts/gpt-5-6-sol.model prompts/gpt-5-6-terra.model
+                 'prompts/codex*.login'
+                 requirements.txt CLAUDE.md AGENTS.md README.md LICENSE .gitignore)
 # ':!...' = pathspec git d'exclusion (le manifest ne peut pas se contenir lui-même)
 git ls-files -z -- "${FRAMEWORK_PATHS[@]}" ':!patch/checksums.sha256' \
     | LC_ALL=C sort -z \

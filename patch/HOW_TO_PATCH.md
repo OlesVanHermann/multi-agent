@@ -195,7 +195,7 @@ inclure ensemble :
 - `prompts/AGENT.md`, `prompts/RULES.md` et les créateurs 150/160/170 ;
 - `templates/` et `examples/` concernés ;
 - `patch/rebalance-agent-prompts.py` et `patch/upgrade.sh` ;
-- `docs/HOW TO WRITE AND REWRITE PROMPTS.md` et ses liens ;
+- `docs/HOW_TO_WRITE_AND_REWRITE_PROMPTS.md` et ses liens ;
 - `tests/test_prompt_result_priority.py`.
 
 Avant push vers mx9 :
@@ -211,7 +211,7 @@ upgrade doit sauvegarder et migrer les prompts ; le second doit afficher
 `updated=0`. Ensuite seulement, générer les checksums et publier le tag v3.2.X.
 
 Référence complète :
-[HOW TO WRITE AND REWRITE PROMPTS](<../docs/HOW TO WRITE AND REWRITE PROMPTS.md>).
+[HOW TO WRITE AND REWRITE PROMPTS](../docs/HOW_TO_WRITE_AND_REWRITE_PROMPTS.md).
 
 ---
 

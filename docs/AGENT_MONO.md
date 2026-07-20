@@ -1,9 +1,8 @@
 # Mono v3.2 — Guide complet
 
 > La topologie actuelle est documentée dans
-> [Fonctionnement des agents](AGENT_ROLES.md#mono-v32-deux-agents). Les sections
-> historiques à agent unique ci-dessous ne s'appliquent qu'aux anciennes
-> installations.
+> [Fonctionnement des agents](AGENT_ROLES.md#mono-v32-deux-agents). Un mono à
+> fichier unique est un format v3.1 à migrer, pas une variante v3.2 valide.
 
 Le format **mono v3.2** est une paire : un principal `3XX-1XX` et son
 Contradictor `3XX-2XX`. Chacun utilise le triplet x45
@@ -23,27 +22,47 @@ Le format mono convient à la majorité des agents de production : Masters (1XX)
 
 ---
 
-## Structure d'un agent mono
+## Structure d'un mono v3.2
 
 ```
 prompts/{ID}-{nom}/
-├── agent.type            → ../agent_mono.type   # Marqueur de type (symlink)
-├── {ID}-{nom}.md         # Le prompt principal (fichier réel)
-├── {ID}-{nom}.history    # Vide au départ (placeholder)
-├── {ID}-{nom}.login      → ../default.login     # Profil Claude à utiliser
-└── {ID}-{nom}.model      → ../default.model     # Modèle à utiliser
+├── agent.type                       → ../agent_mono.type
+├── mono-pair.json                    # membres et type
+├── contradictor.target              # ID du principal
+├── {ID}-1{XX}.md                     → ../AGENT.md
+├── {ID}-1{XX}-system.md              # mission fonctionnelle
+├── {ID}-1{XX}-memory.md
+├── {ID}-1{XX}-methodology.md
+├── {ID}-1{XX}.model/.login/.effort
+├── {ID}-2{XX}.md                     → ../AGENT.md
+├── {ID}-2{XX}-system.md              # Contradictor du principal
+├── {ID}-2{XX}-memory.md
+├── {ID}-2{XX}-methodology.md
+└── {ID}-2{XX}.model/.login/.effort
 ```
 
-**Exemple concret** (`prompts/150-create-mono/`) :
+Pour `300-demo`, les suffixes dérivés sont `100` et `200`. Pour `345-demo`,
+ils sont `145` et `245`.
 
+## Upgrade d'un mono v3.1
+
+`patch/upgrade.sh` détecte automatiquement l'ancien fichier unique, l'archive,
+le conserve comme `system.md` du principal, puis crée le `2XX`. Aucun service
+n'est démarré.
+
+```bash
+./patch/upgrade.sh --dry-run
+./patch/upgrade.sh
+python3 patch/migrate-v320-agents.py --check
 ```
-150-create-mono/
-├── agent.type            → ../agent_mono.type
-├── 150-create-mono.md    # 3.6K — prompt de création d'agents mono
-├── 150-create-mono.history   # 0B — vide
-├── 150-create-mono.login → ../default.login
-└── 150-create-mono.model → ../default.model
-```
+
+Le contrôle final doit afficher `{"manual": 0, "migrate": 0}`. Une ligne
+`MANUAL` signifie qu'aucune transformation ambiguë n'a été devinée.
+
+## Annexe : format mono v3.1 obsolète
+
+Les descriptions à fichier unique ci-dessous servent uniquement à reconnaître
+une installation ancienne. Ne pas les utiliser pour créer un agent v3.2.
 
 ---
 

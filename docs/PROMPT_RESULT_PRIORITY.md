@@ -1,7 +1,7 @@
 # Concevoir des agents orientés résultat
 
 La référence normative de rédaction, migration et release est
-[HOW TO WRITE AND REWRITE PROMPTS](<HOW TO WRITE AND REWRITE PROMPTS.md>).
+[HOW TO WRITE AND REWRITE PROMPTS](HOW_TO_WRITE_AND_REWRITE_PROMPTS.md).
 
 ## Principe
 

@@ -61,7 +61,7 @@ version_of() {
 # FRAMEWORK = mis à jour | PROJET = préservé
 # ============================================================
 FRAMEWORK_DIRS=(scripts web docs patch setup tests templates examples framework .github)
-FRAMEWORK_FILES=(requirements.txt CLAUDE.md README.md LICENSE .gitignore)
+FRAMEWORK_FILES=(requirements.txt CLAUDE.md AGENTS.md README.md LICENSE .gitignore)
 
 # Fichiers canoniques de prompts/ (contrat framework — RULES.md §10 verify…).
 # Tout le reste de prompts/ (répertoires d'agents, *.model, *.login) est projet.
@@ -69,13 +69,29 @@ FRAMEWORK_FILES=(requirements.txt CLAUDE.md README.md LICENSE .gitignore)
 # les opérations manuelles (AGENTS.md, modèles GPT, slots et liens .login).
 PROMPTS_CANONICAL=(RULES.md CONVENTIONS.md PATHS.md AGENT.md CHROME.md)
 
+# Agents opérateurs livrés par le framework. Contrairement aux agents projet,
+# les créateurs doivent être remplacés par la version de la release pour que
+# toute création future applique réellement la topologie v3.2.
+PROMPTS_FRAMEWORK_DIRS=(150-create-mono 160-create-x45 170-create-z21)
+
+# Configurations nouvelles nécessaires aux agents 2XX. Les defaults locaux ne
+# sont jamais remplacés ; seuls ces noms stables appartenant au framework le sont.
+PROMPTS_FRAMEWORK_FILES=(agent_mono.type agent_x45.type agent_z21.type
+    gpt-5-6-luna.model gpt-5-6-sol.model gpt-5-6-terra.model
+    codex1a.login codex1b.login codex2a.login codex2b.login
+    codex3a.login codex3b.login codex4a.login codex4b.login)
+
 # Miroir exact de FRAMEWORK_PATHS dans hub-release.sh (manifest de checksums).
 # Verrouillé par tests/test_upgrade_manifest_sync.py — modifier les deux ensemble.
 MANIFEST_PATHS=(scripts web docs patch setup tests templates examples framework .github bench
                 'login/*/settings.json'
+                prompts/150-create-mono prompts/160-create-x45 prompts/170-create-z21
                 prompts/RULES.md prompts/CONVENTIONS.md prompts/PATHS.md
                 prompts/AGENT.md prompts/CHROME.md
-                requirements.txt CLAUDE.md README.md LICENSE .gitignore)
+                prompts/agent_mono.type prompts/agent_x45.type prompts/agent_z21.type
+                prompts/gpt-5-6-luna.model prompts/gpt-5-6-sol.model prompts/gpt-5-6-terra.model
+                'prompts/codex*.login'
+                requirements.txt CLAUDE.md AGENTS.md README.md LICENSE .gitignore)
 
 echo ""
 echo "╔════════════════════════════════════════════╗"
@@ -226,9 +242,32 @@ for f in "${PROMPTS_CANONICAL[@]}"; do
     fi
 done
 
+echo ""
+echo "─── Créateurs et configurations v3.2 ───"
+echo ""
+for d in "${PROMPTS_FRAMEWORK_DIRS[@]}"; do
+    [ -d "$TEMP_DIR/prompts/$d" ] || continue
+    CHANGES=$($RSYNC_CMD -rlni --checksum --delete "$TEMP_DIR/prompts/$d/" "./prompts/$d/" 2>/dev/null | grep -v "/$" | grep -v "^$" | wc -l | tr -d ' ')
+    if [ "$CHANGES" -gt 0 ]; then
+        printf "  ${YELLOW}↻${NC} prompts/%-20s %s fichiers (backup puis remplacement framework)\n" "$d/" "$CHANGES"
+    else
+        printf "  ${GREEN}✓${NC} prompts/%s (créateur v3.2 à jour)\n" "$d/"
+    fi
+done
+for f in "${PROMPTS_FRAMEWORK_FILES[@]}"; do
+    [ -e "$TEMP_DIR/prompts/$f" ] || [ -L "$TEMP_DIR/prompts/$f" ] || continue
+    if [ ! -e "./prompts/$f" ] && [ ! -L "./prompts/$f" ]; then
+        printf "  ${YELLOW}+${NC} prompts/%s (configuration 2XX)\n" "$f"
+    elif ! diff -q "$TEMP_DIR/prompts/$f" "./prompts/$f" &>/dev/null; then
+        printf "  ${YELLOW}↻${NC} prompts/%s (backup puis mise à jour)\n" "$f"
+    else
+        printf "  ${GREEN}✓${NC} prompts/%s\n" "$f"
+    fi
+done
+
 # Prompts projet : migration sémantique résultat-first et livraison par preuves. Contrairement à une
 # synchronisation, elle conserve tout le contenu local et ajoute uniquement le
-# contrat normatif documenté dans HOW TO WRITE AND REWRITE PROMPTS.md.
+# contrat normatif documenté dans HOW_TO_WRITE_AND_REWRITE_PROMPTS.md.
 PROMPT_REBALANCE="$TEMP_DIR/patch/rebalance-agent-prompts.py"
 if [ -f "$PROMPT_REBALANCE" ] && [ -d "./prompts" ]; then
     if [ "${MA_SKIP_PROMPT_REBALANCE:-0}" = "1" ]; then
@@ -243,18 +282,10 @@ if [ -f "$PROMPT_REBALANCE" ] && [ -d "./prompts" ]; then
     fi
 fi
 
-# 6e. v3.1.17+ : adressage canonique sans MA_PREFIX. Si Redis tourne encore,
-# déplacer atomiquement les streams/hashes historiques avant le redémarrage
-# des agents. Si Redis est arrêté (procédure recommandée), aucune donnée
-# runtime n'est accessible et les nouvelles adresses seront créées au start.
-ADDRESS_MIGRATION="$TEMP_DIR/patch/migrate-agent-addresses.sh"
-if [ -f "$ADDRESS_MIGRATION" ]; then
-    if ./scripts/redis.sh PING 2>/dev/null | grep -q PONG; then
-        bash "$ADDRESS_MIGRATION" --apply
-        log_ok "adresses Redis (agent:* sans MA_PREFIX)"
-    else
-        log_warn "Redis arrêté : migration d'adresses ignorée ; les clés agent:* seront créées au redémarrage"
-    fi
+TOPOLOGY_MIGRATOR="$TEMP_DIR/patch/migrate-v320-agents.py"
+if [ -f "$TOPOLOGY_MIGRATOR" ] && [ -d "./prompts" ]; then
+    printf "\n  Topologies v3.2 (mono/x45/z21 + Contradictor 2XX) :\n"
+    $PYTHON_CMD "$TOPOLOGY_MIGRATOR" --base "$(pwd)" --check | sed 's/^/    /'
 fi
 
 # Règles deny (protection oracle V3) dans les profils login existants
@@ -270,7 +301,7 @@ echo ""
 for dir in pool-requests project sessions logs; do
     [ -d "./$dir" ] && printf "  ✓ %s/\n" "$dir"
 done
-[ -d "./prompts" ] && printf "  ✓ prompts/ (répertoires d'agents, *.model, *.login — seuls les %s .md canoniques sont synchronisés)\n" "${#PROMPTS_CANONICAL[@]}"
+[ -d "./prompts" ] && printf "  ✓ prompts projet personnalisés (hors créateurs 150/160/170) : contenu conservé puis migration sémantique/topologique\n"
 [ -d "./login" ] && printf "  ✓ login/ (credentials — seules les règles deny sont fusionnées)\n"
 [ -d "./bench/results" ] && printf "  ✓ bench/results/ + bench/heldout.txt (données de site)\n"
 [ -f "./project-config.md" ] && printf "  ✓ project-config.md\n"
@@ -371,6 +402,28 @@ for f in "${PROMPTS_CANONICAL[@]}"; do
     log_ok "prompts/$f"
 done
 
+# 6b.1 Créateurs 150/160/170 : composants framework, remplacés atomiquement.
+#      Les versions locales complètes ont déjà été sauvegardées avec le reste
+#      de prompts/ ci-dessous avant chaque rsync --delete.
+for d in "${PROMPTS_FRAMEWORK_DIRS[@]}"; do
+    [ -d "$TEMP_DIR/prompts/$d" ] || continue
+    mkdir -p "$BACKUP_DIR/prompts/$d" "./prompts/$d"
+    [ -d "./prompts/$d" ] && $RSYNC_CMD -a "./prompts/$d/" "$BACKUP_DIR/prompts/$d/"
+    $RSYNC_CMD -a --delete "$TEMP_DIR/prompts/$d/" "./prompts/$d/"
+    log_ok "prompts/$d/ (créateur framework v3.2)"
+done
+
+# 6b.2 Modèles, logins neutres et marqueurs requis par les nouveaux 2XX.
+for f in "${PROMPTS_FRAMEWORK_FILES[@]}"; do
+    [ -e "$TEMP_DIR/prompts/$f" ] || [ -L "$TEMP_DIR/prompts/$f" ] || continue
+    mkdir -p ./prompts "$BACKUP_DIR/prompts"
+    if [ -e "./prompts/$f" ] || [ -L "./prompts/$f" ]; then
+        cp -a --remove-destination "./prompts/$f" "$BACKUP_DIR/prompts/$f"
+    fi
+    cp -a --remove-destination "$TEMP_DIR/prompts/$f" "./prompts/$f"
+done
+log_ok "configurations modèles/logins v3.2"
+
 # 6c. Règles deny (protection oracle V3) : fusion dans les profils login
 #     existants. Référence = release téléchargée (couverte par le manifest) ;
 #     union des règles uniquement, le reste du settings.json ne bouge pas.
@@ -386,10 +439,24 @@ if [ -f "$DENY_REF" ] && [ -f "$DENY_MERGE" ] && compgen -G "./login/claude*/set
     $PYTHON_CMD "$DENY_MERGE" "$DENY_REF" ./login/claude*/settings.json
 fi
 
-# 6d. Prompts agents existants : ajout idempotent des contrats résultat-first
-#     et livraison pilotée par les preuves.
-#     Les contenus métier ne sont jamais remplacés. Chaque fichier modifié est
-#     sauvegardé par le migrateur sous removed/rebalance-prompts/<timestamp>/.
+# 6d. Topologies existantes : ajoute 2XX aux x45/z21 et transforme les anciens
+#     mono en paire. Aucun service n'est démarré. Un cas ambigu interrompt la
+#     migration avec une ligne MANUAL au lieu de produire une fausse réussite.
+TOPOLOGY_MIGRATOR="$TEMP_DIR/patch/migrate-v320-agents.py"
+if [ -f "$TOPOLOGY_MIGRATOR" ] && [ -d "./prompts" ]; then
+    TOPOLOGY_MIGRATION_LOG="$BACKUP_DIR/v320-agent-topology-migration.log"
+    if ! $PYTHON_CMD "$TOPOLOGY_MIGRATOR" --base "$(pwd)" >"$TOPOLOGY_MIGRATION_LOG" 2>&1; then
+        cat "$TOPOLOGY_MIGRATION_LOG"
+        log_error "Migration topologique incomplète ; traiter les lignes MANUAL puis relancer."
+        exit 1
+    fi
+    cat "$TOPOLOGY_MIGRATION_LOG"
+    log_ok "topologies agents v3.2 et Contradictors 2XX (rapport : $TOPOLOGY_MIGRATION_LOG)"
+fi
+
+# 6e. Prompts agents existants : après la matérialisation topologique afin que
+#     les nouveaux system.md issus d'un mono historique reçoivent eux aussi le
+#     contrat résultat-first/livraison pendant cette même passe.
 PROMPT_REBALANCE="$TEMP_DIR/patch/rebalance-agent-prompts.py"
 if [ -f "$PROMPT_REBALANCE" ] && [ -d "./prompts" ]; then
     if [ "${MA_SKIP_PROMPT_REBALANCE:-0}" = "1" ]; then
@@ -398,6 +465,18 @@ if [ -f "$PROMPT_REBALANCE" ] && [ -d "./prompts" ]; then
         PROMPT_MIGRATION_LOG="$BACKUP_DIR/prompt-result-migration.log"
         $PYTHON_CMD "$PROMPT_REBALANCE" --base "$(pwd)" | tee "$PROMPT_MIGRATION_LOG"
         log_ok "prompts agents (migration résultat-first/livraison ; rapport : $PROMPT_MIGRATION_LOG)"
+    fi
+fi
+
+# 6f. v3.1.17+ : adressage canonique sans MA_PREFIX. Cette migration est
+# volontairement après la barrière dry-run : un dry-run ne modifie jamais Redis.
+ADDRESS_MIGRATION="$TEMP_DIR/patch/migrate-agent-addresses.sh"
+if [ -f "$ADDRESS_MIGRATION" ]; then
+    if ./scripts/redis.sh PING 2>/dev/null | grep -q PONG; then
+        bash "$ADDRESS_MIGRATION" --apply
+        log_ok "adresses Redis (agent:* sans MA_PREFIX)"
+    else
+        log_warn "Redis arrêté : migration d'adresses ignorée ; les clés agent:* seront créées au redémarrage"
     fi
 fi
 

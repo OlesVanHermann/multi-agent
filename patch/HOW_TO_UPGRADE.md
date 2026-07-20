@@ -182,6 +182,11 @@ python3 scripts/agent-bridge/healthcheck.py
    - migration résultat-first et livraison pilotée par les preuves des prompts agents existants avec
      `patch/rebalance-agent-prompts.py` : contenus locaux conservés, originaux
      sous `removed/rebalance-prompts/`, rapport dans l'upgrade backup.
+   - remplacement sauvegardé des créateurs framework `150`, `160` et `170` par
+     leurs versions v3.2 ;
+   - migration topologique par `patch/migrate-v320-agents.py` : ancien mono vers
+     paire `1XX+2XX`, ajout du Contradictor aux x45/z21 existants, sans démarrer
+     de service. Tout cas ambigu produit `MANUAL` et interrompt la passe.
 7. Installe les dépendances Python.
 
 Depuis v3.1.17, les sessions tmux et les clés Redis n'utilisent plus
@@ -194,13 +199,35 @@ redémarrage.
 ### Migration des prompts v3.2.X
 
 Voir la référence normative
-[HOW TO WRITE AND REWRITE PROMPTS](<../docs/HOW TO WRITE AND REWRITE PROMPTS.md>).
+[HOW TO WRITE AND REWRITE PROMPTS](../docs/HOW_TO_WRITE_AND_REWRITE_PROMPTS.md).
 
-Le dry-run compte les prompts concernés sans les modifier. La passe réelle
+#### Passage v3.1.17 ou antérieur vers v3.2.0 : deux passes obligatoires
+
+Le premier appel s'exécute encore avec l'ancien `upgrade.sh` chargé en mémoire :
+il installe le nouvel outillage. Le second appel exécute effectivement la
+synchronisation des créateurs et les migrations sémantique/topologique :
+
+```bash
+./patch/upgrade.sh v3.2.0
+./patch/upgrade.sh v3.2.0
+```
+
+Une installation déjà en v3.2.X n'a besoin que d'une passe pour les mises à
+jour suivantes.
+
+Le dry-run compte les prompts concernés et liste chaque conversion topologique
+sans modifier les fichiers ni Redis. La passe réelle
 ajoute la finalité résultat-first et le contrat de décision par hard gates aux
 prompts projet, notamment aux créateurs 150/160/170. Les anciens rôles
 1XX/3XX/5XX/7XX/8XX/9XX reçoivent leur contrat spécialisé ; les futurs
 mono/x45/z21 héritent de la même écriture.
+
+Après la passe :
+
+```bash
+python3 patch/migrate-v320-agents.py --check
+# attendu : {"manual": 0, "migrate": 0}
+```
 
 Contrôle après upgrade :
 

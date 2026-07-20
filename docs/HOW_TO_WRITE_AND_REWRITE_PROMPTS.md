@@ -155,6 +155,12 @@ Le dry-run affiche le nombre de prompts à migrer. La passe réelle :
 6. conserve aussi les copies fichier par fichier sous
    `removed/rebalance-prompts/<timestamp>/`.
 
+La migration sémantique est complétée par
+`patch/migrate-v320-agents.py`, qui matérialise les nouveaux `2XX` et convertit
+les mono historiques. `upgrade.sh` synchronise séparément les créateurs
+framework 150/160/170 : les enrichir textuellement ne suffirait pas à convertir
+leur ancien format mono.
+
 Opt-out d'urgence, non recommandé :
 
 ```bash

@@ -470,7 +470,7 @@ Migrations idempotentes (v2→v3 comme v3.X→v3.X+1) :
 - depuis v3.2.X, le contenu métier des prompts agents reste préservé, mais une
   migration idempotente ajoute le contrat résultat-first aux `system.md`
   existants avec sauvegarde sous `removed/rebalance-prompts/` ; voir
-  `docs/HOW TO WRITE AND REWRITE PROMPTS.md` ;
+  `docs/HOW_TO_WRITE_AND_REWRITE_PROMPTS.md` ;
 - les règles `permissions.deny` (protection oracle V3) sont fusionnées dans les `login/claude*/settings.json` existants (`patch/merge-deny-rules.py`) — `login/` n'est jamais synchronisé (credentials).
 
 `setup/secrets.cfg` n'est jamais écrasé.
