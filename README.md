@@ -1,4 +1,4 @@
-# Multi-Agent System v3.1.16
+# Multi-Agent System v3.1.17
 
 La ligne 3.1 ajoute OpenAI Codex CLI en mode interactif, avec authentification
 ChatGPT (forfait, sans API) et trois modèles : `gpt-5.6-sol`,
@@ -325,4 +325,4 @@ MIT - voir [LICENSE](LICENSE)
 
 ---
 
-*Multi-Agent System v3.1.16 - 2026*
+*Multi-Agent System v3.1.17 - 2026*
