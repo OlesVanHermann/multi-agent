@@ -20,7 +20,7 @@ function SatelliteDiagram({
   const [hoveredBot, setHoveredBot] = useState(null)
   const role = satRole(sid)
   const mainId = tri.worker || wid
-  const roleNames = { master: 'Master', observer: 'Observer', indexer: 'Indexer', curator: 'Curator', coach: 'Coach', tri_architect: 'Architect' }
+  const roleNames = { master: 'Master', echo: 'Contradictor', observer: 'Observer', indexer: 'Indexer', curator: 'Curator', coach: 'Coach', tri_architect: 'Architect' }
 
   const boxClick = (path) => ({
     onClick: () => onFileClick(path),
@@ -43,7 +43,9 @@ function SatelliteDiagram({
 
   // Supervisor at top: 900 for tri_architect, 945 for others
   // 900 = global agent → open right panel only; 945 = triangle satellite → navigate bottom
-  const supId = (role === 'tri_architect') ? '900' : (tri.tri_architect || '945')
+  const supId = tri.type === 'mono-pair'
+    ? mainId
+    : ((role === 'tri_architect') ? '900' : (tri.tri_architect || '945'))
   const supIsSatellite = supId !== '900' && satRole(supId) !== null
   const supervisorEl = <AgentCell
     id={supId} label={sfx(supId)} agent={agentMap[supId]}
@@ -55,7 +57,10 @@ function SatelliteDiagram({
   // Per-role: input1 (top-left), output (right)
   let input1El, outputEl
 
-  if (role === 'observer') {
+  if (role === 'echo') {
+    input1El = <InfoBox lines={[`${sfx(mainId)}`, 'preuves']} />
+    outputEl = <InfoBox lines={['divergences', 'non concluant']} />
+  } else if (role === 'observer') {
     input1El = <InfoBox lines={[`${wid}`, 'OUTPUT']} />
     outputEl = (
       <div className="tri-grid-outputs">
@@ -150,17 +155,21 @@ function SatelliteDiagram({
         <div className="tri-garrow-up" />
         <div /><div />
 
-        {/* R8: [700] _ [800] — global agents, dynamic color */}
-        <div className="tri-labeled-cell">
-          <AgentCell {...mkCell('700', false)} />
-          <span className="tri-role-tag">Curator</span>
-        </div>
-        <div />
-        <div className="tri-labeled-cell">
-          <AgentCell {...mkCell('800', false)} />
-          <span className="tri-role-tag">Coach</span>
-        </div>
-        <div /><div />
+        {/* R8 : les rôles absents d'un mono-pair ne sont jamais dessinés. */}
+        {tri.type === 'mono-pair' ? <>
+          <div /><div /><div /><div /><div />
+        </> : <>
+          <div className="tri-labeled-cell">
+            <AgentCell {...mkCell('700', false)} />
+            <span className="tri-role-tag">Curator</span>
+          </div>
+          <div />
+          <div className="tri-labeled-cell">
+            <AgentCell {...mkCell('800', false)} />
+            <span className="tri-role-tag">Coach</span>
+          </div>
+          <div /><div />
+        </>}
       </div>
     </>
   )

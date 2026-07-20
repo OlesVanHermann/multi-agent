@@ -213,8 +213,6 @@ def _runtime_effort_from_pane(out, markers=None):
 
 # EF-003 : intervalle heartbeat enrichi (CA-004: toutes les 10s ± 2s)
 HEARTBEAT_INTERVAL = 10
-MODEL_CHECK_INTERVAL = int(os.environ.get("MODEL_CHECK_INTERVAL", 3600))
-
 # EF-001 : port de base pour health endpoint (port = base + agent_id numérique)
 HEALTH_PORT_BASE = int(os.environ.get("AGENT_HEALTH_PORT_BASE", 9100))
 
@@ -280,6 +278,8 @@ def _parse_pane_state(out, pane_cmd, agent_id, process_names=None, busy_scope=No
 
     claude_alive = pane_cmd in tuple(process_names)
     lines = out.split('\n')
+    login_required = any(marker.lower() in out.lower()
+                         for marker in m['login_expired_markers'])
 
     bp_line = ""
     for line in lines:
@@ -291,7 +291,7 @@ def _parse_pane_state(out, pane_cmd, agent_id, process_names=None, busy_scope=No
     else:
         has_bashes = bool(re.search(m['bashes_pattern'], '\n'.join(lines[-20:])))
 
-    if not claude_alive:
+    if not claude_alive or login_required:
         busy = False
     elif busy_scope == 'status_line':
         # Claude Code : l'indice « esc to interrupt » est DANS la ligne de statut.
@@ -329,6 +329,7 @@ def _parse_pane_state(out, pane_cmd, agent_id, process_names=None, busy_scope=No
         'has_down': m['scroll_indicator'] in bp_line,
         'plan_mode': _plan_mode_active(out, m),
         'waiting_approval': m['waiting_select'] in out,
+        'login_required': login_required,
         'compacted': bool(re.search(re.escape(m['compaction']['in_progress']), out, re.IGNORECASE)),
         'context_pct': ctx,
         'done_compacting': done_compacting,
@@ -416,9 +417,8 @@ class TmuxAgent:
         self.state = State.IDLE
         self.state_lock = Lock()
         self._tui_lock = Lock()
-        # Ne jamais injecter /model pendant le démarrage : laisser au bridge un
-        # intervalle complet pour traiter auto-init et les premiers messages.
-        self._next_model_check_ts = time.time() + MODEL_CHECK_INTERVAL
+        # L'état du modèle est observé passivement. Une slash-command sans
+        # argument ouvre un picker interactif et bloquerait le TUI.
         self._observed_model = ""
         self._observed_effort = ""
 
@@ -940,15 +940,11 @@ class TmuxAgent:
         except Exception:
             return None
         pane_state = _parse_pane_state(out, pane_cmd, self.agent_id)
-        now = time.time()
-        if now >= self._next_model_check_ts:
-            # Même en cas d'abandon, aucun nouvel essai avant une heure.
-            self._next_model_check_ts = now + MODEL_CHECK_INTERVAL
-            if AGENT_CLI == 'codex':
-                self._observed_model = _runtime_model_from_pane(out)
-                self._observed_effort = _runtime_effort_from_pane(out)
-            else:
-                self._check_claude_model_effort(out)
+        if AGENT_CLI == 'codex':
+            self._observed_model = _runtime_model_from_pane(out)
+            self._observed_effort = _runtime_effort_from_pane(out)
+        else:
+            self._observe_claude_model_effort(out)
         configured_model = _configured_model(self.agent_id)
         configured_effort = _expected_effort_name(_configured_effort(self.agent_id))
         pane_state.update({
@@ -964,53 +960,21 @@ class TmuxAgent:
         })
         return pane_state
 
-    def _check_claude_model_effort(self, recent_pane):
-        """Contrôle actif non bloquant ; tout conflit entraîne un abandon."""
-        model_cmd = MARKERS['model_check_command']
-        effort_cmd = MARKERS['effort_check_command']
-        recent_pane = self._capture_pane(200) or recent_pane
-        model_already_run = re.search(
-            MARKERS['model_check_history_pattern'], recent_pane, re.MULTILINE)
-        effort_already_run = re.search(
-            MARKERS['effort_check_history_pattern'], recent_pane, re.MULTILINE)
-        if model_already_run and effort_already_run:
-            self._log("Model check skipped: commands already visible in recent pane")
-            return
-        with self.state_lock:
-            unavailable = self.state != State.IDLE or self.current_task is not None
-        if unavailable or not self.prompt_queue.empty():
-            self._log("Model check skipped: agent running or queue not empty")
-            return
-        if not self._tui_lock.acquire(blocking=False):
-            self._log("Model check skipped: TUI already in use")
-            return
-        claimed = False
-        try:
-            with self.state_lock:
-                if self.state != State.IDLE or self.current_task is not None:
-                    return
-                self.state = State.BUSY
-                claimed = True
-            if not self.prompt_queue.empty():
-                return
-            with self.state_lock:
-                if self.current_task is not None:
-                    return
-            model_response = self._run_claude(model_cmd)
-            effort_response = self._run_claude(effort_cmd)
-            model_match = re.search(MARKERS['model_check_response_pattern'], model_response)
-            effort_match = re.search(MARKERS['effort_check_response_pattern'], effort_response)
-            if model_match:
-                self._observed_model = _normalize_model_name(model_match.group(1))
-            if effort_match:
-                self._observed_effort = effort_match.group(1).lower()
-        finally:
-            if claimed:
-                with self.state_lock:
-                    if self.current_task is None:
-                        self.state = State.IDLE
-                self._set_redis_status()
-            self._tui_lock.release()
+    def _observe_claude_model_effort(self, recent_pane):
+        """Relève uniquement les confirmations déjà rendues, sans écrire au TUI.
+
+        `/model` et `/effort` sans argument sont des sélecteurs interactifs dans
+        Claude Code. Les utiliser comme sondes laisse le menu ouvert et fige
+        l'agent. Une information absente reste donc inconnue.
+        """
+        model_match = re.search(
+            MARKERS['model_check_response_pattern'], recent_pane, re.MULTILINE)
+        effort_match = re.search(
+            MARKERS['effort_check_response_pattern'], recent_pane, re.MULTILINE)
+        if model_match:
+            self._observed_model = _normalize_model_name(model_match.group(1))
+        if effort_match:
+            self._observed_effort = effort_match.group(1).lower()
 
     def _heartbeat_loop(self):
         """Thread: heartbeat enrichi toutes les 10s — EF-003, CA-004.
@@ -1135,6 +1099,7 @@ class TmuxAgent:
                 # V3 — absents = comportement v2 inchangé
                 'verify_cmd': data.get('verify_cmd', ''),
                 'task_id': data.get('task_id', ''),
+                'project_dir': data.get('project_dir', ''),
                 'deadline': data.get('deadline', ''),
                 'source': 'redis'
             })
@@ -1411,6 +1376,7 @@ class TmuxAgent:
                     'cycle': task.get('cycle', ''),
                     # V3 : le retry API ne doit pas faire perdre le gate verify
                     'verify_cmd': task.get('verify_cmd', ''),
+                    'project_dir': task.get('project_dir', ''),
                     'task_id': task.get('task_id', ''),
                     'deadline': task.get('deadline', ''),
                     '_verify_retry': task.get('_verify_retry', 0),
@@ -1494,6 +1460,7 @@ class TmuxAgent:
                     'cycle': task.get('cycle', ''),
                     # V3 : la reprise post-compaction conserve le gate verify
                     'verify_cmd': task.get('verify_cmd', ''),
+                    'project_dir': task.get('project_dir', ''),
                     'task_id': task.get('task_id', ''),
                     'deadline': task.get('deadline', ''),
                     '_verify_retry': task.get('_verify_retry', 0),
@@ -1509,18 +1476,37 @@ class TmuxAgent:
             # DONE candidat = fin de réponse d'une tâche portant verify_cmd.
             # Sans verify_cmd : flux v2 inchangé (rétrocompatibilité).
             if task.get('verify_cmd') and not deadline_expired:
+                verify_started = time.monotonic()
+                verify_cwd = PROJECT_DIR
+                requested_cwd = task.get('project_dir', '')
+                if requested_cwd:
+                    requested_path = Path(requested_cwd).resolve()
+                    sandbox_root = (BASE_DIR / 'bench' / 'sandbox').resolve()
+                    try:
+                        requested_path.relative_to(sandbox_root)
+                        verify_cwd = str(requested_path)
+                    except ValueError:
+                        self._log(f"Ignored project_dir outside bench sandbox: {requested_path}")
                 green, hacked, rapport = verifier.run(
-                    task, self.redis, self.agent_id, PROJECT_DIR)
+                    task, self.redis, self.agent_id, verify_cwd)
+                verify_wall_s = round(time.monotonic() - verify_started, 6)
+                usage_fields = {
+                    key: task[key] for key in
+                    ('tokens_in', 'tokens_out', 'tokens_cached', 'usd_est')
+                    if task.get(key) not in (None, '')
+                }
                 if green:
                     response += "\n[VERIFY_GREEN]"
                     self._log_event("verify_green", f"task={task.get('task_id')}")
-                    self._wal("verify_green", task.get('task_id'))
+                    self._wal("verify_green", task.get('task_id'),
+                              verify_wall_s=verify_wall_s, **usage_fields)
                 else:
                     n = int(task.get('_verify_retry', 0))
                     if not hacked and n < VERIFY_MAX_RETRIES:
                         self._log_event("verify_red",
                                         f"task={task.get('task_id')} retry={n+1}")
-                        self._wal("verify_red", task.get('task_id'), retry=n + 1)
+                        self._wal("verify_red", task.get('task_id'), retry=n + 1,
+                                  verify_wall_s=verify_wall_s, **usage_fields)
                         self.prompt_queue.put({
                             'prompt': (f"FROM:verify|FAIL (tentative {n+1}/"
                                        f"{VERIFY_MAX_RETRIES})\n{rapport}\n"
@@ -1531,6 +1517,7 @@ class TmuxAgent:
                             'correlation_id': task.get('correlation_id', ''),
                             'cycle': task.get('cycle', ''),
                             'verify_cmd': task['verify_cmd'],
+                            'project_dir': task.get('project_dir', ''),
                             'task_id': task.get('task_id', ''),
                             'deadline': task.get('deadline', ''),
                             '_verify_retry': n + 1,
@@ -1547,7 +1534,8 @@ class TmuxAgent:
                     self._log_event("verify_escalation",
                                     f"task={task.get('task_id')} motif={motif}")
                     self._wal("verify_escalation", task.get('task_id'),
-                              motif=motif)
+                              motif=motif, verify_wall_s=verify_wall_s,
+                              **usage_fields)
                     response = (f"[VERIFY_FAILED] BLOCKED|task={task.get('task_id')}"
                                 f"|raison={motif}\n{rapport}")
 

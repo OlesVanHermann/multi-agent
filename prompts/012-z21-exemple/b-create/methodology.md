@@ -11,7 +11,7 @@
 
 ## Tests
 ```bash
-cd $BASE && python3 -m pytest tests/test_todos_create.py -v
+cd $BASE && python -m pytest tests/test_todos_create.py -v
 ```
 
 ## Checklist pre-commit

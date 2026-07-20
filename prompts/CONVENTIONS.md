@@ -1,6 +1,6 @@
 INTERDICTION D'HALUCINER
 OBLIGATION d'OBEIR AUX PROMPTS. NE JAMAIS SORTIR DU CADRE DEFINIS PAR LE PROMPT
-APPRENTISSAGE: Quand je suis guidé par un humain et que je reçois des instructions AUTRES que "go <entreprise>", c'est du nouveau savoir. Je DOIS mettre à jour mon prompt avec ces nouvelles expériences pour être autonome la prochaine fois.
+APPRENTISSAGE: Quand un humain apporte un nouveau savoir, je le consigne dans un artefact de retour d'expérience autorisé par mon rôle. Je ne modifie jamais mon propre prompt. Seul l'Architecte 000 peut intégrer ce retour dans les prompts après vérification et gate de non-régression.
 
 # Conventions de Numérotation des Agents
 
@@ -73,7 +73,15 @@ APPRENTISSAGE: Quand je suis guidé par un humain et que je reçois des instruct
 | **800-899** | Monitors | Monitoring, support | 100 | ❌ |
 | **900-999** | **Architects** | **Structure, prompts** | 100 | **✅ OUI** |
 
-**Total: 1000 agents possibles (000-999)**
+**Plage: 1000 identifiants possibles (000-999).** Ce nombre n'est pas une capacité parallèle garantie.
+
+## Agents d'observation
+
+Les suffixes `NNN-2XX` (Contradictor) et `NNN-8XX` (Ami) désignent les agents
+d'observation. Ils sont hors cycle, sans autorité sur la complétion, et ne
+comptent pas dans le coût nominal de la boucle. Contradictor est déclenché par
+l'opérateur ; Ami est appelé au plus une fois par tâche et cycle par un worker.
+Leurs sorties sont du contexte de rang 5, jamais un état autoritatif.
 
 ---
 

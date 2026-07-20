@@ -36,8 +36,8 @@ Tout fichier modifie DOIT etre commite AVANT de signaler DONE au Master. Verifie
 ### 8. Dispatch parallele Dev+Tester
 Quand le Reviewer retourne BLOCANTS CODE + BLOCANTS TEST independants, le Master peut dispatcher Dev et Tester en parallele. Gain de temps significatif.
 
-### 9. XADD stream name copy-paste
-TOUJOURS copier-coller les stream names depuis le template. JAMAIS taper de memoire. `A:agent:{ID}-1{XX}:inbox` (avec prefixe z21) ≠ `A:agent:1{XX}:inbox` (perte du message).
+### 9. Communication événementielle
+TOUJOURS utiliser `$BASE/scripts/send.sh` et `$BASE/scripts/done.sh`. Ne jamais construire directement un nom de stream Redis ni coder un préfixe en dur.
 
 ### 10. Cross-cutting = sous-contexte dedie
 Quand une tache touche `_username()` ou `_check_member()` sur 3+ fichiers backend, creer un contexte dedie (`b-features-endpoints`) plutot que dispatcher vers chaque contexte individuellement.

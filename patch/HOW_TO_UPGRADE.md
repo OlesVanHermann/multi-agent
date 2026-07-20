@@ -41,7 +41,9 @@ Ces fichiers sont spécifiques à votre projet :
 prompts/                  # Vos prompts personnalisés (répertoires d'agents,
                           # *.model, *.login) — SEULS les 5 .md canoniques
                           # (RULES, CONVENTIONS, PATHS, AGENT, CHROME) sont
-                          # synchronisés, avec backup dans removed/
+                          # synchronisés. Depuis v3.2.X, une migration
+                          # sémantique idempotente ajoute aussi le contrat
+                          # résultat-first aux system.md existants, avec backup.
 pool-requests/           # Données runtime
 ├── knowledge/           # Vos inventaires
 project/                 # Votre code source
@@ -177,7 +179,40 @@ python3 scripts/agent-bridge/healthcheck.py
    - fusion des règles `permissions.deny` (protection oracle V3) dans les
      `login/claude*/settings.json` existants via `patch/merge-deny-rules.py`
      — union des règles uniquement, le reste du fichier ne bouge pas.
+   - migration résultat-first et livraison pilotée par les preuves des prompts agents existants avec
+     `patch/rebalance-agent-prompts.py` : contenus locaux conservés, originaux
+     sous `removed/rebalance-prompts/`, rapport dans l'upgrade backup.
 7. Installe les dépendances Python.
+
+Depuis v3.1.17, les sessions tmux et les clés Redis n'utilisent plus
+`MA_PREFIX` : `agent-300`, `agent:300:inbox`, `wal`, `completion`. Si Redis est
+joignable pendant l'upgrade, `migrate-agent-addresses.sh --apply` déplace les
+anciennes clés automatiquement. Sinon, elles seront recréées sous leur nom
+canonique au redémarrage ; le migrateur reste exécutable manuellement avant ce
+redémarrage.
+
+### Migration des prompts v3.2.X
+
+Voir la référence normative
+[HOW TO WRITE AND REWRITE PROMPTS](<../docs/HOW TO WRITE AND REWRITE PROMPTS.md>).
+
+Le dry-run compte les prompts concernés sans les modifier. La passe réelle
+ajoute la finalité résultat-first et le contrat de décision par hard gates aux
+prompts projet, notamment aux créateurs 150/160/170. Les anciens rôles
+1XX/3XX/5XX/7XX/8XX/9XX reçoivent leur contrat spécialisé ; les futurs
+mono/x45/z21 héritent de la même écriture.
+
+Contrôle après upgrade :
+
+```bash
+python3 patch/rebalance-agent-prompts.py --check
+```
+
+Le résultat normal est `updated=0`. Opt-out d'urgence :
+
+```bash
+MA_SKIP_PROMPT_REBALANCE=1 ./patch/upgrade.sh
+```
 
 ---
 
@@ -461,6 +496,8 @@ docker inspect quay.io/keycloak/keycloak:<TAG> --format '{{index .RepoDigests 0}
 
 | Version | Date | Changements majeurs |
 |---------|------|---------------------|
+| v3.2.X | 2026-07 | Prompts résultat-first 70/20/10, créateurs 150/160/170, migration automatique et récupérable des prompts projet via upgrade.sh |
+| v3.2.0 | 2026-07 | Gates x45, anti-spécialisation R4, coût mesuré, banc scellé, méthodologies delta/Pareto, ablation, compétences partagées, topologies variables, observateurs paramétriques NNN-2XX/NNN-8XX |
 | v3.0.4–v3.0.7 | 2026-07 | redis.sh mot de passe env-only, `.github/` dans les manifests, scroll tmux (DISABLE_MOUSE dans les profils), défaut opus-4-8, dashboard résilient aux rebuilds frontend, triangle auto-resolve par vivacité (send.sh/done.sh), sessions Keycloak 7 j — les instances existantes appliquent les durées via kcadm (`docs/AUTH.md`) |
 | v3.0 | 2026-07 | Boucle verify au bridge (C1), WAL/budgets/stall (C2), banc bench/ (C0), migrations upgrade.sh |
 | v3.1.2 | 2026-07 | Agent Architecte `000` visible dans la grille et les mises à jour temps réel, contrôles toujours protégés |

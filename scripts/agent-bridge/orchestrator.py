@@ -31,7 +31,7 @@ r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD or Non
 
 
 def send_and_wait(to_agent, prompt, from_agent=0, timeout=120,
-                  verify_cmd=None, task_id=None):
+                  verify_cmd=None, task_id=None, project_dir=None):
     """Envoie un prompt et attend SA réponse (corrélée par correlation_id, F2).
 
     V3/C1 : verify_cmd optionnel — porté sur le message inbox, le bridge ne
@@ -54,6 +54,8 @@ def send_and_wait(to_agent, prompt, from_agent=0, timeout=120,
     if verify_cmd:
         fields['verify_cmd'] = verify_cmd
         fields['task_id'] = task_id or correlation_id[:8]
+    if project_dir:
+        fields['project_dir'] = project_dir
     r.xadd(f"agent:{to_agent}:inbox", fields,
            maxlen=IO_STREAM_MAXLEN, approximate=True)
     print(f"[{from_agent}] -> [{to_agent}]: {prompt[:60]}...")
@@ -149,6 +151,8 @@ if __name__ == "__main__":
                         help=f"nom court ({', '.join(list_workflows())}) ou chemin .yaml")
     parser.add_argument('--state', metavar='FICHIER',
                         help="fichier d'état JSON (persistance + reprise)")
+    parser.add_argument('--variant', default='baseline',
+                        help="variante topologique déclarée (défaut: baseline)")
     parser.add_argument('--var', metavar='CLEF=VALEUR', action='append',
                         default=[],
                         help="substitution {{clef}} dans le YAML (répétable)")
@@ -163,7 +167,8 @@ if __name__ == "__main__":
         variables[key] = value
 
     try:
-        wf = load_workflow(args.workflow, variables)
+        wf = workflow_engine.select_variant(
+            load_workflow(args.workflow, variables), args.variant)
         workflow_engine.validate_workflow(wf)
     except FileNotFoundError as exc:
         print(f"Error: workflow introuvable: {exc}")

@@ -121,7 +121,7 @@ async def get_logins_models():
 
     # Gather agent IDs from cache + directory scan
     agent_ids = set()
-    x45_base_ids = set()  # bare IDs that are x45/z21 groups (not standalone agents)
+    x45_base_ids = set()  # bare IDs that are compound groups (mono-pair/x45/z21)
     for a in state._cache.get("agents", []):
         agent_ids.add(a["id"])
     # Scan prompts/ directories — detect type from agent.type symlink
@@ -134,7 +134,19 @@ async def get_logins_models():
         agent_type = ""
         if type_link.is_symlink():
             agent_type = Path(os.readlink(type_link)).stem.replace("agent_", "")
-        if agent_type == "mono":
+        mono_pair = f / "mono-pair.json"
+        if agent_type == "mono" and mono_pair.is_file():
+            # v3.2 : un mono est un groupe de deux agents (principal +
+            # Contradictor), pas une session nue portant le préfixe.
+            x45_base_ids.add(base_id)
+            try:
+                pair = json.loads(mono_pair.read_text())
+            except (OSError, json.JSONDecodeError):
+                pair = {}
+            for member in (pair.get("main"), pair.get("contradictor")):
+                if member and re.fullmatch(r'\d{3}-\d{3}', str(member)):
+                    agent_ids.add(str(member))
+        elif agent_type == "mono":
             agent_ids.add(base_id)
         elif agent_type in ("x45", "z21"):
             x45_base_ids.add(base_id)
@@ -157,7 +169,7 @@ async def get_logins_models():
                         agent_ids.add(sm.group(1))
             else:
                 agent_ids.add(base_id)
-    # Remove bare IDs that are x45/z21 groups (they use compound format)
+    # Remove bare IDs that are compound groups (they use member sessions).
     agent_ids -= x45_base_ids
 
     # Build per-agent config
@@ -215,7 +227,7 @@ async def get_logins_models():
             "effort_source": effort_source,
         })
 
-    # Detect group types from agent.type symlink
+    # Detect group types from agent.type symlink (mono-pair compris).
     groups = []
     for base_id in sorted(x45_base_ids, key=int):
         x45_dir = _resolve_prompts_dir(prompts_dir, base_id)

@@ -12,6 +12,16 @@ Le nom du symlink (`YYY`) est ton identifiant. Tes 3 fichiers sont dans le même
 **Lis ces 3 fichiers maintenant, puis exécute.**
 
 ## Règles absolues
+- **La finalité métier domine les moyens.** Produis d'abord le résultat demandé,
+  rends-le fonctionnel et vérifie-le. Le workflow, la mémoire, les enveloppes et
+  les scripts servent cette finalité ; leur respect n'est pas à lui seul un
+  résultat.
+- Applique silencieusement les règles mécaniques. Ne raconte pas les prompts
+  lus, les corrélations conservées, les checklists suivies ou le fait que tu
+  respectes le processus, sauf si cela explique un blocage qui affecte le
+  résultat ou exige une décision utilisateur.
+- Dans toute réponse, commence par le résultat obtenu, puis ses preuves, puis
+  les limites éventuelles. Ne commence jamais par un compte rendu de processus.
 - Le mandat explicite et récent de l'utilisateur est prioritaire sur une mission
   ou une mémoire historique, sous réserve des frontières fortes de sécurité.
 - Ton `system.md` définit ton rôle et ton workflow par défaut ; il ne sert pas
@@ -30,12 +40,11 @@ Le nom du symlink (`YYY`) est ton identifiant. Tes 3 fichiers sont dans le même
 - Après tout dispatch inter-agent, rends immédiatement la main et attends l'événement métier entrant via le bridge. Jusqu'à cet événement, tout `sleep`, polling, wakeup replanifié, lecture Redis répétée ou contrôle périodique de vivacité est interdit. Ne re-dispatche jamais sur la base d'un délai. Seule exception : le diagnostic ponctuel, non destructif et sans boucle défini plus bas, sur ordre explicite de l'utilisateur ou contradiction d'état constatée.
 
 ## Exécution
-1. Lis `YYY-system.md` pour comprendre ta mission
-2. Lis `YYY-memory.md` pour avoir ton contexte
-3. Lis `YYY-methodology.md` pour connaître ta méthode
-4. Exécute : INPUT → applique methodology → OUTPUT
-5. Publie ton OUTPUT là où system.md l'indique
-6. Signale ta complétion sur Redis
+1. Identifie le résultat concret attendu et ses critères de réussite
+2. Lis `YYY-system.md`, `YYY-memory.md` et `YYY-methodology.md`
+3. Exécute et vérifie le résultat ; adapte les moyens si l'état réel l'exige
+4. Publie l'OUTPUT utile là où system.md l'indique
+5. Signale la complétion sans transformer le protocole en contenu métier
 
 ## Communication
 - Canal Redis : `agent:{ID}:inbox` pour recevoir des messages
@@ -107,6 +116,29 @@ Les commandes `artifact-required`, `status-required`, `resume` et
   `ARTIFACT:none|SHA256:none|DETAIL:no_methodology_change`.
 - **Architect `*-9XX`** : tout arbitrage est corrélé et indique la décision
   remplacée avec `SUPERSEDES`, ou `none`.
+
+## Contrat de livraison piloté par les preuves
+
+La fin d'une tâche est décidée par les critères d'acceptation obligatoires et
+les hard gates, pas par un seuil de score qualitatif. Le score sert à améliorer
+le travail futur. Il ne peut jamais, seul, rouvrir une tâche ou déclencher un
+nouveau cycle.
+
+L'Observer conclut par exactement un verdict :
+
+- `BLOCK_DEV` : défaut obligatoire dans le livrable, retour ciblé au Developer ;
+- `READY_FOR_INTEGRATION` : résultat livrable, Phase C immédiate ;
+- `BLOCK_INTEGRATION` : développement acceptable mais intégration à corriger ;
+- `ACCEPT_WITH_IMPROVEMENTS` : intégrer et clôturer, améliorations facultatives
+  transmises au Coach pour le prochain cycle.
+
+Son bilan sépare `DEV_BLOCKERS`, `INTEGRATION_ACTIONS` et
+`OPTIONAL_IMPROVEMENTS`. Le Master est propriétaire de la Phase C : appliquer
+`CHANGES.md`, vérifier dans la destination réelle, conserver les preuves et
+passer la tâche à DONE. Le Coach travaille après ou en parallèle de cette
+intégration et ne la bloque pas. Le Curator n'est rappelé que si une preuve
+montre un manque de contexte. L'Architect n'est requis que pour une question
+structurelle ou un arbitrage impossible localement.
 
 ## Contrat d'exécution et reprise
 
@@ -248,3 +280,15 @@ Avant CHAQUE Write/Update d'un fichier, vérifier :
 Si 1 ou 2 échoue → ne pas écrire et publier un rejet. Si seule une liste
 statique est incomplète ou ancienne → poursuivre dans le périmètre minimal,
 documenter le fichier et ne pas escalader.
+
+## Contrat v3.2 — preuve et observation
+
+- Un `DONE` ou `SCORE` d'agent est consultatif si la tâche porte `verify_cmd` ;
+  seul le bridge `origin=verify` autorise la transition.
+- L'Observer sépare hard gates et soft score. Un hard gate rouge invalide le
+  SCORE. Son feedback contient `ECHEC`, `PREUVE`, `CAUSE_PROBABLE` et
+  `CONTRE_EXEMPLE`.
+- Le Coach écrit une `methodology.md.candidate` par delta. L'admission passe
+  par le gate de non-régression ; il ne remplace pas directement l'active.
+- Le Contradictor `NNN-2XX` a autorité nulle. Son rapport est du contexte de
+  rang 5 à réconcilier avec l'état physique de rang 2.

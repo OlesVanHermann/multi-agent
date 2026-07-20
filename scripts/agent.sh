@@ -73,12 +73,34 @@ find_x45_dir() {
     return 1
 }
 
+# Migre à la volée un mono NNN historique vers la paire canonique NNN-1XX/2XX.
+# L'opération est idempotente et le prompt/config historiques sont archivés par
+# scaffold-mono-pair.py avant d'être recopiés sur l'agent principal.
+ensure_mono_pair() {
+    local id="${1%%-*}" dir type_target
+    [[ "$id" =~ ^[0-9][0-9][0-9]$ ]] || return 0
+    [ "$id" = "000" ] && return 0
+    dir=$(find_x45_dir "$id") || return 0
+    [ -f "$dir/mono-pair.json" ] && return 0
+    [ -L "$dir/agent.type" ] || return 0
+    type_target=$(basename "$(readlink "$dir/agent.type")")
+    [ "$type_target" = "agent_mono.type" ] || return 0
+
+    log_info "Migration mono $id -> $id-1${id:1:2} + $id-2${id:1:2}" >&2
+    python3 "$SCRIPT_DIR/scaffold-mono-pair.py" "$id" \
+        --base "$BASE_DIR" --directory-name "$(basename "$dir")" >&2
+}
+
 # Get all agent IDs for an x45 triangle (main + satellites)
 get_triangle_ids() {
     local id="$1"
+    ensure_mono_pair "$id" || return 1
     local dir
     dir=$(find_x45_dir "$id") || return 1
-    local ids=("$id")
+    local ids=()
+    if [ ! -f "$dir/mono-pair.json" ]; then
+        ids=("$id")
+    fi
     # Local satellites (.md)
     for sat_link in "$dir"/${id}-[0-9][0-9][0-9].md; do
         [ -f "$sat_link" ] || continue
@@ -350,6 +372,15 @@ wait_claude_ready() {
 start_all() {
     log_info "Auto-detecting agents from prompts/..."
 
+    # Les installations mises à niveau peuvent encore contenir des monos
+    # historiques. Les matérialiser avant le scan garantit deux sessions.
+    local legacy_dir legacy_id
+    for legacy_dir in "$PROMPTS_DIR"/[0-9][0-9][0-9] "$PROMPTS_DIR"/[0-9][0-9][0-9]-*; do
+        [ -d "$legacy_dir" ] || continue
+        legacy_id="$(basename "$legacy_dir")"
+        ensure_mono_pair "${legacy_id:0:3}"
+    done
+
     # Collect all agent IDs
     local agents=()
 
@@ -376,10 +407,10 @@ start_all() {
         local dir_name=$(basename "$agent_dir")
         # Extract numeric prefix (341 from 341-analyse-archi-...)
         local agent_id="${dir_name:0:3}"
-        { [ -f "$agent_dir/${agent_id}-system.md" ] || [ -f "$agent_dir/system.md" ] || [ -f "$agent_dir/${dir_name}.md" ] || ls "$agent_dir"/${agent_id}-*-system.md &>/dev/null || [ -f "$agent_dir/remote.ssh" ]; } || continue
+        { [ -f "$agent_dir/${agent_id}-system.md" ] || [ -f "$agent_dir/system.md" ] || [ -f "$agent_dir/${dir_name}.md" ] || [ -f "$agent_dir/mono-pair.json" ] || ls "$agent_dir"/${agent_id}-*-system.md &>/dev/null || [ -f "$agent_dir/remote.ssh" ]; } || continue
         is_protected "$agent_id" && continue
         # Skip duplicates (already found in flat format or verbose duplicate)
-        if ! [[ " ${agents[*]} " == *" $agent_id "* ]]; then
+        if [ ! -f "$agent_dir/mono-pair.json" ] && ! [[ " ${agents[*]} " == *" $agent_id "* ]]; then
             # Skip already running
             local SESSION_NAME="agent-$agent_id"
             if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
@@ -528,7 +559,10 @@ do_start() {
             local tri_ids
             tri_ids=$(get_triangle_ids "$agent_id" 2>/dev/null)
             if [ -n "$tri_ids" ] && [ "$(echo $tri_ids | wc -w)" -gt 1 ]; then
-                log_info "x45 triangle $agent_id: $tri_ids"
+                local group_dir group_kind="x45 triangle"
+                group_dir=$(find_x45_dir "$agent_id" 2>/dev/null || true)
+                [ -n "$group_dir" ] && [ -f "$group_dir/mono-pair.json" ] && group_kind="mono pair"
+                log_info "$group_kind $agent_id: $tri_ids"
                 for tid in $tri_ids; do
                     start_single "$tid"
                 done

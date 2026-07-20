@@ -55,6 +55,7 @@ function TriangleDiagram({
         {/* R1: [341-141] Master (left) + [945] Architect (center) */}
         {(() => {
           const mid = tri.master || `${wid}-1${wid.slice(1)}`
+          if (tri.type === 'mono-pair') return <div />
           return <LabeledCell id={mid} label={sfx(mid)} role="Master" agent={agentMap[mid]}
             isSelected={mid === selectedAgent || mid === controlAgent}
             onClick={onSatelliteClick}
@@ -71,8 +72,11 @@ function TriangleDiagram({
           onMouseLeave={() => setHoveredMid(null)}
         >LOGS</div>
 
-        {/* R2: vline center */}
-        <div /><div /><div className="tri-vline" /><div /><div />
+        {/* R2: 2XX sous le 1XX, avant OUTPUT. */}
+        {tri.echo
+          ? <LabeledCell {...mkSatCell(tri.echo, 'Contradictor')} />
+          : <div />}
+        <div /><div className="tri-vline" /><div /><div />
 
         {/* R3: SYSTEM (box top, center) */}
         <div /><div />

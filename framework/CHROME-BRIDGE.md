@@ -116,7 +116,7 @@ Chaque commande est un appel CLI avec `AGENT_ID` en variable d'environnement :
 AGENT_ID=000 python3 $BASE/framework/chrome-bridge.py <commande> [args]
 ```
 
-Le `AGENT_ID` permet à chaque agent d'avoir son propre onglet Chrome, stocké dans Redis (`{MA_PREFIX}:chrome:tab:{agent_id}`).
+Le `AGENT_ID` permet à chaque agent d'avoir son propre onglet Chrome, stocké dans Redis (`chrome:tab:{agent_id}`).
 
 En session tmux (agents multi-agent), l'AGENT_ID est détecté automatiquement depuis le nom de la session.
 

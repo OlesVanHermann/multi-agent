@@ -1,4 +1,4 @@
-# Multi-Agent System v3.1.17
+# Multi-Agent System v3.2.0
 
 Système d'orchestration multi-agents pour projets de développement complexes avec Claude Code.
 
@@ -6,12 +6,12 @@ Système d'orchestration multi-agents pour projets de développement complexes a
 
 ## Vue d'ensemble
 
-Ce système permet de faire tourner jusqu'à **1000 agents** en parallèle avec :
+Ce système fournit une plage de **1000 identifiants (000–999)** ; la capacité parallèle réelle dépend de la machine et doit être mesurée avec un test de charge :
 
 - **Pipeline structurée** : agents spécialisés avec rôles définis
 - **Isolation Git** : chaque dev travaille dans son propre clone/branche
 - **Communication Redis Streams** : coordination temps réel avec historique
-- **Sessions Claude** : prompt caching pour ~90% d'économie de tokens
+- **Sessions persistantes** : prompt caching disponible, économie à mesurer dans le banc
 - **Hiérarchie claire** : Architect (000) → Super-Master → Master → Workers
 - **Web dashboard** : monitoring temps réel (port 8050)
 - **Auth Keycloak** : JWT sur toutes les routes API
@@ -466,7 +466,11 @@ Le script met à jour les répertoires framework (`scripts/`, `web/`, `docs/`, `
 Migrations idempotentes (v2→v3 comme v3.X→v3.X+1) :
 
 - `bench/` en **fusion** — jamais de suppression ; `results/` et `heldout.txt` locaux préservés ;
-- les 5 `.md` canoniques de `prompts/` (RULES, CONVENTIONS, PATHS, AGENT, CHROME) sont synchronisés avec backup dans `removed/` — le reste de `prompts/` (agents, `*.model`, `*.login`) n'est pas touché ;
+- les 5 `.md` canoniques de `prompts/` (RULES, CONVENTIONS, PATHS, AGENT, CHROME) sont synchronisés avec backup dans `removed/` — le reste de `prompts/` (agents, `*.model`, `*.login`) n'est pas synchronisé par rsync ;
+- depuis v3.2.X, le contenu métier des prompts agents reste préservé, mais une
+  migration idempotente ajoute le contrat résultat-first aux `system.md`
+  existants avec sauvegarde sous `removed/rebalance-prompts/` ; voir
+  `docs/HOW TO WRITE AND REWRITE PROMPTS.md` ;
 - les règles `permissions.deny` (protection oracle V3) sont fusionnées dans les `login/claude*/settings.json` existants (`patch/merge-deny-rules.py`) — `login/` n'est jamais synchronisé (credentials).
 
 `setup/secrets.cfg` n'est jamais écrasé.
@@ -602,4 +606,4 @@ git push origin main --tags
 
 ---
 
-*Multi-Agent System v3.1.17 - Juillet 2026*
+*Multi-Agent System v3.2.0 - Juillet 2026*

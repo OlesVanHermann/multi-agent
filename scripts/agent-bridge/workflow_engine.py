@@ -39,6 +39,7 @@ timeout)` est injecté (orchestrator.send_and_wait en production).
 """
 
 import json
+import copy
 import os
 import re
 import time
@@ -49,11 +50,51 @@ from ids import is_valid_agent_id
 _REF_RE = re.compile(r'\{([A-Za-z0-9_-]+)(?::(\d+))?\}')
 
 _STEP_KEYS = {'name', 'agent', 'prompt', 'wait', 'depends_on', 'timeout',
-              'from_agent', 'on_success', 'on_failure', 'manual', 'verify'}
+              'from_agent', 'on_success', 'on_failure', 'manual', 'verify',
+              'workspace'}
 
 
 class WorkflowError(ValueError):
     """Définition de workflow invalide."""
+
+
+def select_variant(wf, variant_id=None):
+    """C7: materialise a declarative topology variant before validation.
+
+    A variant may disable steps, replace dependencies, and override/add steps.
+    The baseline is the unmodified workflow.
+    """
+    variants = wf.get("variants") or {}
+    if not variant_id or variant_id == "baseline":
+        selected = copy.deepcopy(wf)
+        selected.pop("variants", None)
+        return selected
+    if variant_id not in variants:
+        raise WorkflowError(f"variante inconnue: {variant_id}")
+    selected = copy.deepcopy(wf)
+    selected.pop("variants", None)
+    variant = variants[variant_id] or {}
+    disabled = set(variant.get("disable") or [])
+    replacements = variant.get("depends_on") or {}
+    overrides = variant.get("steps") or []
+    steps = [step for step in selected["steps"] if step.get("name") not in disabled]
+    by_name = {step["name"]: step for step in steps}
+    for name, dependencies in replacements.items():
+        if name not in by_name:
+            raise WorkflowError(f"variante {variant_id}: étape inconnue {name}")
+        by_name[name]["depends_on"] = dependencies
+    for override in overrides:
+        name = override.get("name")
+        if not name:
+            raise WorkflowError(f"variante {variant_id}: override sans nom")
+        if name in by_name:
+            by_name[name].update(override)
+        else:
+            steps.append(copy.deepcopy(override))
+            by_name[name] = steps[-1]
+    selected["steps"] = steps
+    selected["name"] = f"{selected['name']}[{variant_id}]"
+    return selected
 
 
 def validate_workflow(wf):
@@ -105,6 +146,7 @@ def validate_workflow(wf):
             'on_failure': s.get('on_failure', 'abort'),
             'manual': bool(s.get('manual', False)),
             'verify': s.get('verify'),
+            'workspace': s.get('workspace'),
         }
 
     for step in by_name.values():
@@ -214,6 +256,8 @@ def run_workflow(wf, send, state_file=None, max_workers=8, log=print):
         kwargs = {}
         if step.get('verify'):
             kwargs = {'verify_cmd': step['verify'], 'task_id': step['name']}
+        if step.get('workspace'):
+            kwargs['project_dir'] = step['workspace']
         return send(step['agent'], prompt,
                     from_agent=step['from_agent'], timeout=step['timeout'],
                     **kwargs)

@@ -1,6 +1,13 @@
-# Mono Agent — Guide complet
+# Mono v3.2 — Guide complet
 
-Le format **mono** est le type d'agent le plus simple : un seul fichier `.md` dans un répertoire dédié.
+> La topologie actuelle est documentée dans
+> [Fonctionnement des agents](AGENT_ROLES.md#mono-v32-deux-agents). Les sections
+> historiques à agent unique ci-dessous ne s'appliquent qu'aux anciennes
+> installations.
+
+Le format **mono v3.2** est une paire : un principal `3XX-1XX` et son
+Contradictor `3XX-2XX`. Chacun utilise le triplet x45
+`system.md + memory.md + methodology.md`.
 
 ---
 

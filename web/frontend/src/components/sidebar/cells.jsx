@@ -129,6 +129,7 @@ export function satRole(satId) {
   if (!satId || !satId.includes('-')) return null
   const s = satId.split('-')[1]
   if (s[0] === '1') return 'master'
+  if (s[0] === '2') return 'echo'
   if (s[0] === '5') return 'observer'
   if (s[0] === '6') return 'indexer'
   if (s[0] === '7') return 'curator'

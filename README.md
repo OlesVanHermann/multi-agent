@@ -1,4 +1,9 @@
-# Multi-Agent System v3.1.17
+# Multi-Agent System v3.2.0
+
+La ligne 3.2 étend la preuve exécutable aux boucles x45/z21 : contrats pour
+livrables non testables, gate de méthodologie, apprentissage delta, ablations,
+topologies comparables et agents d'observation paramétriques `NNN-2XX` /
+`NNN-8XX`. Voir [docs/V3.2.md](docs/V3.2.md).
 
 La ligne 3.1 ajoute OpenAI Codex CLI en mode interactif, avec authentification
 ChatGPT (forfait, sans API) et trois modèles : `gpt-5.6-sol`,
@@ -23,9 +28,9 @@ Système d'orchestration multi-agents pour projets de développement complexes a
 
 ## Caractéristiques
 
-- **Jusqu'à 1000 agents** en parallèle
+- **Plage d'identifiants 000–999** ; la capacité parallèle dépend de la machine et doit être mesurée par test de charge
 - **Communication Redis Streams** : coordination temps réel avec historique
-- **Sessions Claude** : prompt caching pour ~90% d'économie de tokens
+- **Sessions persistantes** : prompt caching disponible ; son économie réelle est mesurée par le banc lorsqu'une source TUI fiable fournit les tokens
 - **Hiérarchie claire** : Architect → Super-Master → Master → Workers
 - **Mode headless** : agents en daemon dans tmux
 - **Intervention manuelle** : commandes interactives pendant l'exécution
@@ -116,7 +121,9 @@ cd /chemin/vers/multi-agent
 
 Le script :
 - Met à jour **uniquement** les fichiers framework (`scripts/`, `web/`, `docs/`, `patch/`, `setup/`, `templates/`, `examples/`, `framework/`, `tests/`)
-- **Préserve** vos fichiers projet (`prompts/`, `pool-requests/`, `project/`, `sessions/`, `logs/`, `setup/secrets.cfg`)
+- **Préserve** vos données projet ; les prompts agents gardent leur contenu
+  local mais reçoivent une migration résultat-first idempotente et sauvegardée
+  à partir de la release v3.2.X.
 
 Voir [patch/HOW_TO_UPGRADE.md](patch/HOW_TO_UPGRADE.md) pour le guide complet.
 
@@ -249,6 +256,9 @@ multi-agent/
 | [patch/HOW_TO_PATCH.md](patch/HOW_TO_PATCH.md) | **Pipeline de patches** (projet → Hub → GitHub) |
 | [docs/AUTH.md](docs/AUTH.md) | Authentification (Keycloak, JWT, WebSocket) |
 | [docs/BRIDGE.md](docs/BRIDGE.md) | Documentation technique du bridge |
+| [docs/AGENT_ROLES.md](docs/AGENT_ROLES.md) | Fonctionnement de chaque rôle en mono, x45 et z21 |
+| [docs/PROMPT_RESULT_PRIORITY.md](docs/PROMPT_RESULT_PRIORITY.md) | Pondération résultat, vérification et processus |
+| [docs/HOW TO WRITE AND REWRITE PROMPTS.md](<docs/HOW TO WRITE AND REWRITE PROMPTS.md>) | Écriture, migration upgrade et promotion publique des prompts |
 | [docs/AGENT_MONO.md](docs/AGENT_MONO.md) | Format agent mono |
 | [prompts/CONVENTIONS.md](prompts/CONVENTIONS.md) | Convention de numérotation |
 
@@ -325,4 +335,4 @@ MIT - voir [LICENSE](LICENSE)
 
 ---
 
-*Multi-Agent System v3.1.17 - 2026*
+*Multi-Agent System v3.2.0 - 2026*

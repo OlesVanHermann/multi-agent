@@ -35,6 +35,33 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _lifecycle_member_ids(agent_id: str) -> list[str]:
+    """Résout une cible de groupe vers ses sessions tmux réelles."""
+    if "-" in agent_id:
+        return [agent_id]
+    prompt_dir = _resolve_prompts_dir(cfg.BASE_DIR / "prompts", agent_id)
+    if not prompt_dir:
+        return [agent_id]
+
+    pair_file = prompt_dir / "mono-pair.json"
+    if pair_file.is_file():
+        try:
+            pair = json.loads(pair_file.read_text())
+        except (OSError, json.JSONDecodeError):
+            pair = {}
+        members = [str(pair.get(k, "")) for k in ("main", "contradictor")]
+        members = [m for m in members if cfg.is_valid_agent_id(m) and "-" in m]
+        if members:
+            return members
+
+    members = sorted({
+        match.group(1)
+        for path in prompt_dir.glob(f"{agent_id}-*-system.md")
+        if (match := re.match(r'^(\d{3}-\d{3})-system\.md$', path.name))
+    }, key=lambda value: tuple(map(int, value.split("-"))))
+    return members or [agent_id]
+
+
 @router.get("/api/agent/{base_id}/contexts")
 async def get_z21_contexts(base_id: str):
     """List z21 sub-context directories for a group."""
@@ -266,15 +293,19 @@ async def _agent_lifecycle(agent_id: str, action: str):
         # Rendre la main sur l'ÉTAT RÉEL, pas sur un délai : la session tmux
         # doit exister (start/restart) ou avoir disparu (stop). Le front
         # réactive les boutons à la réponse — jamais sur un compte à rebours.
-        session = f"agent-{agent_id}"
+        member_ids = _lifecycle_member_ids(agent_id)
+        sessions = [cfg.agent_session(member) for member in member_ids]
         want_alive = action in ("start", "restart")
         alive = not want_alive
         verified = False
         for _ in range(20):
-            alive = (await _run_subprocess(
-                ["tmux", "has-session", "-t", session]
-            )).returncode == 0
-            if alive == want_alive:
+            member_states = [
+                (await _run_subprocess(["tmux", "has-session", "-t", session])).returncode == 0
+                for session in sessions
+            ]
+            alive = any(member_states)
+            group_reached_target = all(member_states) if want_alive else not any(member_states)
+            if group_reached_target:
                 verified = True
                 break
             await asyncio.sleep(0.5)
@@ -282,6 +313,7 @@ async def _agent_lifecycle(agent_id: str, action: str):
         return {
             "status": action if verified else f"{action}_unverified",
             "agent_id": agent_id,
+            "members": member_ids,
             "running": alive,
             "verified": verified,
             "output": output,

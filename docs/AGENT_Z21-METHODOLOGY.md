@@ -1,8 +1,13 @@
 # z21 — Methodologie de creation d'un agent z21
 
+> z21 utilise désormais sept agents, Contradictor `2XX` inclus. Voir
+> [Fonctionnement des agents](AGENT_ROLES.md#z21-v32-sept-agents-et-contextes-interchangeables).
+
 ## Principe
 
-Un agent z21 gere un **gros systeme** avec un **seul groupe de 6 agents** qui chargent des **sous-contextes interchangeables**. Le Master route chaque tache vers le bon sous-contexte via send.sh. Chaque agent charge le contexte (archi.md + memory.md + methodology.md) du sous-repertoire indique dans le dispatch.
+Un agent z21 gere un **gros systeme** avec un **groupe de 7 agents** qui chargent
+des **sous-contextes interchangeables**. Le Master route chaque tâche vers le
+bon sous-contexte. Le Contradictor `2XX` analyse le Master hors cycle.
 
 ## Difference avec x45
 
@@ -24,6 +29,10 @@ prompts/{ID}-{nom}/
 ├── {ID}-1{XX}-system.md          # Master : routeur de contextes
 ├── {ID}-1{XX}-memory.md          # Index de TOUS les sous-contextes + mapping mots-cles
 ├── {ID}-1{XX}-methodology.md     # Regles de dispatch (1 a la fois, surveillance tmux)
+├── {ID}-2{XX}.md                 → ../AGENT.md (Contradictor)
+├── {ID}-2{XX}-system.md          # Analyse le Master hors cycle
+├── {ID}-2{XX}-memory.md          # Cible permanente et conclusion courante
+├── {ID}-2{XX}-methodology.md     # Actions analyse / envoie
 ├── {ID}-{ID}.md                  → ../AGENT.md (Developer)
 ├── {ID}-{ID}-system.md           # Dev : stack, regles, workflow + completion obligatoire
 ├── {ID}-5{XX}.md                 → ../AGENT.md (Tester)
@@ -77,7 +86,7 @@ Regrouper par **domaine fonctionnel** (pas par fichier). Exemples :
 mkdir -p prompts/{ID}-{nom}/{ctx1,ctx2,...}
 ```
 
-### 4. Creer les 6 agents satellites
+### 4. Creer les 7 agents
 
 Chaque satellite a un `-system.md`. **Elements obligatoires par role** :
 
@@ -85,6 +94,13 @@ Chaque satellite a un `-system.md`. **Elements obligatoires par role** :
 - **system.md** : identite, liste agents, index → memory.md
 - **memory.md** : index COMPLET (tableau ID/scope/fichiers/port), mapping mots-cles, bugs connus, etat par contexte
 - **methodology.md** : cycle (recevoir→analyser→router→dispatcher→attendre→enchainer), INTERDIT (jamais lire le code), format de dispatch (CONTEXT/TASK/ERROR/FILES_HINT), surveillance tmux
+
+#### Contradictor (2XX)
+- **Cible permanente** : le Master `1XX` du même z21
+- **analyse** : vérifie demande, choix du contexte, décision, dispatch, action et résultat
+- **discussion** : révise le diagnostic avec l'utilisateur tout en maintenant une conclusion envoyable
+- **envoie** : transmet uniquement la dernière conclusion au Master
+- **autorité** : avis consultatif, aucun `DONE` et aucune transition du workflow
 
 #### Developer (3XX)
 - **Principe** : recoit du Master, charge le contexte, execute, **signale completion OBLIGATOIRE** au Master via Redis

@@ -80,3 +80,16 @@ class SendKeys(BaseModel):
 class ChatMessage(BaseModel):
     text: str
     user: str = "anon"
+
+
+class EchoObservationRequest(BaseModel):
+    """Demande opérateur de constitution d'un paquet de preuves Contradictor."""
+
+    target_agent: str
+    task_id: Optional[str] = None
+    correlation_id: Optional[str] = None
+    cycles: Optional[str] = None
+    pane_lines: int = 1000
+    history_lines: int = 200
+    log_lines: int = 500
+    stream_entries: int = 200

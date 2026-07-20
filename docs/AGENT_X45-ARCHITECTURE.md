@@ -1,5 +1,8 @@
 # Architecture Multi-Agent x45
 
+> Pour la topologie v3.2 à sept agents et la responsabilité précise de chaque
+> rôle, voir [Fonctionnement des agents](AGENT_ROLES.md#x45-v32-sept-agents).
+
 ## Principe fondamental
 
 Tout agent = system.md + memory.md + methodology.md
@@ -7,6 +10,14 @@ Tout agent = system.md + memory.md + methodology.md
 - **system.md** : contrat immutable. Ce que l'agent fait. IN/OUT typés.
 - **memory.md** : contexte curé. Les informations nécessaires à la tâche en cours.
 - **methodology.md** : méthodes de travail. Comment exécuter le contrat avec le contexte.
+
+## Triangle livré en v3.2
+
+Un x45 projet contient sept agents locaux : Master `1XX`, Contradictor `2XX`,
+Developer `3XX`, Observer `5XX`, Curator `7XX`, Coach `8XX` et Architect `9XX`.
+Les sections d'infrastructure partagée plus bas décrivent l'architecture x45
+historique et ses possibilités de mise à l'échelle ; elles ne remplacent pas
+la topologie locale v3.2.
 
 ## Schéma global
 

@@ -37,7 +37,7 @@ from multi_agent.auth import (
 )
 from multi_agent.cache import _cache_loop, _seed_prompt_history
 from multi_agent.ratelimit import _check_rate_limit
-from multi_agent.routers import agent_chat, agents, chat, crontab, system, ws
+from multi_agent.routers import agent_chat, agents, chat, crontab, echo, system, ws
 from multi_agent.routers import config as config_routes
 from multi_agent.tmuxio import _tmux_server_alive
 
@@ -234,6 +234,7 @@ app.include_router(config_routes.router)
 app.include_router(crontab.router)
 app.include_router(chat.router)
 app.include_router(agent_chat.router)
+app.include_router(echo.router)
 app.include_router(ws.router)
 
 

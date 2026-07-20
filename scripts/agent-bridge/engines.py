@@ -324,10 +324,11 @@ def build_pane_eval(markers):
     Contrat de sortie (14 champs, ordre historique — le consommateur cache.py
     les lit par position) :
       id:busy:compacted:ctx:done_compacting:prompt_loaded:ctx_limit:api_error
-        :model_change:has_bashes:plan_mode:has_down:waiting_approval:alive
+        :model_change:has_bashes:plan_mode:has_down:waiting_approval:login_required:alive
     """
     procs = "|".join(str(p) for p in markers["process_names"])
     busy_re = "|".join(str(b) for b in markers["busy_markers"])
+    login_re = "|".join(str(x) for x in markers["login_expired_markers"])
     ctx_re = "|".join(str(p) for p in markers["context_pct_patterns"])
     prompt0 = str(markers["prompt_markers"][0])
 
@@ -335,10 +336,12 @@ def build_pane_eval(markers):
         f'alive=0; case "$pane_cmd" in {procs}) alive=1;; esac; '
         'busy=0; has_bashes=0; has_down=0; plan_mode=0; compacted=0; ctx=-1; '
         'done_compacting=0; prompt_loaded=0; ctx_limit=0; api_error=0; model_change=0; '
-        'waiting_approval=0; '
+        'waiting_approval=0; login_required=0; '
         f'bp_line=$(printf "%s" "$out" | grep -F {_q(markers["status_line"])} | tail -1); '
+        + f'if printf "%s" "$out" | grep -qiE {_q(login_re)}; then login_required=1; fi; '
         + _bashes_block(markers)
         + _busy_block(markers, busy_re, prompt0) +
+        'if [ "$login_required" -eq 1 ]; then busy=0; fi; '
         f'if printf "%s" "$bp_line" | grep -qF {_q(markers["scroll_indicator"])}; then has_down=1; fi; '
         f'plan_scope=$(printf "%s" "$out" | tail -{int(markers.get("plan_mode_tail_lines", 3))}); '
         f'if printf "%s" "$plan_scope" | awk -v marker={_q(markers["plan_mode"])} '
@@ -361,7 +364,7 @@ def build_pane_eval(markers):
         'if [ "$alive" -eq 1 ] && [ -z "$bp_line" ]; then api_error=1; fi; '
         f'if printf "%s" "$out" | grep -qF {_q(markers["model_change"])}; then model_change=1; fi; '
         'echo "$id:$busy:$compacted:$ctx:$done_compacting:$prompt_loaded:$ctx_limit'
-        ':$api_error:$model_change:$has_bashes:$plan_mode:$has_down:$waiting_approval:$alive"; '
+        ':$api_error:$model_change:$has_bashes:$plan_mode:$has_down:$waiting_approval:$login_required:$alive"; '
     )
 
 
@@ -381,7 +384,7 @@ def build_pane_scan(markers, ma_prefix="", capture_lines=30):
 PANE_FIELDS = (
     "id", "busy", "compacted", "context_pct", "done_compacting", "prompt_loaded",
     "context_limit", "api_error", "model_change", "has_bashes", "plan_mode",
-    "has_down", "waiting_approval", "claude_alive",
+    "has_down", "waiting_approval", "login_required", "claude_alive",
 )
 
 

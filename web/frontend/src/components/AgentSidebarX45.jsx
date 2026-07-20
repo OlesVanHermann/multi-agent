@@ -5,6 +5,7 @@ import {
 } from './sidebar/cells'
 import { useFavoris } from './sidebar/useFavoris'
 import TriangleDiagram from './sidebar/TriangleDiagram'
+import MonoPairDiagram from './sidebar/MonoPairDiagram'
 import SatelliteDiagram from './sidebar/SatelliteDiagram'
 import FavorisConfig from './sidebar/FavorisConfig'
 import PromptHistory from './sidebar/PromptHistory'
@@ -188,7 +189,19 @@ function AgentSidebarX45({ agents, triangles, selectedAgent, controlAgent, onAge
           {/* MIDDLE */}
           <div className="x45-third x45-border-top">
             {selectedTri ? (
-              <TriangleDiagram
+              selectedTri.type === 'mono-pair' ? <MonoPairDiagram
+                wid={selectedTriangle}
+                tri={selectedTri}
+                agentMap={agentMap}
+                agentNames={agentNames}
+                selectedAgent={selectedAgent}
+                controlAgent={controlAgent}
+                selectedSatellite={selectedSatellite}
+                onAgentClick={onAgentClick}
+                onSatelliteClick={handleSatelliteClick}
+                onFileClick={onFileClick}
+                onLogsClick={handleLogsClick}
+              /> : <TriangleDiagram
                 wid={selectedTriangle}
                 tri={selectedTri}
                 agentMap={agentMap}

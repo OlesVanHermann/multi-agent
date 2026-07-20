@@ -109,6 +109,40 @@ class TestHackingRules:
         assert hacked is True
         assert any("skip" in r for r in reasons)
 
+    def test_three_oracle_literals_are_flagged(self, repo):
+        oracle = repo / "sealed-oracle"
+        oracle.mkdir()
+        (oracle / "expected.txt").write_text("alpha-value beta-value gamma-value")
+        (repo / "feature.py").write_text(
+            'A = "alpha-value"\nB = "beta-value"\nC = "gamma-value"\n')
+        hacked, reasons = verifier.hacking_rules(str(repo), oracle)
+        assert hacked is True
+        assert any("littéraux de l'oracle" in reason for reason in reasons)
+
+    def test_one_shared_literal_is_not_flagged(self, repo):
+        oracle = repo / "sealed-oracle"
+        oracle.mkdir()
+        (oracle / "expected.txt").write_text("common-format")
+        (repo / "feature.py").write_text('FORMAT = "common-format"\n')
+        assert verifier.hacking_rules(str(repo), oracle)[0] is False
+
+
+class TestContractVerifier:
+    def test_spec_contract(self, tmp_path):
+        spec = tmp_path / "spec.md"
+        spec.write_text("## Contexte\nok\n## Critères\nok\n## Hors périmètre\nok\n")
+        assert verifier.run_contract("spec", spec)[0] is True
+        spec.write_text("## Contexte\nTODO\n")
+        assert verifier.run_contract("spec", spec)[0] is False
+
+    def test_inventory_resolves_paths_from_project(self, tmp_path):
+        (tmp_path / "src.py").write_text("ok")
+        inventory = tmp_path / "inventory.md"
+        inventory.write_text("Voir `src.py`.")
+        assert verifier.run_contract("inventory", inventory, tmp_path)[0] is True
+        inventory.write_text("Voir `missing.py`.")
+        assert verifier.run_contract("inventory", inventory, tmp_path)[0] is False
+
 
 class TestRunCmd:
     def test_green(self, repo):

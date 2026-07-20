@@ -76,9 +76,8 @@ CDP_PORT = int(os.environ.get("CDP_PORT", os.environ.get("CDP_BRIDGE_PORT", "922
 CDP_HOST = os.environ.get("CDP_HOST", os.environ.get("CDP_BRIDGE_HOST", "127.0.0.1"))
 HTTP_BASE = f"http://{CDP_HOST}:{CDP_PORT}"
 
-MA_PREFIX = os.environ.get("MA_PREFIX", "ma")
-REDIS_PREFIX = f"{MA_PREFIX}:chrome:tab:"
-CTX_PREFIX = f"{MA_PREFIX}:chrome:ctx:"
+REDIS_PREFIX = "chrome:tab:"
+CTX_PREFIX = "chrome:ctx:"
 VIEWPORT = (1440, 900)
 
 # Exit codes (same as chrome-bridge.py / chrome-shared.py)
@@ -152,7 +151,7 @@ def get_my_agent_id():
             capture_output=True, text=True, timeout=2
         )
         session_name = result.stdout.strip()
-        # Covers ma-agent-XXX, A-agent-XXX, any {PREFIX}-agent-XXX
+        # Canonical session name: agent-XXX or agent-XXX-YYY.
         if "-agent-" in session_name:
             return session_name.split("-agent-", 1)[1]
         if session_name.startswith("agent-"):

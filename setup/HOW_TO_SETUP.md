@@ -178,7 +178,6 @@ cp setup/project-config.md.template project-config.md
 
 ```bash
 # project-config.md
-MA_PREFIX=A          # Préfixe Redis (A = valeur par défaut)
 PROJECT_NAME=mon-projet
 ```
 
@@ -201,7 +200,7 @@ Ce script démarre dans l'ordre :
 1. **Redis** — container Docker `ma-redis` (port 6379)
 2. **Keycloak** — container Docker `ma-keycloak` (port 8080)
 3. **Dashboard web** — `http://localhost:8050`
-4. **Agent 000** — dans la session tmux `A-agent-000`
+4. **Agent 000** — dans la session tmux `agent-000`
 
 Durée : ~30 secondes (Keycloak met du temps à démarrer).
 
@@ -235,7 +234,7 @@ curl -s http://localhost:8080/health/ready
 Attacher l'agent 000 pour voir l'activité :
 
 ```bash
-tmux attach -t A-agent-000
+tmux attach -t agent-000
 # Détacher : Ctrl+B D
 ```
 

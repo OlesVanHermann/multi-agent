@@ -37,8 +37,17 @@ def tmux_prefix():
 
     def make(agent_id):
         name = f'agent-{agent_id}'
+        # Depuis v3.1.17 les tests et la production partagent les noms
+        # canoniques (plus de MA_PREFIX). Une session opérateur peut donc déjà
+        # exister : l'utiliser pour le test de vivacité, sans la tuer au teardown.
+        exists = subprocess.run(
+            ['tmux', 'has-session', '-t', f'={name}'],
+            capture_output=True).returncode == 0
+        if exists:
+            return name
         subprocess.run(['tmux', 'new-session', '-d', '-s', name], check=True)
         created.append(name)
+        return name
 
     yield prefix, make
     for name in created:

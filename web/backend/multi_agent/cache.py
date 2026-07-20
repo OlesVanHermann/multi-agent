@@ -266,6 +266,8 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
             # Signalement uniquement, aucune commande ni correction automatique.
             elif model_mismatch:
                 overrides[aid] = "model_mismatch"
+            elif st.get('login_required'):
+                overrides[aid] = "error"          # session TUI ouverte mais non authentifiée
             elif st.get('waiting_approval'):
                 overrides[aid] = "waiting_approval"  # blue — interactive prompt (Enter to select)
             elif st.get('plan_mode'):
@@ -433,6 +435,7 @@ async def _refresh_cache_once():
                     'has_down': f['has_down'] == '1',
                     'plan_mode': f['plan_mode'] == '1',
                     'waiting_approval': f['waiting_approval'] == '1',
+                    'login_required': f['login_required'] == '1',
                     'compacted': f['compacted'] == '1',
                     'context_pct': ctx_pct,   # -1 = non affiché par le CLI
                     'done_compacting': f['done_compacting'] == '1',
@@ -527,7 +530,8 @@ async def _refresh_cache_once():
         agent_type = ""
         if type_link.is_symlink():
             agent_type = Path(os.readlink(type_link)).stem.replace("agent_", "")
-        if agent_type in ("x45", "z21") or (d / f"{did}-{did}-system.md").exists():
+        if (agent_type in ("x45", "z21") or (d / "mono-pair.json").is_file()
+                or (d / f"{did}-{did}-system.md").exists()):
             x45_dirs.append((did, d))
 
     # From flat .md files (legacy): 900-architect-chat.md
@@ -543,6 +547,7 @@ async def _refresh_cache_once():
     triangles = {}
     if mode == "x45":
         for did, d in x45_dirs:
+            mono_pair = (d / "mono-pair.json").is_file()
             tri = {"worker": f"{did}-{did}"}
             # Scan system.md files (local) + .remote files (remote agents)
             sat_entries = []
@@ -560,8 +565,13 @@ async def _refresh_cache_once():
                 sat_id = f"{did}-{suffix}"
                 if role_digit == "3":
                     tri["worker"] = sat_id
+                elif role_digit == "2":
+                    tri["echo"] = sat_id
                 elif role_digit == "1":
-                    tri["master"] = sat_id
+                    if mono_pair:
+                        tri["worker"] = sat_id
+                    else:
+                        tri["master"] = sat_id
                 elif role_digit == "5":
                     tri["observer"] = sat_id
                 elif role_digit == "6":
@@ -574,7 +584,9 @@ async def _refresh_cache_once():
                     tri["tri_architect"] = sat_id
             # Read type from agent.type symlink
             type_link = d / "agent.type"
-            if type_link.is_symlink():
+            if mono_pair:
+                tri["type"] = "mono-pair"
+            elif type_link.is_symlink():
                 tri["type"] = Path(os.readlink(type_link)).stem.replace("agent_", "")
             else:
                 tri["type"] = "x45"

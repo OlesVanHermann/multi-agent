@@ -50,16 +50,16 @@ redis-cli ping   # → PONG
 
 ## Structure des clés
 
-Les clés sont préfixées par `MA_PREFIX` (défaut : `A`).
+Les adresses sont canoniques et indépendantes de l'installation.
 
 | Clé | Type | Description |
 |-----|------|-------------|
-| `A:agent:{id}:inbox` | Stream | Messages entrants d'un agent |
-| `A:agent:{id}:status` | Hash | Statut heartbeat (IDLE/WORKING/BLOCKED) |
-| `A:agent:{id}:log` | Stream | Logs de l'agent |
+| `agent:{id}:inbox` | Stream | Messages entrants d'un agent |
+| `agent:{id}` | Hash | Statut heartbeat (IDLE/WORKING/BLOCKED) |
+| `agent:{id}:outbox` | Stream | Réponses d'un agent |
 
-Le préfixe `A` est configurable dans `project-config.md` (`MA_PREFIX=A`).
-Permet de faire tourner plusieurs projets sur le même Redis.
+Une instance multi-agent utilise son propre Redis ; aucun préfixe variable ne
+doit être ajouté aux clés.
 
 ---
 
@@ -70,16 +70,16 @@ Permet de faire tourner plusieurs projets sur le même Redis.
 redis-cli ping
 
 # Voir tous les streams d'agents
-redis-cli --scan --pattern 'A:agent:*:inbox'
+redis-cli --scan --pattern 'agent:*:inbox'
 
 # Lire les messages d'un agent
-redis-cli XRANGE A:agent:300:inbox - +
+redis-cli XRANGE agent:300:inbox - +
 
 # Envoyer un message manuellement
-redis-cli XADD A:agent:300:inbox '*' prompt "go" from_agent "cli" timestamp "$(date +%s)"
+redis-cli XADD agent:300:inbox '*' prompt "go" from_agent "cli" timestamp "$(date +%s)"
 
 # Voir le statut de tous les agents
-redis-cli --scan --pattern 'A:agent:*:status' | xargs -I{} redis-cli HGETALL {}
+redis-cli --scan --pattern 'agent:*' | xargs -I{} redis-cli HGETALL {}
 
 # Flusher (ATTENTION : efface tout)
 redis-cli FLUSHALL

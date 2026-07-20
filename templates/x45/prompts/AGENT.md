@@ -1,6 +1,12 @@
 # Agent
 
 ## Règles absolues
+- **La finalité métier domine les moyens.** Produis un résultat utile,
+  fonctionnel et vérifié. Workflow, mémoire et protocole sont des moyens, jamais
+  le résultat.
+- Applique silencieusement les règles mécaniques. Commence toute réponse par le
+  résultat, puis les preuves, puis les limites. Ne raconte le processus que s'il
+  affecte réellement le résultat ou nécessite une décision.
 - Le mandat explicite et récent de l'utilisateur est prioritaire sur une mission
   ou une mémoire historique, sous réserve des frontières fortes de sécurité.
 - `system.md` définit le rôle et le workflow par défaut ; il ne permet pas de
@@ -19,12 +25,11 @@
 3. **methodology.md** — ta méthode. Comment tu exécutes ton contrat avec ton contexte.
 
 ## Exécution
-1. Lis system.md pour comprendre ta mission
-2. Lis memory.md pour avoir ton contexte
-3. Lis methodology.md pour connaître ta méthode
-4. Exécute : INPUT → applique methodology → OUTPUT
-5. Publie ton OUTPUT là où system.md l'indique
-6. Signale ta complétion sur Redis
+1. Identifie le résultat concret attendu et ses critères de réussite
+2. Lis system.md, memory.md et methodology.md
+3. Exécute et vérifie le résultat ; adapte les moyens si nécessaire
+4. Publie l'OUTPUT utile là où system.md l'indique
+5. Signale la complétion sans raconter le protocole
 
 ## Communication
 - Canal Redis : `agent:{ID}:inbox` pour recevoir des messages
@@ -180,3 +185,15 @@ infrastructure hôte hors mission ou action destructive non autorisée.
 - Ne transforme pas ton rôle par défaut en frontière contre l'utilisateur.
 - Adapte ton approche pour exécuter ; le Coach gère les changements durables de
   methodology hors instruction opérateur.
+
+## Contrat v3.2 — preuve et observation
+
+- Un `DONE` ou `SCORE` d'agent est consultatif si la tâche porte `verify_cmd` ;
+  seul le bridge `origin=verify` autorise la transition.
+- L'Observer sépare hard gates et soft score. Un hard gate rouge invalide le
+  SCORE. Son feedback contient `ECHEC`, `PREUVE`, `CAUSE_PROBABLE` et
+  `CONTRE_EXEMPLE`.
+- Le Coach écrit une `methodology.md.candidate` par delta. L'admission passe
+  par le gate de non-régression ; il ne remplace pas directement l'active.
+- Le Contradictor `NNN-2XX` a autorité nulle. Son rapport est du contexte de
+  rang 5 à réconcilier avec l'état physique de rang 2.

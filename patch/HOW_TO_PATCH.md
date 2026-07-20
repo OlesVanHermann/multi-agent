@@ -186,6 +186,33 @@ git tag -a vX.Y.Z -m "vX.Y.Z - Description"
 git push origin main --tags   # humain avec passphrase SSH
 ```
 
+### Patch de migration des prompts v3.2.X vers mx9
+
+La migration résultat-first est atomique : ne pousser ni publier seulement les
+nouveaux prompts sans le migrateur et son intégration upgrade. Le patch doit
+inclure ensemble :
+
+- `prompts/AGENT.md`, `prompts/RULES.md` et les créateurs 150/160/170 ;
+- `templates/` et `examples/` concernés ;
+- `patch/rebalance-agent-prompts.py` et `patch/upgrade.sh` ;
+- `docs/HOW TO WRITE AND REWRITE PROMPTS.md` et ses liens ;
+- `tests/test_prompt_result_priority.py`.
+
+Avant push vers mx9 :
+
+```bash
+bash -n patch/upgrade.sh
+python3 patch/rebalance-agent-prompts.py --check
+python3 -m pytest tests/ -q
+```
+
+Sur mx9, tester la migration avec une copie d'ancienne installation : le premier
+upgrade doit sauvegarder et migrer les prompts ; le second doit afficher
+`updated=0`. Ensuite seulement, générer les checksums et publier le tag v3.2.X.
+
+Référence complète :
+[HOW TO WRITE AND REWRITE PROMPTS](<../docs/HOW TO WRITE AND REWRITE PROMPTS.md>).
+
 ---
 
 ## Anti-fuite de secrets (D3)

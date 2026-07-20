@@ -62,6 +62,10 @@ PANEL_CONFIG_PATH_LEGACY = BASE_DIR / "web" / "panel-config.json"
 PROMPT_HISTORY_STREAM = "prompt:history"
 CHAT_STREAM = "devchat"
 
+# Contradictor (v3.2 expérimental) : désactivé tant que l'opérateur ne
+# l'active pas explicitement. L'endpoint ne démarre ni ne relance aucun agent.
+ECHO_OBSERVER_ENABLED = os.environ.get("MA_ECHO_OBSERVER_ENABLED", "1") == "1"
+
 # Background cache
 CACHE_REFRESH_INTERVAL = int(os.environ.get("CACHE_REFRESH_INTERVAL", "15"))  # seconds (normal)
 CACHE_FAST_INTERVAL = 3  # seconds (when agent near compacting end)

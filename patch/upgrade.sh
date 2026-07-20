@@ -226,6 +226,37 @@ for f in "${PROMPTS_CANONICAL[@]}"; do
     fi
 done
 
+# Prompts projet : migration sémantique résultat-first et livraison par preuves. Contrairement à une
+# synchronisation, elle conserve tout le contenu local et ajoute uniquement le
+# contrat normatif documenté dans HOW TO WRITE AND REWRITE PROMPTS.md.
+PROMPT_REBALANCE="$TEMP_DIR/patch/rebalance-agent-prompts.py"
+if [ -f "$PROMPT_REBALANCE" ] && [ -d "./prompts" ]; then
+    if [ "${MA_SKIP_PROMPT_REBALANCE:-0}" = "1" ]; then
+        printf "  ${YELLOW}!${NC} prompts agents : migration résultat-first ignorée (MA_SKIP_PROMPT_REBALANCE=1)\n"
+    else
+        PROMPT_REBALANCE_COUNT=$($PYTHON_CMD "$PROMPT_REBALANCE" --base "$(pwd)" --check | sed -n 's/^updated=//p')
+        if [ "${PROMPT_REBALANCE_COUNT:-0}" -gt 0 ]; then
+            printf "  ${YELLOW}⇄${NC} prompts agents : %s fichiers à migrer résultat-first/livraison (backup dans removed/)\n" "$PROMPT_REBALANCE_COUNT"
+        else
+            printf "  ${GREEN}✓${NC} prompts agents : contrats résultat-first/livraison déjà appliqués\n"
+        fi
+    fi
+fi
+
+# 6e. v3.1.17+ : adressage canonique sans MA_PREFIX. Si Redis tourne encore,
+# déplacer atomiquement les streams/hashes historiques avant le redémarrage
+# des agents. Si Redis est arrêté (procédure recommandée), aucune donnée
+# runtime n'est accessible et les nouvelles adresses seront créées au start.
+ADDRESS_MIGRATION="$TEMP_DIR/patch/migrate-agent-addresses.sh"
+if [ -f "$ADDRESS_MIGRATION" ]; then
+    if ./scripts/redis.sh PING 2>/dev/null | grep -q PONG; then
+        bash "$ADDRESS_MIGRATION" --apply
+        log_ok "adresses Redis (agent:* sans MA_PREFIX)"
+    else
+        log_warn "Redis arrêté : migration d'adresses ignorée ; les clés agent:* seront créées au redémarrage"
+    fi
+fi
+
 # Règles deny (protection oracle V3) dans les profils login existants
 DENY_REF="$TEMP_DIR/login/claude1a/settings.json"
 DENY_MERGE="$TEMP_DIR/patch/merge-deny-rules.py"
@@ -353,6 +384,21 @@ if [ -f "$DENY_REF" ] && [ -f "$DENY_MERGE" ] && compgen -G "./login/claude*/set
         cp "$s" "$d/"
     done
     $PYTHON_CMD "$DENY_MERGE" "$DENY_REF" ./login/claude*/settings.json
+fi
+
+# 6d. Prompts agents existants : ajout idempotent des contrats résultat-first
+#     et livraison pilotée par les preuves.
+#     Les contenus métier ne sont jamais remplacés. Chaque fichier modifié est
+#     sauvegardé par le migrateur sous removed/rebalance-prompts/<timestamp>/.
+PROMPT_REBALANCE="$TEMP_DIR/patch/rebalance-agent-prompts.py"
+if [ -f "$PROMPT_REBALANCE" ] && [ -d "./prompts" ]; then
+    if [ "${MA_SKIP_PROMPT_REBALANCE:-0}" = "1" ]; then
+        log_warn "Migration résultat-first/livraison des prompts ignorée (MA_SKIP_PROMPT_REBALANCE=1)"
+    else
+        PROMPT_MIGRATION_LOG="$BACKUP_DIR/prompt-result-migration.log"
+        $PYTHON_CMD "$PROMPT_REBALANCE" --base "$(pwd)" | tee "$PROMPT_MIGRATION_LOG"
+        log_ok "prompts agents (migration résultat-first/livraison ; rapport : $PROMPT_MIGRATION_LOG)"
+    fi
 fi
 
 # ============================================================

@@ -34,9 +34,9 @@ def test_rules_have_no_periodic_progress_or_single_file_constraint():
 
 
 def test_generators_emit_event_driven_non_blocking_contract():
-    x45 = read("prompts/160-create-x45/160-create-x45.md")
-    z21 = read("prompts/170-create-z21/170-create-z21.md")
-    mono = read("prompts/150-create-mono/150-create-mono.md")
+    x45 = read("prompts/160-create-x45/160-160-system.md")
+    z21 = read("prompts/170-create-z21/170-170-system.md")
+    mono = read("prompts/150-create-mono/150-150-system.md")
     for generated in (x45, z21):
         assert "snapshot, pas whitelist" in generated
         assert "aucun timeout/re-dispatch" in generated

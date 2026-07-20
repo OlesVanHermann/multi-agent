@@ -54,8 +54,24 @@ def per_task(runs):
             "retries": statistics.mean(r.get("retries", 0) for r in rs),
             "interventions": sum(r.get("interventions", 0) for r in rs),
             "hacking": any(r.get("hacking_detected") for r in rs),
+            "tokens_in": _optional_mean(rs, "tokens_in"),
+            "tokens_out": _optional_mean(rs, "tokens_out"),
+            "tokens_cached": _optional_mean(rs, "tokens_cached"),
+            "usd_est": _optional_mean(rs, "usd_est"),
+            "verify_wall_s": _optional_mean(rs, "verify_wall_s"),
+            "cost_per_green": _optional_mean(rs, "cost_per_green"),
+            "help_requests": sum(r.get("help_requests", 0) for r in rs),
+            "help_resolved": sum(r.get("help_resolved", 0) for r in rs),
+            "help_notfound": sum(r.get("help_notfound", 0) for r in rs),
+            "critic_followed": sum(r.get("critic_followed", 0) for r in rs),
+            "critic_ignored": sum(r.get("critic_ignored", 0) for r in rs),
         }
     return stats
+
+
+def _optional_mean(runs, key):
+    values = [run.get(key) for run in runs if run.get(key) is not None]
+    return statistics.mean(values) if values else None
 
 
 def bootstrap_ci(deltas, n=N_BOOTSTRAP):
@@ -73,7 +89,9 @@ def bootstrap_ci(deltas, n=N_BOOTSTRAP):
 def paired_deltas(stats, base_stats):
     common = sorted(set(stats) & set(base_stats))
     out = {"common_tasks": common, "metrics": {}}
-    for metric in ("success_rate", "cycles_to_green", "wall_s", "retries"):
+    for metric in ("success_rate", "cycles_to_green", "wall_s", "retries",
+                   "tokens_in", "tokens_out", "tokens_cached", "usd_est",
+                   "verify_wall_s", "cost_per_green"):
         deltas = []
         for tid in common:
             a, b = stats[tid].get(metric), base_stats[tid].get(metric)
@@ -90,7 +108,8 @@ def main():
     label = sys.argv[1]
     baseline = sys.argv[2] if len(sys.argv) == 3 else None
 
-    stats = per_task(load_runs(label))
+    runs = load_runs(label)
+    stats = per_task(runs)
     report = {"label": label, "per_task": stats}
 
     print(f"\n=== Banc {label} — {len(stats)} tâche(s) ===")
@@ -105,7 +124,13 @@ def main():
 
     suffix = f"-vs-{baseline}" if baseline else ""
     if baseline:
-        base_stats = per_task(load_runs(baseline))
+        base_runs = load_runs(baseline)
+        harnesses = {json.dumps(run.get("harness"), sort_keys=True) for run in runs}
+        base_harnesses = {json.dumps(run.get("harness"), sort_keys=True) for run in base_runs}
+        if harnesses != base_harnesses:
+            print("Error: configurations de harnais différentes; comparaison refusée")
+            sys.exit(2)
+        base_stats = per_task(base_runs)
         report["baseline"] = baseline
         report["paired"] = paired_deltas(stats, base_stats)
         print(f"\n=== Deltas appariés vs {baseline} "

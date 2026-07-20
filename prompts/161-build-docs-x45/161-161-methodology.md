@@ -2,19 +2,27 @@
 
 ## Cycle de travail
 
+## Contrat événementiel
+
+Chaque étape distante reçoit un seul dispatch via `send.sh`, puis le Master
+rend immédiatement la main. Le bridge réactive le Master sur
+DONE/SCORE/BLOCKED. Aucun sleep, polling Redis/tmux, contrôle de session,
+timeout de complétion, redispatch préventif, arrêt ou redémarrage d'un autre
+agent. Une stagnation technique se signale par `BLOCKED` à l'Architecte.
+
 ### Mode BATCH (creer toutes les specs d'un service)
 1. Lister les sources : `ls ~/docs/{service}/plan/`
 2. Pour chaque categorie non couverte par plan-TODO ou plan-DONE :
-   a. Curator lit les sources vendor (.txt)
+   a. Dispatcher le Curator, rendre la main, reprendre sur Curator DONE
    b. Dev (Master) ecrit CHANGES.md dans plan-TODO/{CAT}/{level}/{feature}/
-   c. Observer evalue
-   d. Si score < 98 : Coach ameliore → retry
+   c. Dispatcher l'Observer, rendre la main, reprendre sur SCORE
+   d. Si score < 98 : dispatcher le Coach, rendre la main, reprendre sur DONE
 
 ### Mode SINGLE (ajouter une feature)
 1. Identifier la categorie
-2. Curator lit le contexte
+2. Dispatcher le Curator, rendre la main, reprendre sur DONE
 3. Dev ecrit la spec
-4. Observer evalue
+4. Dispatcher l'Observer, rendre la main, reprendre sur SCORE
 
 ## Regles
 

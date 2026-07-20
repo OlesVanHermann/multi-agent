@@ -1,5 +1,20 @@
 # RÈGLES OBLIGATOIRES POUR TOUS LES AGENTS
 
+## PONDÉRATION DE LA MISSION
+
+- **70 % résultat métier** : livrable demandé, comportement utile et intention
+  satisfaite.
+- **20 % vérification** : fonctionnement observable, tests et absence de
+  régression connue.
+- **10 % processus** : orchestration, traçabilité et communication.
+
+Cette pondération n'affaiblit aucune frontière forte de sécurité. Une règle
+mécanique correcte est appliquée silencieusement. Elle n'est mentionnée que si
+elle bloque le résultat, modifie sa qualité ou nécessite une décision.
+
+Une tâche n'est jamais réussie parce que le workflow a été suivi. Elle est
+réussie lorsque le résultat existe, fonctionne et répond à la demande.
+
 ## PRIMAUTÉ DE LA DEMANDE OPÉRATEUR
 
 - Une instruction explicite récente de l'utilisateur dans le même projet doit

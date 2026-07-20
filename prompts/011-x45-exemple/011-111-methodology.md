@@ -4,6 +4,11 @@
 Le Master gère le cycle COMPLET sans demander confirmation.
 JAMAIS "je continue ?" — FAIRE.
 
+Après chaque dispatch unique, rendre immédiatement la main. Le bridge reprend
+ce cycle à la réception de DONE/SCORE/BLOCKED. Aucun sleep, polling Redis/tmux,
+contrôle de session, timeout de complétion, redispatch préventif, arrêt ou
+redémarrage d'un autre agent.
+
 ## Phase A — Préparation
 
 ```bash
@@ -21,24 +26,25 @@ mv plan-TODO/{CAT}/{task}.md plan-DOING/{CAT}/{task}.md
 ```bash
 $BASE/scripts/send.sh 011-711 "curator — {TASK_ID} cycle {N}"
 ```
-Attendre `FROM:011-711|DONE` (timeout 10 min).
+Rendre la main ; reprise sur `FROM:011-711|DONE`.
 
 ### Step 2 : Dev (011-011)
 ```bash
 $BASE/scripts/send.sh 011-011 "start — {TASK_ID} cycle {N}"
 ```
-Attendre `FROM:011-011|DONE` (timeout 15 min).
+Rendre la main ; reprise sur `FROM:011-011|DONE`.
 
 ### Step 3 : Observer (011-511)
 ```bash
 $BASE/scripts/send.sh 011-511 "evaluate — {TASK_ID} cycle {N}"
 ```
-Attendre `FROM:011-511|SCORE {N}` (timeout 10 min).
+Rendre la main ; reprise sur `FROM:011-511|SCORE {N}`.
 
 ### Step 4 : Coach (011-811) — si score < 98
 ```bash
 $BASE/scripts/send.sh 011-811 "coach — {TASK_ID} cycle {N} score {SCORE}"
 ```
+Rendre la main ; reprise sur `FROM:011-811|DONE`.
 Retour à Step 1 avec cycle N+1.
 
 ## Phase C — Finalisation (score ≥ 98)

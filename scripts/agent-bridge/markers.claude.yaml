@@ -38,10 +38,11 @@ status_line: 'bypass permissions'
 runtime_model_pattern: '(?!)'
 runtime_effort_pattern: '(?!)'
 
-# Contrôle horaire, uniquement lorsque le TUI est immédiatement disponible.
-# [Source: réponses réelles Claude Code fournies par l'opérateur]
-model_check_command: '/model'
-effort_check_command: '/effort'
+# Aucun contrôle actif : `/model` et `/effort` sans argument ouvrent des
+# pickers et bloquent le TUI. Seules leurs confirmations déjà affichées sont
+# relevées passivement.
+model_check_command: '__NON_APPLICABLE__'
+effort_check_command: '__NON_APPLICABLE__'
 model_check_history_pattern: '^\s*❯\s*/model\s*$'
 effort_check_history_pattern: '^\s*❯\s*/effort\s*$'
 model_check_response_pattern: 'Set model to ([^\n]+?) and saved as your default'

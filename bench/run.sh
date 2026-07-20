@@ -24,6 +24,16 @@ RUNS="${2:-1}"
 SPLIT="${3:-heldout}"
 MODE="${4:-v3}"
 PROJECT="${PROJECT_DIR:-$BASE/project}"
+SEALED="${BENCH_SEALED:-1}"
+SEALED_NET=false
+if [ -f "$BASE/sessions/bench-sealed-agent.json" ] \
+        && grep -q '"sealed_net":true' "$BASE/sessions/bench-sealed-agent.json"; then
+    SEALED_NET=true
+fi
+if [ "${BENCH_REQUIRE_SEALED_NET:-0}" = "1" ] && [ "$SEALED_NET" != true ]; then
+    echo "[bench] réseau non scellé : lancer bench/start-sealed-agent.sh" >&2
+    exit 2
+fi
 
 for TID in $("$BASE/bench/list_tasks.sh" "$SPLIT"); do
     TASKFILE=$(find "$BASE/bench/tasks" -mindepth 3 -maxdepth 3 \
@@ -43,8 +53,15 @@ for TID in $("$BASE/bench/list_tasks.sh" "$SPLIT"); do
     fi
 
     for i in $(seq "$RUNS"); do
+        RUN_PROJECT="$PROJECT"
         # État de départ figé (les runs doivent être appariés sur la même base)
-        if git -C "$PROJECT" rev-parse -q --verify "bench-base-$TID" >/dev/null 2>&1; then
+        if [ "$SEALED" = "1" ] && git -C "$PROJECT" rev-parse -q --verify "bench-base-$TID" >/dev/null 2>&1; then
+            RUN_PROJECT="$BASE/bench/sandbox/$LABEL/$TID-$i"
+            SEAL_NET_ARG=()
+            [ "$SEALED_NET" = true ] && SEAL_NET_ARG+=(--network)
+            python3 "$BASE/bench/seal.py" "$PROJECT" "$RUN_PROJECT" "bench-base-$TID" \
+                --run "$i" --mode "$MODE" "${SEAL_NET_ARG[@]}"
+        elif git -C "$PROJECT" rev-parse -q --verify "bench-base-$TID" >/dev/null 2>&1; then
             git -C "$PROJECT" checkout -f "bench-base-$TID"
         else
             echo "[bench] WARN $TID : tag bench-base-$TID absent," \
@@ -56,10 +73,11 @@ for TID in $("$BASE/bench/list_tasks.sh" "$SPLIT"); do
         python3 "$BASE/scripts/agent-bridge/orchestrator.py" \
             "$BASE/bench/tasks/wf-single.yaml" \
             --var task="$TID" --var taskfile="$TASKFILE" --var verify="$VERIFY" \
+            --var workspace="$RUN_PROJECT" \
             --state "$BASE/bench/results/state-$LABEL-$TID-$i.json" || true
         T1=$(date +%s)
 
-        python3 "$BASE/bench/collect.py" \
+        PROJECT_DIR="$RUN_PROJECT" python3 "$BASE/bench/collect.py" \
             "$LABEL" "$TID" "$i" "$T0" "$T1" "$MODE"
     done
 done

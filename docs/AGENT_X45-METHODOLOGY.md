@@ -1,5 +1,8 @@
 # x45 — Méthodologie de pipeline auto-améliorante
 
+> Référence des sept rôles v3.2 :
+> [Fonctionnement des agents](AGENT_ROLES.md#x45-v32-sept-agents).
+
 ## Vue d'ensemble
 
 x45 est un mode alternatif du système multi-agent. Au lieu de prompts flat (`.md`), chaque agent utilise **3 fichiers** dans un répertoire dédié :

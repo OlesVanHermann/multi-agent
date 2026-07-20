@@ -45,7 +45,7 @@ def load(path):
 
 
 class TestBackwardCompat:
-    """Le chemin `claude` ne doit pas bouger d'un octet."""
+    """Le chemin historique charge toujours les marqueurs Claude."""
 
     def test_markers_yaml_still_resolves(self):
         assert os.path.isfile(MARKERS_LEGACY), "markers.yaml a disparu"
@@ -68,7 +68,7 @@ class TestBackwardCompat:
         """Installation existante : aucun AGENT_CLI dans l'environnement."""
         monkeypatch.delenv('AGENT_CLI', raising=False)
         assert engines.current_engine() == 'claude'
-        assert engines.load_markers() == load(MARKERS_CLAUDE)
+        assert engines.load_markers() == engines._substitute_na(load(MARKERS_CLAUDE))
 
     def test_empty_agent_cli_means_claude(self, monkeypatch):
         monkeypatch.setenv('AGENT_CLI', '')

@@ -96,6 +96,27 @@ class TestParsePaneState:
         from engines import load_markers
         assert _runtime_model_from_pane("bypass permissions", load_markers("claude")) == ""
 
+    def test_claude_model_effort_observation_is_passive(self):
+        from agent import TmuxAgent
+        instance = object.__new__(TmuxAgent)
+        instance._observed_model = ""
+        instance._observed_effort = ""
+        instance._observe_claude_model_effort(
+            "Set model to Fable 5 and saved as your default for new sessions\n"
+            "Set effort level to xhigh (saved as your default)\n"
+        )
+        assert instance._observed_model == "claude-fable-5"
+        assert instance._observed_effort == "xhigh"
+
+    def test_bridge_never_uses_bare_model_or_effort_as_probe(self):
+        source = open(os.path.join(_REPO_ROOT, "scripts", "agent-bridge", "agent.py")).read()
+        assert "_check_claude_model_effort" not in source
+        assert "MODEL_CHECK_INTERVAL" not in source
+        from engines import load_markers
+        markers = load_markers("claude")
+        assert "NEVER" in markers["model_check_command"]
+        assert "NEVER" in markers["effort_check_command"]
+
 
 class TestPaneStatesFromRedis:
     @pytest.fixture(scope="class")

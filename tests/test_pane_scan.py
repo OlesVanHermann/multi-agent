@@ -147,6 +147,7 @@ def run_bash_eval(markers, out, pane_cmd, agent_id):
         'has_down': d['has_down'] == '1',
         'plan_mode': d['plan_mode'] == '1',
         'waiting_approval': d['waiting_approval'] == '1',
+        'login_required': d['login_required'] == '1',
         'compacted': d['compacted'] == '1',
         'context_pct': int(d['context_pct']),
         'done_compacting': d['done_compacting'] == '1',
@@ -239,7 +240,7 @@ class TestGeneratedScanShape:
         assert s.startswith('for s in "$@"; do')
 
     def test_field_count_matches_consumer(self):
-        assert len(engines.PANE_FIELDS) == 14
+        assert len(engines.PANE_FIELDS) == 15
 
     def test_codex_scan_builds(self):
         """Les marqueurs codex sont relevés → le scan se génère."""

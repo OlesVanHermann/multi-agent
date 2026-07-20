@@ -30,6 +30,7 @@ def test_codex_status_converts_percent_left_to_used(monkeypatch):
     pane = """
 Account: user@example.com (Pro)
 Directory: ~/multi-agent
+Model: gpt-5.6-sol
 Weekly limit: [████] 79% left
               (resets 22:20 on 21 Jul)
 GPT-5.3-Codex-Spark Weekly limit: [████] 100% left
@@ -41,6 +42,17 @@ GPT-5.3-Codex-Spark Weekly limit: [████] 100% left
     assert [b["percent"] for b in bars] == [21, 0]
     assert info["email"] == "user@example.com"
     assert info["login_method"] == "ChatGPT account"
+    assert info["model"] == "gpt-5.6-sol"
+
+
+def test_status_model_parser_is_shared_by_claude_and_codex():
+    scheduler = _load_scheduler()
+    claude = scheduler._parse_status_info(
+        "Login method: Claude Max account\nModel: claude-opus-4-8\n", "claude")
+    codex = scheduler._parse_status_info(
+        "Account: user@example.com (Pro)\nModel: gpt-5.6-sol\n", "codex")
+    assert claude["model"] == "claude-opus-4-8"
+    assert codex["model"] == "gpt-5.6-sol"
 
 
 def test_keepalive_websocket_ids_are_bounded():

@@ -5,6 +5,7 @@
 #   taskfile : chemin absolu du task.md visible par l'agent
 #   verify   : chemin de l'oracle (mode v3) ou chaîne vide (mode v2 baseline —
 #              verify: "" est falsy, l'étape traverse le bridge à l'identique v2)
+#   workspace: clone de travail scellé ou project/ historique
 #
 # Lancé par bench/run.sh — ne pas exécuter directement.
 name: bench-single
@@ -15,9 +16,11 @@ steps:
     prompt: |
       FROM:bench|Tâche de banc {{task}}.
       Lis le fichier {{taskfile}} et exécute la tâche décrite, dans ton
-      répertoire de travail projet. Quand tu as terminé, signale la fin
+      répertoire de travail exact {{workspace}}. Commence par t'y placer et
+      n'écris nulle part ailleurs. Quand tu as terminé, signale la fin
       avec done.sh (DONE). Ne modifie AUCUN fichier hors du périmètre
       décrit dans la tâche.
     verify: "{{verify}}"
+    workspace: "{{workspace}}"
     timeout: 3600
     on_failure: continue

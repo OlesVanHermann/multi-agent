@@ -27,8 +27,10 @@ force `forced_login_method=chatgpt`.
 ## Cycle interactif commun
 
 Pour les deux moteurs, `agent.sh` crée le tmux, attend que le TUI soit prêt,
-envoie `/model <identifiant>`, confirme le menu, démarre le même bridge puis
-injecte le même prompt `deviens agent` (ou la même liste de fichiers x45/z21).
+applique explicitement le modèle demandé, démarre le même bridge puis injecte
+le même prompt `deviens agent` (ou la même liste de fichiers x45/z21). Claude
+accepte `/model <identifiant>` ; Codex est piloté par son picker uniquement lors
+du démarrage ou d'un changement demandé.
 Codex est lancé avec `--dangerously-bypass-approvals-and-sandbox`; aucun
 `codex exec`, JSONL ou appel API n’est utilisé.
 
@@ -36,6 +38,28 @@ Les états web sont dérivés de `markers.claude.yaml` ou
 `markers.codex.yaml`. La saisie web continue d’utiliser les mêmes opérations
 tmux `send-keys` et la communication inter-agent conserve les mêmes streams
 Redis.
+
+## Observation du modèle sans blocage
+
+Le bridge n'envoie jamais `/model` ou `/effort` sans argument pour consulter
+l'état. Dans Claude Code, ces commandes ouvrent des pickers interactifs : les
+utiliser comme sondes laisse le menu ouvert et bloque l'agent.
+
+L'état runtime est donc relevé passivement :
+
+- Codex expose modèle et effort dans son footer ;
+- Claude est observé uniquement à partir des confirmations déjà rendues après
+  un changement explicite ;
+- si Claude n'expose aucune confirmation récente, la valeur runtime reste
+  inconnue et la valeur configurée reste affichée séparément.
+
+Une information inconnue ne déclenche jamais une commande TUI. `/model` et
+`/effort` ne sont envoyés qu'avec l'intention de modifier la configuration.
+
+Le sweep d'usage réutilise la vue `/status` qu'il ouvre déjà pour relever aussi
+le champ `Model:`. Le même parseur couvre Claude Code et Codex, et enregistre
+le modèle avec les informations du profil. Il ne faut jamais ajouter une
+seconde sonde `/model` pour cette donnée.
 
 ## Effort et reasoning
 

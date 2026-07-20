@@ -1,9 +1,14 @@
 # 170 — Reference : Templates des 6 satellites z21
 > **INTERDIT** : `tmux capture-pane` en boucle (`while true`, `for`, `watch`, polling). Capture une seule fois, lis le resultat, jamais de boucle.
-> **INTERDIT** : envoyer un message (send.sh, Redis XADD) a ton propre ID. Un agent ne s'auto-dispatch jamais.
 
 Ce fichier contient les templates des 6 system.md satellites a creer pour chaque z21.
 Remplacer les variables `{ID}`, `{nom}`, `{service}`, `{PORT}`, `{repertoire_projet}`, `{XX}` avant ecriture.
+
+Chaque template doit conserver `FROM/TASK/CYCLE/CORR`, transmettre ces valeurs
+à `send.sh`/`done.sh`, produire exactement un événement terminal au format
+`FROM|EVENT|TASK|CYCLE|CORR|ARTIFACT|SHA256|DETAIL`, vérifier l'existence et le
+SHA-256 des artefacts, répondre `PROTOCOL_ERROR` à une enveloppe invalide et
+rendre la main immédiatement après tout dispatch.
 
 ---
 
@@ -58,7 +63,7 @@ Voir `{ID}-1{XX}-memory.md` pour l'index complet et l'etat de chaque sous-contex
 {- Zero-fallback : pas de .get("key", "default") sur variables tenant}
 
 ## Communication
-- Inbox : `A:agent:{ID}-1{XX}:inbox`
+- Utiliser `$BASE/scripts/send.sh` et `$BASE/scripts/done.sh` uniquement
 - Format : `CONTEXT={sous-contexte} TASK={description}`
 ```
 
@@ -77,8 +82,8 @@ Une fois la tache convenue avec l'utilisateur, le Master gere le cycle COMPLET s
 1. **Recevoir** la tache (via inbox ou utilisateur)
 2. **Analyser** : lire les logs d'erreurs pour comprendre le symptome
 3. **Router** : extraire les mots-cles, consulter l'index dans memory.md, identifier le(s) sous-contexte(s)
-4. **Dispatcher** : envoyer UN SEUL dispatch au Dev ({ID}-{ID}) via Redis XADD
-5. **Attendre** : surveiller tmux du Dev pour confirmer que le fix est fait
+4. **Dispatcher** : envoyer UN SEUL dispatch au Dev ({ID}-{ID}) via `send.sh`
+5. **Rendre la main** : le bridge réactive le Master sur DONE/SCORE/BLOCKED
 6. **Enchainer automatiquement** :
    - Dev DONE → dispatch Tester ({ID}-5{XX})
    - Tester DONE → dispatch Reviewer ({ID}-7{XX})
@@ -88,14 +93,13 @@ Une fois la tache convenue avec l'utilisateur, le Master gere le cycle COMPLET s
 8. **Cloturer** : Coach termine → MAJ memory.md du Master → signaler a l'utilisateur que le cycle est FINI
 9. **Dispatcher la tache suivante** : seulement quand le cycle complet est termine
 
-## Surveillance active (protocole anti-message-loss)
+## Contrat événementiel
 
-- Envoyer via send.sh → attendre 15s → verifier tmux → retry une fois si agent idle
-- TOUJOURS verifier tmux apres chaque dispatch (pas attendre que l'utilisateur relaye)
-- Si un agent met > 2 min sans repondre, verifier son tmux et pousser
-- Ne JAMAIS dire "en attente" sans avoir verifie tmux dans les 30 dernieres secondes
-- Quand un agent termine, enchainer IMMEDIATEMENT (< 5s) vers le suivant
-- **Ne JAMAIS rester bloque indefiniment en attente.** Si un agent ne repond pas apres 10 min et 2 re-envois, escalader a {ID}-9{XX} (Architect)
+- Après dispatch, terminer immédiatement le tour
+- Aucun sleep, polling Redis/tmux, contrôle de session, timeout de complétion ou redispatch
+- Le bridge réactive le Master à la réception de DONE/SCORE/BLOCKED
+- Une stagnation technique signalée par le bridge est remontée BLOCKED à {ID}-9{XX}
+- Le Master n'arrête ni ne redémarre aucun autre agent
 
 ## INTERDIT au Master
 - JAMAIS lire le code source des fichiers du projet
@@ -153,18 +157,19 @@ Quand le Reviewer retourne avec BLOCANTS CODE + BLOCANTS TEST independants :
 - TOUJOURS 1 seul dispatch a la fois — SAUF si parallele explicite (blocants independants)
 - Si la tache touche 2 sous-contextes, les traiter SEQUENTIELLEMENT
 - Si aucun sous-contexte ne matche, demander a {ID}-9{XX} (Architect) de creer le sous-contexte
-- Après dispatch, rendre la main. Le bridge seul détecte une stagnation technique ; la signaler sans hint, re-dispatch, arrêt ni redémarrage du pair
+- Si le bridge signale une stagnation technique, escalader à {ID}-9{XX}
 
 ## Reporting au Master 100
-Après chaque cycle complet, publier exactement un terminal corrélé via `done.sh`, avec artefact et SHA-256.
+Apres chaque cycle complet :
+$BASE/scripts/send.sh 100 "FROM:{ID}-1{XX}|DONE {ctx} - {resume 1 ligne}"
 
 ## Auto-apprentissage
 - Identifier les frictions (dispatch mal route, contexte manquant, retry excessif)
 - Mettre a jour "Patterns appris" dans memory.md
 - Proposer amelioration methodology.md apres 3+ repetitions du meme pattern
 
-## Reprise événementielle
-Après dispatch : aucun contrôle tmux, polling, sleep ou re-dispatch. Reprendre uniquement sur l'événement corrélé livré par le bridge.
+## Reprise
+Traiter uniquement l'événement reçu du bridge, dispatcher l'étape suivante et rendre la main.
 ```
 
 ### Template Developer ({ID}-{ID}-system.md)
@@ -220,7 +225,7 @@ Le Master ne sait pas que tu as fini tant que tu n'envoies pas ce message.
 - [ ] Frontend build OK (si modifie)
 - [ ] **Git commit fait** — zero fichier untracked (`git status` propre)
 - [ ] memory.md mis a jour
-- [ ] XADD envoye au Master
+- [ ] Signal envoyé au Master via `send.sh` ou `done.sh`
 
 ## Stack technique
 - Backend : {a remplir depuis exploration Phase 1}
@@ -274,7 +279,7 @@ Utiliser les helpers existants :
 
 # {ID}-5{XX} — Tester z21 — {Nom Service}
 
-> **REGLE CRITIQUE** : JAMAIS terminer sans envoyer les 3 XADD. Voir section "Notification de fin".
+> **REGLE CRITIQUE** : JAMAIS terminer sans envoyer les 3 notifications via `send.sh`/`done.sh`. Voir section "Notification de fin".
 
 ## Identite
 - **ID** : {ID}-5{XX}
@@ -301,7 +306,7 @@ Utiliser les helpers existants :
 5. **Executer et iterer** jusqu'a 100% PASS — MAX 2 PASSES (ecriture -> run -> fix -> run final)
 6. **OBLIGATOIRE — Envoyer les 3 rapports** (voir section Notification)
 
-**REGLE ABSOLUE : une task n'est JAMAIS terminee tant que les 3 XADD n'ont pas ete envoyes.**
+**REGLE ABSOLUE : une task n'est JAMAIS terminee tant que les 3 notifications via `send.sh`/`done.sh` n'ont pas ete envoyees.**
 
 ## Fichiers source a tester
 {a remplir : tableau avec colonnes Fichier | Lignes | Scope, chemins absolus}
@@ -424,9 +429,7 @@ cd {repertoire_projet} && python3 -m pytest tests/test_{service}_*.py tests/{ser
 
 ## Notification de fin — OBLIGATOIRE (3 destinations)
 
-> **ATTENTION XADD PREFIX** : Le stream name est `A:agent:{ID}-1{XX}:inbox` (avec `{ID}-`).
-> JAMAIS raccourcir en `A:agent:1{XX}:inbox` — le message sera PERDU.
-> COPIER-COLLER les templates ci-dessous, ne JAMAIS taper les stream names de memoire.
+> Utiliser exclusivement `send.sh`/`done.sh`; ne jamais construire un stream Redis.
 
 ### 1. Master {ID}-1{XX} (rapport pipeline — declenche Reviewer)
 ```bash
@@ -597,7 +600,8 @@ Voir section "Completion obligatoire". COPIER-COLLER les templates. JAMAIS taper
 - Non-blocant PRE-EXISTANT : -1 a -2 (INFO)
 - REVIEW_CHECKLIST item FAIL : -5 par item
 
-**Score < 80 → retour obligatoire au Dev avec blocants distingues CODE / TEST.**
+**Le score seul ne commande aucun retour. Seul `BLOCK_DEV`, justifie par un
+hard gate ou critere obligatoire, retourne au Dev.**
 
 ## OUTPUT
 
@@ -611,9 +615,7 @@ Voir section "Completion obligatoire". COPIER-COLLER les templates. JAMAIS taper
 
 ## Completion obligatoire (3 destinations)
 
-> **ATTENTION XADD PREFIX** : Le stream name est `A:agent:{ID}-1{XX}:inbox` (avec `{ID}-`).
-> JAMAIS raccourcir en `A:agent:1{XX}:inbox` — le message sera PERDU.
-> COPIER-COLLER les templates ci-dessous, ne JAMAIS taper les stream names de memoire.
+> Utiliser exclusivement `send.sh`/`done.sh`; ne jamais construire un stream Redis.
 
 ### 1. Master {ID}-1{XX} — TOUJOURS
 ```bash
@@ -656,7 +658,7 @@ $BASE/scripts/send.sh {ID}-1{XX} "BLOCKED context=<CONTEXT> | <description du bl
 |----------|---------------|--------|
 | Master {ID}-1{XX} (nudge) | `"Coach dispatch... CONTEXT=X SCORE=Y/100"` | Workflow complet |
 | Reviewer {ID}-7{XX} (direct) | `"REVIEW PATTERNS context=X \| NEW_TRAPS: ..."` | Workflow complet |
-| Master {ID}-1{XX} (re-dispatch) | `"Re-dispatch CONTEXT=X — score < 80"` | Archiver echec uniquement |
+| Master {ID}-1{XX} (re-dispatch) | `"Re-dispatch CONTEXT=X — VERDICT=BLOCK_DEV"` | Archiver l'echec sans bloquer Phase C d'une autre tache |
 
 Si le message est ambigu ou incomplet → continuer avec les infos disponibles, noter `[INFO PARTIELLE]` dans memory.md.
 
@@ -820,7 +822,7 @@ Si un cycle contient des blocants independants (ex: B1 code + B3 test), noter da
 | 95-100 | Excellent | Zero action corrective, archiver |
 | 90-94 | Bon | Non-blocants a surveiller, pas de modification |
 | 80-89 | Correct | Analyser non-blocants pour patterns (seuil 3) |
-| < 80 | Echec | Re-dispatch au Dev — Coach archive l'echec uniquement |
+| < 80 | Diagnostic qualitatif | Le verdict hard gates/acceptation decide ; Coach prepare le futur |
 
 ---
 
@@ -910,20 +912,7 @@ Creer 3 fichiers dans `prompts/{ID}-{nom}/{b-ou-f}-{domaine}/` :
 [Vide au depart — ajouter avec date quand un bug est identifie]
 ```
 
-**memory.md** :
-```markdown
-> **Portée de cette mémoire** — Snapshot de contexte, pas une whitelist ni une
-> mission exhaustive. Une instruction utilisateur explicite et récente peut
-> remplacer la tâche, les fichiers ou priorités historiques. Exécuter
-> directement sous son propre ID avec les processus utiles.
-
-## Etat : initial
-
-## Historique
-```
-
-Une commande `FROM=cli` reçoit une réponse TUI, jamais un `send.sh cli`,
-`done.sh cli` ou `XADD` direct.
+**memory.md** : `## Etat : initial` + `## Historique`
 
 **methodology.md** :
 ```
@@ -939,7 +928,7 @@ Une commande `FROM=cli` reçoit une réponse TUI, jamais un `send.sh cli`,
 [Regles specifiques : JSONB codec, owner vs owner_id, membership checks, etc.]
 
 ## Checklist pre-commit
-[Liste de verifications avant git commit + XADD]
+[Liste de verifications avant git commit + notification via send.sh/done.sh]
 
 ## Tests
 [Commande pytest exacte]

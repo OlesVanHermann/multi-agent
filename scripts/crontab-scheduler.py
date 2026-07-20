@@ -276,6 +276,32 @@ _sweep_thread = None
 ENGINE_CRED_FILE = {"claude": ".credentials.json", "codex": "auth.json"}
 
 
+def _parse_status_info(text, engine):
+    """Parse ``/status`` pour l'usage et le modèle, sans sonde ``/model``."""
+    info = {}
+    if engine == "codex":
+        am = re.search(r'Account:\s+(\S+)(?:\s+\(([^)\n│]*)\)?)?', text)
+        if am:
+            info["email"] = am.group(1)
+            info["login_method"] = "ChatGPT account"
+            info["organization"] = (am.group(2) or "ChatGPT").strip().rstrip("… ") or "ChatGPT"
+        dm = re.search(r'Directory:\s+(\S+)', text)
+        if dm:
+            info["cwd"] = dm.group(1)
+    else:
+        for line in text.split('\n'):
+            line = line.strip()
+            for field in ["Login method", "Organization", "Email", "Model", "cwd", "Memory"]:
+                if line.startswith(f"{field}:"):
+                    info[field.lower().replace(" ", "_")] = line.split(":", 1)[1].strip()
+
+    # Garder la carte la plus récente si le scrollback en contient plusieurs.
+    models = re.findall(r'^\s*Model:\s+(\S+)', text, re.MULTILINE)
+    if models:
+        info["model"] = models[-1]
+    return info
+
+
 def _scrape_codex_status(session_name):
     """/status codex : UNE boîte — compte, répertoire, limites d'usage.
 
@@ -331,21 +357,7 @@ def _scrape_codex_status(session_name):
             uniq[b["label"]] = b
         bars = list(uniq.values())
 
-        info = {}
-        # Le plan est entre parenthèses, souvent TRONQUÉ par la boîte
-        # (« (Pr » pour « (Pro) ») : ne jamais franchir la fin de ligne ni
-        # la bordure « │ » — sinon la capture avale les lignes suivantes.
-        am = re.search(r'Account:\s+(\S+)(?:\s+\(([^)\n│]*)\)?)?', text)
-        if am:
-            info["email"] = am.group(1)
-            info["login_method"] = "ChatGPT account"
-            info["organization"] = (am.group(2) or "ChatGPT").strip().rstrip("… ") or "ChatGPT"
-        dm = re.search(r'Directory:\s+(\S+)', text)
-        if dm:
-            info["cwd"] = dm.group(1)
-        mm = re.search(r'Model:\s+(\S+)', text)
-        if mm:
-            info["model"] = mm.group(1)
+        info = _parse_status_info(text, "codex")
 
         return (bars or None), info
     except Exception as e:
@@ -421,13 +433,8 @@ def _scrape_usage_tab(session_name):
             ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-30"],
             capture_output=True, text=True, timeout=5
         )
-        info = {}
-        if cap_info.returncode == 0:
-            for line in cap_info.stdout.split('\n'):
-                line = line.strip()
-                for field in ["Login method", "Organization", "Email", "Model", "cwd", "Memory"]:
-                    if line.startswith(f"{field}:"):
-                        info[field.lower().replace(" ", "_")] = line.split(":", 1)[1].strip()
+        info = (_parse_status_info(cap_info.stdout, "claude")
+                if cap_info.returncode == 0 else {})
 
         # Navigate: Status → Config → Usage (Right, Right — one at a time)
         subprocess.run(
@@ -570,6 +577,7 @@ def scan_keepalive():
         usage_data = {
             "profile": profile,
             "bars": bars or [],
+            "info": info,
             "last_scan": int(time.time()),
         }
         out_path = os.path.join(KEEPALIVE_DIR, f"usage_{profile}.json")
@@ -703,7 +711,8 @@ def _sweep_profile(profile):
         result["email"] = info.get("email", "")
         with open(os.path.join(KEEPALIVE_DIR, f"info_{profile}.json"), "w") as f:
             json.dump(info, f, indent=2)
-    usage_data = {"profile": profile, "bars": bars or [], "status": "ok" if bars else "no_bars",
+    usage_data = {"profile": profile, "bars": bars or [], "info": info,
+                  "status": "ok" if bars else "no_bars",
                   "last_scan": int(time.time())}
     with open(os.path.join(KEEPALIVE_DIR, f"usage_{profile}.json"), "w") as f:
         json.dump(usage_data, f, indent=2)
