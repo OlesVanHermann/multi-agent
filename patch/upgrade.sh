@@ -288,6 +288,12 @@ if [ -f "$TOPOLOGY_MIGRATOR" ] && [ -d "./prompts" ]; then
     $PYTHON_CMD "$TOPOLOGY_MIGRATOR" --base "$(pwd)" --check | sed 's/^/    /'
 fi
 
+MODEL_CONFIGURATOR="$TEMP_DIR/scripts/configure-x45-models.py"
+if [ -f "$MODEL_CONFIGURATOR" ] && [ -d "./prompts" ]; then
+    printf "\n  Matrice modèles/logins x45/z21 :\n"
+    $PYTHON_CMD "$MODEL_CONFIGURATOR" --base "$(pwd)" --all --check | sed 's/^/    /'
+fi
+
 # Règles deny (protection oracle V3) dans les profils login existants
 DENY_REF="$TEMP_DIR/login/claude1a/settings.json"
 DENY_MERGE="$TEMP_DIR/patch/merge-deny-rules.py"
@@ -452,6 +458,14 @@ if [ -f "$TOPOLOGY_MIGRATOR" ] && [ -d "./prompts" ]; then
     fi
     cat "$TOPOLOGY_MIGRATION_LOG"
     log_ok "topologies agents v3.2 et Contradictors 2XX (rapport : $TOPOLOGY_MIGRATION_LOG)"
+fi
+
+# 6d.1 Matrice générique des moteurs par rôle pour toutes les topologies
+# x45/z21 existantes. Aucun ID de triangle n'est codé en dur.
+MODEL_CONFIGURATOR="$TEMP_DIR/scripts/configure-x45-models.py"
+if [ -f "$MODEL_CONFIGURATOR" ] && [ -d "./prompts" ]; then
+    $PYTHON_CMD "$MODEL_CONFIGURATOR" --base "$(pwd)" --all
+    log_ok "modèles/logins x45/z21 par rôle"
 fi
 
 # 6e. Prompts agents existants : après la matérialisation topologique afin que

@@ -108,6 +108,46 @@ def test_role_suffixes_follow_triangle_number():
     assert models_mod.suffix_for_triangle("800", "302") == "802"
 
 
+def test_x45_z21_role_model_matrix():
+    assert models_mod.ROLE_DEFAULTS == {
+        "master": ("100", "fable-5", "login3a", "H"),
+        "contradictor": ("200", "gpt-5-6-sol", "login3a", "H"),
+        "developer": ("300", "gpt-5-6-sol", "login1a", "H"),
+        "observer": ("500", "fable-5", "login2a", "H"),
+        "curator": ("700", "fable-5", "login4a", "H"),
+        "coach": ("800", "gpt-5-6-sol", "login2a", "H"),
+        "architect": ("900", "fable-5", "login4a", "H"),
+    }
+
+
+def test_topology_assignments_use_existing_role_suffixes(tmp_path):
+    directory = tmp_path / "161-project"
+    directory.mkdir()
+    for suffix in ("161", "261", "361", "561", "761", "861", "961"):
+        (directory / f"161-{suffix}-system.md").write_text("role\n")
+    assignments = models_mod.topology_assignments(directory, "161")
+    by_suffix = {value[0]: value[1:3] for value in assignments.values()}
+    assert by_suffix == {
+        "161": ("fable-5", "login3a"),
+        "261": ("gpt-5-6-sol", "login3a"),
+        "361": ("gpt-5-6-sol", "login1a"),
+        "561": ("fable-5", "login2a"),
+        "761": ("fable-5", "login4a"),
+        "861": ("gpt-5-6-sol", "login2a"),
+        "961": ("fable-5", "login4a"),
+    }
+
+
+def test_shipped_x45_z21_model_matrix_is_converged():
+    assert models_mod.configure_all(ROOT, check=True) == []
+
+
+def test_upgrade_applies_role_model_matrix():
+    upgrade = (ROOT / "patch" / "upgrade.sh").read_text()
+    assert 'configure-x45-models.py' in upgrade
+    assert '--all' in upgrade
+
+
 def test_methodology_gate_archives_non_significant_candidate(tmp_path, monkeypatch):
     results = tmp_path / "results"
     results.mkdir()
