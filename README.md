@@ -119,6 +119,10 @@ cd /chemin/vers/multi-agent
 ./patch/upgrade.sh
 ```
 
+Après l'upgrade, **ne lancez pas** `./scripts/infra.sh start` ni
+`./scripts/agent.sh start all`. Laissez les services et agents arrêtés ; leur
+démarrage est une opération séparée décidée explicitement par l'opérateur.
+
 Le script :
 - Met à jour **uniquement** les fichiers framework (`scripts/`, `web/`, `docs/`, `patch/`, `setup/`, `templates/`, `examples/`, `framework/`, `tests/`)
 - **Préserve** vos données projet ; les prompts agents gardent leur contenu

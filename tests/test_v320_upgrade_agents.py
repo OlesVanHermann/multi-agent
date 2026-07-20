@@ -88,3 +88,10 @@ def test_isolated_unmarked_developer_is_not_treated_as_triangle(tmp_path):
 def test_released_prompt_topologies_are_already_migrated():
     """Un clone neuf v3.2 ne doit dépendre d'aucune passe d'upgrade."""
     assert MIGRATOR.plan(ROOT) == ([], [])
+
+
+def test_upgrade_never_starts_infrastructure_or_agents():
+    """L'upgrade se termine arrêté; le démarrage appartient à l'opérateur."""
+    script = (ROOT / "patch" / "upgrade.sh").read_text()
+    assert "infra.sh start" not in script
+    assert "agent.sh start all" not in script

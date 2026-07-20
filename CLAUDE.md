@@ -482,8 +482,11 @@ Migrations idempotentes (v2→v3 comme v3.X→v3.X+1) :
 ```bash
 ./scripts/infra.sh stop
 git pull origin main
-./scripts/agent.sh start all
+python3 patch/migrate-v320-agents.py --check
 ```
+
+Après une mise à jour, ne pas lancer `infra.sh start` ni `agent.sh start all`.
+Laisser les services arrêtés jusqu'à une instruction opérateur explicite.
 
 Voir `patch/HOW_TO_UPGRADE.md` pour le guide complet.
 

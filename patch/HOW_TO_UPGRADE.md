@@ -64,6 +64,12 @@ les tâches importées depuis votre historique et vos résultats survivent.
 
 ## Processus de mise à jour
 
+> **ARRÊT OBLIGATOIRE APRÈS UPGRADE** — La procédure d'upgrade ne doit jamais
+> lancer `./scripts/infra.sh start` ni `./scripts/agent.sh start all`. Après les
+> contrôles hors ligne, laisser l'infrastructure et les agents arrêtés. Leur
+> démarrage relève d'une opération distincte décidée explicitement par
+> l'opérateur.
+
 ### Dashboard systemd durci (v3.1.4+)
 
 `upgrade.sh` met à jour le framework, mais ne modifie jamais les unités locales
@@ -154,12 +160,15 @@ Pour installer explicitement la ligne 3.1 :
 pip install -r requirements.txt
 ```
 
-### Étape 7: Vérifier et redémarrer
+### Étape 7: Vérifier hors ligne et s'arrêter
 
 ```bash
-python3 scripts/agent-bridge/healthcheck.py
-./scripts/agent.sh start all
+python3 patch/migrate-v320-agents.py --check
+python3 patch/rebalance-agent-prompts.py --check
+python3 -m pytest tests/test_v320_upgrade_agents.py -q
 ```
+
+Ne démarrer ni l'infrastructure ni les agents à la fin de cette procédure.
 
 ---
 
@@ -387,13 +396,9 @@ prompts/gpt-5-6-terra.model: gpt-5.6-terra
 prompts/gpt-5-6-luna.model: gpt-5.6-luna
 ```
 
-Puis reconstruire/redémarrer les services :
-
-```bash
-./scripts/web.sh restart
-./scripts/infra.sh start
-./scripts/agent.sh start all
-```
+Après ces vérifications, conserver tous les services et agents arrêtés. Leur
+démarrage ne fait pas partie de l'upgrade et nécessite une décision opérateur
+séparée.
 
 Dans le panneau Login/Model, choisir par exemple `login1a` et
 `gpt-5-6-sol`. Le tmux doit démarrer Codex, saisir `/model gpt-5.6-sol`, puis
@@ -502,10 +507,10 @@ Cadence recommandée :
 1. **Mensuel** : vérifier les annonces de sécurité Keycloak
    (https://www.keycloak.org/security) et les nouveaux tags sur
    https://quay.io/repository/keycloak/keycloak?tab=tags.
-2. **Patch de la même ligne majeure** (ex. 23.0.x → 23.0.y) : mettre à jour
-   le tag + digest dans les trois fichiers, puis `docker rm -f ma-keycloak`
-   suivi de `./scripts/infra.sh start` ; vérifier `GET /health/ready` et un
-   login sur le dashboard.
+2. **Patch de la même ligne majeure** (ex. 23.0.x → 23.0.y) : traiter la mise à
+   jour Keycloak dans une fenêtre de maintenance distincte. Ne pas la redémarrer
+   dans la procédure d'upgrade du framework ; conserver les services arrêtés et
+   confier le démarrage à l'opérateur.
 3. **Montée majeure** (ex. 23 → 26) : traiter comme une migration dédiée —
    les variables d'admin et le mode de démarrage changent entre lignes
    majeures ; tester l'import du realm sur une machine de test d'abord.
