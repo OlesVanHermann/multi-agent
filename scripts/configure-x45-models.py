@@ -12,7 +12,7 @@ ROLE_DEFAULTS = {
     "master": ("100", "fable-5", "login3a", "H"),
     "contradictor": ("200", "gpt-5-6-sol", "login3a", "H"),
     "developer": ("300", "gpt-5-6-sol", "login1a", "H"),
-    "observer": ("500", "fable-5", "login2a", "H"),
+    "observer": ("500", "fable-5", "login1a", "H"),
     "curator": ("700", "fable-5", "login4a", "H"),
     "coach": ("800", "gpt-5-6-sol", "login2a", "H"),
     "architect": ("900", "fable-5", "login4a", "H"),

@@ -202,7 +202,8 @@ cohérence globale et évite les doublons ou les zones sans propriétaire.
 | Rôles | Login | Effort |
 |---|---|---|
 | Developer ou principal mono | `login1a` | `H` |
-| Observer + Coach | `login2a` | `H` |
+| Observer | `login1a` | `H` |
+| Coach | `login2a` | `H` |
 | Master + Contradictor | `login3a` | `H` |
 | Curator + Architect | `login4a` | `H` |
 
