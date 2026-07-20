@@ -83,3 +83,8 @@ def test_isolated_unmarked_developer_is_not_treated_as_triangle(tmp_path):
     directory.mkdir()
     (directory / "300-300-system.md").write_text("# Developer isolé\n")
     assert MIGRATOR.plan(base) == ([], [])
+
+
+def test_released_prompt_topologies_are_already_migrated():
+    """Un clone neuf v3.2 ne doit dépendre d'aucune passe d'upgrade."""
+    assert MIGRATOR.plan(ROOT) == ([], [])
