@@ -166,6 +166,21 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   // Sync mutex: prevent concurrent syncs that interleave in tmux
   const syncInFlightRef = useRef(false)
   const pendingSyncValueRef = useRef(null)
+  const syncIdleWaitersRef = useRef([])
+  const submitInFlightRef = useRef(false)
+
+  const notifySyncIdle = () => {
+    if (syncInFlightRef.current || pendingSyncValueRef.current !== null) return
+    const waiters = syncIdleWaitersRef.current.splice(0)
+    waiters.forEach(resolve => resolve())
+  }
+
+  const waitForSyncIdle = () => {
+    if (!syncInFlightRef.current && pendingSyncValueRef.current === null) {
+      return Promise.resolve()
+    }
+    return new Promise(resolve => syncIdleWaitersRef.current.push(resolve))
+  }
 
   const doSyncToTmux = async (value) => {
     if (syncInFlightRef.current) {
@@ -196,11 +211,12 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       const pending = pendingSyncValueRef.current
       if (pending !== null && pending !== value) {
         pendingSyncValueRef.current = null
-        doSyncToTmux(pending)
+        await doSyncToTmux(pending)
       } else {
         pendingSyncValueRef.current = null
         setSyncing(false)
       }
+      notifySyncIdle()
     }
   }
 
@@ -236,7 +252,10 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
 
   // Handle submit
   const handleSubmit = async () => {
-    if (sending) return
+    // `sending` est un state React et ne change qu'au prochain rendu. Le ref
+    // ferme immédiatement la fenêtre où deux événements Enter peuvent passer.
+    if (submitInFlightRef.current) return
+    submitInFlightRef.current = true
 
     setSending(true)
     lastSubmitRef.current = Date.now()
@@ -248,6 +267,10 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
     }
 
     try {
+      // Une synchronisation debounce déjà partie ne peut plus être annulée.
+      // Attendre sa fin avant le C-u + collage atomique empêche son delta
+      // retardé de réajouter le début du prompt après la soumission.
+      await waitForSyncIdle()
       const message = input.trim()
       if (message) {
         log.action('submit', { agentId, len: message.length })
@@ -272,6 +295,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       console.error('Submit error:', err)
       alert(`Envoi impossible : ${err.message}`)
     } finally {
+      submitInFlightRef.current = false
       setSending(false)
       requestAnimationFrame(() => {
         if (inputRef.current) {
