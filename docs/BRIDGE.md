@@ -246,6 +246,13 @@ Le scheduler (`scripts/crontab-scheduler.py`, session tmux
   il part immédiatement.
 - `{profil}.suspended` dans `keepalive/` exclut un profil du sweep ;
   `LOGIN_DIR` change le répertoire des profils.
+- Le sweep arrête les anciennes sessions keepalive
+  `A-agent-002-{claude|codex}N[a-z]` avant d'utiliser les sessions canoniques
+  `agent-002-*`. Il ne touche pas aux autres sessions historiques.
+- Deux profils portant le même refresh token sont marqués
+  `cloned_refresh_token` et ne sont pas utilisés. Réauthentifier chaque profil
+  séparément, puis relancer explicitement :
+  `python3 scripts/crontab-scheduler.py --keepalive-sweep-once`.
 - L'ancien round-robin `/status` (10 min) est désactivé par défaut ;
   `MA_KEEPALIVE_RR_MIN=10` le réactive.
 

@@ -3,6 +3,7 @@
 import importlib.util
 import asyncio
 import json
+from types import SimpleNamespace
 from pathlib import Path
 
 
@@ -122,6 +123,42 @@ def test_keepalive_start_is_verified_after_spawn():
     assert "await asyncio.sleep(2)" in start
     assert start.count('["tmux", "has-session", "-t", session]') >= 2
     assert "morte au lancement" in start
+
+
+def test_cloned_refresh_tokens_are_detected_without_exposing_secret(tmp_path, monkeypatch):
+    scheduler = _load_scheduler()
+    monkeypatch.setattr(scheduler, "LOGIN_DIR", str(tmp_path))
+    for profile in ("codex1a", "codex2a"):
+        directory = tmp_path / profile
+        directory.mkdir()
+        (directory / "auth.json").write_text(json.dumps({
+            "tokens": {"refresh_token": "same-secret-token"}
+        }))
+    assert scheduler._cloned_refresh_token_profiles(["codex1a", "codex2a"]) == {
+        "codex1a", "codex2a"
+    }
+    fingerprint = scheduler._refresh_token_fingerprint("codex1a")
+    assert fingerprint and "same-secret-token" not in fingerprint
+
+
+def test_cleanup_targets_only_legacy_keepalive_sessions(monkeypatch):
+    scheduler = _load_scheduler()
+    calls = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        if command[:2] == ["tmux", "list-sessions"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=("A-agent-002-codex1a\nA-agent-300\n"
+                        "agent-002-codex1a\nA-agent-002-invalid\n"),
+            )
+        return SimpleNamespace(returncode=0, stdout="")
+
+    monkeypatch.setattr(scheduler.subprocess, "run", fake_run)
+    assert scheduler._cleanup_legacy_keepalive_sessions() == ["A-agent-002-codex1a"]
+    assert ["tmux", "kill-session", "-t", "=A-agent-002-codex1a"] in calls
+    assert ["tmux", "kill-session", "-t", "=A-agent-300"] not in calls
 
 
 def test_systemd_path_is_portable():

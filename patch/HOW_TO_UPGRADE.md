@@ -250,6 +250,29 @@ Le résultat normal est `updated=0`. Opt-out d'urgence :
 MA_SKIP_PROMPT_REBALANCE=1 ./patch/upgrade.sh
 ```
 
+### Authentifications clonées et anciennes sessions keepalive
+
+Après migration depuis une version préfixée, ne pas conserver en parallèle les
+anciennes sessions keepalive `A-agent-002-*` et les nouvelles `agent-002-*`.
+Le sweep v3.2.1 arrête uniquement les anciennes sessions keepalive reconnues.
+
+Chaque profil doit être authentifié séparément. Copier un répertoire de profil
+copie aussi son refresh token : le sweep détecte alors l'empreinte commune,
+marque les profils `cloned_refresh_token` et refuse de les utiliser. Sans
+démarrer l'infrastructure ni les agents, réauthentifier chaque compte concerné,
+puis lancer une seule passe explicite :
+
+```bash
+CODEX_HOME="$PWD/login/codex1a" codex logout
+CODEX_HOME="$PWD/login/codex1a" codex login  # Sign in with ChatGPT
+# Répéter séparément pour chaque profil concerné.
+python3 scripts/crontab-scheduler.py --keepalive-sweep-once
+```
+
+Le sweep nettoie les anciennes sessions keepalive, vérifie l'unicité des
+refresh tokens sans jamais les afficher et écrit son diagnostic dans
+`keepalive/sweep_report.json`.
+
 ---
 
 ## Migration v3.0.x → v3.1.x : Claude Code + Codex CLI

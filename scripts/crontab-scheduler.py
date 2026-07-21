@@ -22,6 +22,7 @@ import sys
 import json
 import time
 import glob
+import hashlib
 import subprocess
 import threading
 import concurrent.futures
@@ -274,6 +275,75 @@ _sweep_thread = None
 # artefact Claude Code — le chercher sur un profil codex marquait TOUS les
 # profils codex `no_credentials`, même authentifiés (auth.json présent).
 ENGINE_CRED_FILE = {"claude": ".credentials.json", "codex": "auth.json"}
+
+
+def _refresh_token_fingerprint(profile):
+    """Empreinte non réversible du refresh token, jamais le secret lui-même."""
+    engine = _profile_engine(profile)
+    cred_name = ENGINE_CRED_FILE.get(engine)
+    if not cred_name:
+        return None
+    path = Path(LOGIN_DIR) / profile / cred_name
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError, TypeError):
+        return None
+
+    def find_refresh(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                normalized = re.sub(r"[^a-z]", "", str(key).lower())
+                if normalized == "refreshtoken" and isinstance(child, str) and child:
+                    return child
+                found = find_refresh(child)
+                if found:
+                    return found
+        elif isinstance(value, list):
+            for child in value:
+                found = find_refresh(child)
+                if found:
+                    return found
+        return None
+
+    token = find_refresh(data)
+    return hashlib.sha256(token.encode()).hexdigest() if token else None
+
+
+def _cloned_refresh_token_profiles(profiles):
+    by_fingerprint = {}
+    for profile in profiles:
+        fingerprint = _refresh_token_fingerprint(profile)
+        if fingerprint:
+            by_fingerprint.setdefault(fingerprint, []).append(profile)
+    return {
+        profile
+        for group in by_fingerprint.values() if len(group) > 1
+        for profile in group
+    }
+
+
+def _cleanup_legacy_keepalive_sessions():
+    """Arrête uniquement les anciennes sessions keepalive A-agent-002-* ."""
+    try:
+        listed = subprocess.run(
+            ["tmux", "list-sessions", "-F", "#{session_name}"],
+            capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if listed.returncode != 0:
+        return []
+    pattern = re.compile(r"^A-agent-002-(?:claude|codex)\d[a-z]$")
+    legacy = [name for name in listed.stdout.splitlines() if pattern.fullmatch(name)]
+    stopped = []
+    for session in legacy:
+        result = subprocess.run(
+            ["tmux", "kill-session", "-t", f"={session}"],
+            capture_output=True, timeout=5
+        )
+        if result.returncode == 0:
+            stopped.append(session)
+    return stopped
 
 
 def _parse_status_info(text, engine):
@@ -727,6 +797,11 @@ def _sweep_profile(profile):
 def _run_sweep():
     """Sequential sweep over all login/<moteur>N[a-z] profiles (E1)."""
     report = {"started": int(time.time()), "profiles": {}}
+    stopped = _cleanup_legacy_keepalive_sessions()
+    report["legacy_sessions_stopped"] = stopped
+    if stopped:
+        print(f"{time.strftime('%H:%M:%S')} KEEPALIVE anciennes sessions arrêtées: "
+              + ", ".join(stopped))
     try:
         profiles = sorted(
             d for d in os.listdir(LOGIN_DIR)
@@ -737,8 +812,20 @@ def _run_sweep():
     except OSError as e:
         print(f"{time.strftime('%H:%M:%S')} KEEPALIVE sweep: login dir error: {e}")
         return
+    cloned = _cloned_refresh_token_profiles(profiles)
+    if cloned:
+        print(f"{time.strftime('%H:%M:%S')} KEEPALIVE profils avec refresh token cloné: "
+              + ", ".join(sorted(cloned)))
     print(f"{time.strftime('%H:%M:%S')} KEEPALIVE sweep start: {', '.join(profiles) or 'aucun profil'}")
     for profile in profiles:
+        if profile in cloned:
+            result = {
+                "profile": profile, "status": "cloned_refresh_token",
+                "ts": int(time.time())}
+            report["profiles"][profile] = result
+            with open(os.path.join(KEEPALIVE_DIR, f"usage_{profile}.json"), "w") as f:
+                json.dump({**result, "bars": [], "last_scan": result["ts"]}, f, indent=2)
+            continue
         try:
             res = _sweep_profile(profile)
         except Exception as e:
@@ -927,6 +1014,11 @@ def main():
         sys.stdout.reconfigure(line_buffering=True)
     except Exception:
         pass
+    if "--keepalive-sweep-once" in sys.argv[1:]:
+        os.makedirs(KEEPALIVE_DIR, exist_ok=True)
+        _run_sweep()
+        return
+
     print(f"Starting scheduler (tick={TICK_INTERVAL}s, dir={CRONTAB_DIR})")
     print(f"Keepalive dir: {KEEPALIVE_DIR}")
     print(f"Redis: {REDIS_HOST}:{REDIS_PORT}")
