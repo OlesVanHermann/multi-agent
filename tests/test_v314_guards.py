@@ -93,10 +93,12 @@ def test_reference_profile_json_stays_valid():
 
 
 def test_web_submit_sends_enter_once_without_capture_retry():
-    """Le scrollback tmux ne doit jamais declencher une seconde soumission."""
+    """Chaque chemin exclusif valide une fois, sans retry via le scrollback."""
     agents = (ROOT / "web/backend/multi_agent/routers/agents.py").read_text()
     submit = agents.split("if data.submit:", 1)[1].split("else:", 1)[0]
-    assert submit.count('"Enter"') == 1
+    synced, atomic = submit.split("# Soumission atomique", 1)
+    assert synced.count('"Enter"') == 1
+    assert atomic.count('"Enter"') == 1
     assert '"capture-pane"' not in submit
 
 
