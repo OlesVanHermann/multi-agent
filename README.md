@@ -1,4 +1,4 @@
-# Multi-Agent System v3.2.1
+# Multi-Agent System v3.2.2
 
 La ligne 3.2 étend la preuve exécutable aux boucles x45/z21 : contrats pour
 livrables non testables, gate de méthodologie, apprentissage delta, ablations,
@@ -339,4 +339,4 @@ MIT - voir [LICENSE](LICENSE)
 
 ---
 
-*Multi-Agent System v3.2.1 - 2026*
+*Multi-Agent System v3.2.2 - 2026*
