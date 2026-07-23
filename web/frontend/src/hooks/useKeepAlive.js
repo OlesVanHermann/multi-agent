@@ -50,7 +50,15 @@ export function useKeepAlive(show) {
     } catch (err) { console.error('usage fetch:', err) }
   }
 
-  useEffect(() => { if (show) fetchKeepAlive() }, [show])
+  useEffect(() => {
+    if (!show) return undefined
+    // Les logins peuvent etre renouveles hors du dashboard (`codexXa login`).
+    // Sans relecture, la carte conservait alors l'ancien compte tandis que le
+    // terminal keepalive affichait deja le nouveau via `/status`.
+    fetchKeepAlive()
+    const refresh = setInterval(fetchKeepAlive, 15000)
+    return () => clearInterval(refresh)
+  }, [show])
 
   const kaStart = async (profile) => {
     log.action('keepalive-start', { profile })

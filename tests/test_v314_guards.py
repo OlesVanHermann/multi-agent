@@ -92,6 +92,14 @@ def test_reference_profile_json_stays_valid():
         json.loads(path.read_text())
 
 
+def test_web_submit_sends_enter_once_without_capture_retry():
+    """Le scrollback tmux ne doit jamais declencher une seconde soumission."""
+    agents = (ROOT / "web/backend/multi_agent/routers/agents.py").read_text()
+    submit = agents.split("if data.submit:", 1)[1].split("else:", 1)[0]
+    assert submit.count('"Enter"') == 1
+    assert '"capture-pane"' not in submit
+
+
 def test_backend_never_spawns_first_tmux_server():
     """La garde teste le SOCKET, jamais `tmux has-session` nu : TOUTE commande
     tmux (has-session comprise) crée le socket ET le serveur — une garde à

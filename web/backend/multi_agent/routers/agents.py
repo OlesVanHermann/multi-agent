@@ -452,24 +452,11 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
             )
             await asyncio.sleep(0.75)
             await _run_subprocess(["tmux", "send-keys", "-t", target, "Enter"], check=True)
-
-            tail = " ".join(text.splitlines()[-2:]).strip()
-            snippet = tail[-16:]
-            for delay in (0.75, 1.5, 3.0):
-                if not snippet:
-                    break
-                await asyncio.sleep(delay)
-                try:
-                    pane = (await _run_subprocess(
-                        ["tmux", "capture-pane", "-t", target, "-p"], text=True,
-                    )).stdout
-                except Exception:
-                    break
-                if snippet not in pane:
-                    break
-                await _run_subprocess(
-                    ["tmux", "send-keys", "-t", target, "Enter"], check=True
-                )
+            # Un seul Enter par requete HTTP. Le prompt soumis reste visible
+            # dans l'historique du pane : le rechercher via capture-pane ne
+            # permet donc pas de savoir s'il est encore dans le compositeur et
+            # provoquait des Enter supplementaires (lignes vides, voire une
+            # resoumission selon le TUI).
             _log_prompt_history(agent_id, data.text)
         else:
             # Incremental diff: only send backspaces + new chars
