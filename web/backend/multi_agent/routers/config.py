@@ -46,6 +46,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _archive_keepalive_marker(path: Path) -> None:
+    """Archive un marqueur opposé sans suppression définitive."""
+    if not path.exists():
+        return
+    removed_dir = cfg.BASE_DIR / "removed"
+    removed_dir.mkdir(exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    destination = removed_dir / f"{stamp}_{path.name}"
+    suffix = 1
+    while destination.exists():
+        destination = removed_dir / f"{stamp}_{suffix}_{path.name}"
+        suffix += 1
+    path.rename(destination)
+
+
 def _inherits_global(prompts_dir: Path, agent_id: str, ext: str) -> bool:
     """True si l'agent n'a ni override propre ni override de groupe."""
     own = _find_agent_config(prompts_dir, agent_id, ext)
@@ -871,6 +886,7 @@ async def start_keepalive(data: dict):
     # Create keepalive file
     cfg.KEEPALIVE_DIR.mkdir(parents=True, exist_ok=True)
     keepalive_file = cfg.KEEPALIVE_DIR / f"{profile}.active"
+    _archive_keepalive_marker(cfg.KEEPALIVE_DIR / f"{profile}.suspended")
     if not keepalive_file.exists():
         keepalive_file.write_text("toujours en vie ?\n")
 
@@ -891,6 +907,7 @@ async def stop_keepalive(data: dict):
     active = cfg.KEEPALIVE_DIR / f"{profile}.active"
     suspended = cfg.KEEPALIVE_DIR / f"{profile}.suspended"
     if active.exists():
+        _archive_keepalive_marker(suspended)
         active.rename(suspended)
 
     return {"status": "stopped"}
@@ -904,9 +921,14 @@ async def probe_keepalive(data: dict):
         raise HTTPException(status_code=400, detail="invalid profile")
 
     info_file = cfg.KEEPALIVE_DIR / f"info_{profile}.json"
+    expected_session = f"agent-002-{profile}"
     if info_file.exists():
         try:
             info = json.loads(info_file.read_text())
+            # Les fichiers antérieurs à la migration ne portent aucune
+            # provenance, et peuvent venir d'une session A-agent-* disparue.
+            if info.get("source_session") != expected_session:
+                info = {}
         except Exception:
             info = {}
     else:

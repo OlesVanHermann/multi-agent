@@ -26,6 +26,9 @@ function KeepAliveSplit({ keepAlive, focused, pollInterval }) {
               const ki = keepAliveInfo[e.profile]
               const usage = keepAliveUsage[e.profile]
               const bars = usage?.bars || []
+              const scanAge = usage?.last_scan
+                ? Math.max(0, Math.floor(Date.now() / 1000 - usage.last_scan))
+                : null
               return (
               <React.Fragment key={e.profile}>
               <tr>
@@ -50,7 +53,7 @@ function KeepAliveSplit({ keepAlive, focused, pollInterval }) {
                 <td></td>
                 <td colSpan="5">
                   {bars.length > 0 ? (
-                    <span className="lm-usage-bars">
+                    <><span className="lm-usage-bars">
                       {bars.map((b, i) => (
                         <span key={i} className="lm-usage-bar" title={`${b.label}: ${b.percent}% — resets ${b.resets || ''}`}>
                           <span className="lm-usage-bar-fill" style={{
@@ -60,9 +63,13 @@ function KeepAliveSplit({ keepAlive, focused, pollInterval }) {
                           <span className="lm-usage-bar-text">{b.percent}%</span>
                         </span>
                       ))}
-                    </span>
+                    </span><span className="ka-scan-age" title="Âge de la dernière mesure de cette session">
+                      {scanAge === null ? '' : scanAge < 60 ? `il y a ${scanAge}s` : `il y a ${Math.floor(scanAge / 60)}min`}
+                    </span></>
                   ) : (
-                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.6rem', fontStyle: 'italic' }}>pas de données usage</span>
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.6rem', fontStyle: 'italic' }}>
+                      {e.running ? 'pas de données usage pour cette session' : 'session arrêtée — données historiques masquées'}
+                    </span>
                   )}
                 </td>
               </tr>

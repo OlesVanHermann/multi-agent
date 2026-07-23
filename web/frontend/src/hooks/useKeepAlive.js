@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { api } from '../basePath'
 import { createLogger } from '../lib/logger'
 
@@ -20,45 +20,51 @@ export function useKeepAlive(show) {
       })
       if (res.ok) {
         const data = await res.json()
-        setKeepAliveInfo(prev => ({ ...prev, [profile]: data.info }))
+        return data.info || {}
       }
     } catch (err) { console.error('probe:', err) }
+    return {}
   }
 
-  const fetchKeepAlive = async () => {
+  const fetchKeepAlive = useCallback(async () => {
+    let entries = []
+    let profiles = {}
     try {
       const res = await fetch(api('api/config/keepalive'))
       const data = await res.json()
-      const entries = data.entries || []
+      entries = data.entries || []
       setKeepAliveEntries(entries)
-      for (const e of entries) {
-        if (e.running) kaProbe(e.profile)
-      }
     } catch (err) { console.error('keepalive fetch:', err) }
-    // Also fetch usage bars
+
     try {
       const res = await fetch(api('api/usage'))
       const data = await res.json()
-      const profiles = data.plan?.profiles || {}
-      setKeepAliveUsage(profiles)
-      // Also fill info from static files if not already probed
-      for (const [pname, pdata] of Object.entries(profiles)) {
-        if (pdata.info && !keepAliveInfo[pname]) {
-          setKeepAliveInfo(prev => ({ ...prev, [pname]: pdata.info }))
-        }
-      }
+      profiles = data.plan?.profiles || {}
     } catch (err) { console.error('usage fetch:', err) }
-  }
+
+    // Un snapshot complet remplace le précédent. Les caches disque d'une
+    // session arrêtée ne doivent jamais survivre dans l'état React.
+    const running = entries.filter(e => e.running)
+    const probed = await Promise.all(running.map(async e => [e.profile, await kaProbe(e.profile)]))
+    const nextInfo = Object.fromEntries(probed.filter(([, info]) => Object.keys(info).length))
+    const nextUsage = Object.fromEntries(
+      running
+        .filter(e => profiles[e.profile]?.bars?.length
+          && profiles[e.profile]?.source_session === `agent-002-${e.profile}`)
+        .map(e => [e.profile, profiles[e.profile]])
+    )
+    setKeepAliveInfo(nextInfo)
+    setKeepAliveUsage(nextUsage)
+  }, [])
 
   useEffect(() => {
     if (!show) return undefined
-    // Les logins peuvent etre renouveles hors du dashboard (`codexXa login`).
-    // Sans relecture, la carte conservait alors l'ancien compte tandis que le
-    // terminal keepalive affichait deja le nouveau via `/status`.
     fetchKeepAlive()
-    const refresh = setInterval(fetchKeepAlive, 15000)
-    return () => clearInterval(refresh)
-  }, [show])
+    // Les comptes peuvent être réauthentifiés hors dashboard. Rafraîchir les
+    // cartes sans conserver les anciens snapshots React.
+    const timer = window.setInterval(fetchKeepAlive, 15000)
+    return () => window.clearInterval(timer)
+  }, [show, fetchKeepAlive])
 
   const kaStart = async (profile) => {
     log.action('keepalive-start', { profile })

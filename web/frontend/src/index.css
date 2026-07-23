@@ -2033,6 +2033,13 @@ body {
   white-space: nowrap;
 }
 
+.ka-scan-age {
+  margin-left: 0.45rem;
+  color: var(--text-secondary);
+  font-size: 0.58rem;
+  white-space: nowrap;
+}
+
 .keepalive-table {
   table-layout: auto;
 }

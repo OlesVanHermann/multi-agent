@@ -752,6 +752,7 @@ def _sweep_profile(profile):
     if state != "ready":
         # Publie quand même l'état pour le dashboard (bars vides + status)
         usage_data = {"profile": profile, "bars": [], "status": state,
+                      "source_session": session,
                       "last_scan": int(time.time())}
         with open(os.path.join(KEEPALIVE_DIR, f"usage_{profile}.json"), "w") as f:
             json.dump(usage_data, f, indent=2)
@@ -779,9 +780,12 @@ def _sweep_profile(profile):
     result["bars"] = len(bars) if bars else 0
     if info:
         result["email"] = info.get("email", "")
+        info["source_session"] = session
+        info["last_scan"] = int(time.time())
         with open(os.path.join(KEEPALIVE_DIR, f"info_{profile}.json"), "w") as f:
             json.dump(info, f, indent=2)
     usage_data = {"profile": profile, "bars": bars or [], "info": info,
+                  "source_session": session,
                   "status": "ok" if bars else "no_bars",
                   "last_scan": int(time.time())}
     with open(os.path.join(KEEPALIVE_DIR, f"usage_{profile}.json"), "w") as f:
