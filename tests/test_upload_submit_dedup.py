@@ -41,3 +41,15 @@ def test_atomic_fallback_has_no_pane_retry():
 
     assert fallback.count('"Enter"') == 1
     assert "capture-pane" not in fallback
+
+
+def test_submit_clears_optimistically_and_restores_on_failure():
+    source = TERMINAL.read_text(encoding="utf-8")
+    submit = source[source.index("const handleSubmit"):source.index("const handleKeyDown")]
+
+    clear_at = submit.index("setInput('')")
+    fetch_at = submit.index("await fetch(")
+    catch_at = submit.index("} catch (err)")
+    restore_at = submit.index("setInput(submittedDraft)")
+    assert clear_at < fetch_at < catch_at < restore_at
+    assert "inputValueRef.current === ''" in submit

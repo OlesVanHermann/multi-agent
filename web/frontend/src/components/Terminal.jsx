@@ -258,6 +258,8 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
 
     setSending(true)
     lastSubmitRef.current = Date.now()
+    let submittedDraft = null
+    let submittedPrevious = ''
 
     if (syncTimeoutRef.current) {
       clearTimeout(syncTimeoutRef.current)
@@ -273,13 +275,20 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       const message = input.trim()
       if (message) {
         log.action('submit', { agentId, len: message.length })
-        const alreadySynced = message === lastSentInput.current.trim()
+        submittedDraft = input
+        submittedPrevious = lastSentInput.current
+        const alreadySynced = message === submittedPrevious.trim()
+        // Effacement optimiste : l'utilisateur voit immédiatement que Enter a
+        // été pris en compte. En cas d'échec, le catch restaure le brouillon
+        // seulement si aucune nouvelle saisie ne l'a remplacé entre-temps.
+        setInput('')
+        inputValueRef.current = ''
         const res = await fetch(api(`api/agent/${agentId}/input`), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             text: message,
-            previous: lastSentInput.current,
+            previous: submittedPrevious,
             submit: true,
             already_synced: alreadySynced,
           })
@@ -293,11 +302,14 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
         log.action('enter', { agentId })
         await sendKeys('Enter')
       }
-      setInput('')
-      inputValueRef.current = ''
       lastSentInput.current = ''
     } catch (err) {
       console.error('Submit error:', err)
+      if (submittedDraft !== null && inputValueRef.current === '') {
+        setInput(submittedDraft)
+        inputValueRef.current = submittedDraft
+        lastSentInput.current = submittedPrevious
+      }
       alert(`Envoi impossible : ${err.message}`)
     } finally {
       submitInFlightRef.current = false
