@@ -25,10 +25,6 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   const fileRef = useRef(null)
   const lastSentInput = useRef('')
   const syncTimeoutRef = useRef(null)
-  // Le composer web reste local jusqu'à Submit. Pré-injecter un préfixe dans
-  // le TUI puis recoller le prompt complet duplique ce préfixe lorsque Ctrl-U
-  // ne vide pas totalement un composer Claude replié ou mis en queue.
-  const deferSyncUntilSubmitRef = useRef(true)
 
   // Scroll/pause refs
   const userScrolledRef = useRef(false)
@@ -107,7 +103,6 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       setInput('')
       inputValueRef.current = ''
       lastSentInput.current = ''
-      deferSyncUntilSubmitRef.current = true
       lastLocalEditRef.current = 0
       lastSubmitRef.current = 0
       userScrolledRef.current = false
@@ -147,7 +142,6 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       }
     },
     onInputSync: (tmuxInput) => {
-      if (deferSyncUntilSubmitRef.current) return
       const now = Date.now()
       if (now - lastLocalEditRef.current < 800) return
       if (now - lastSubmitRef.current < 3000) return
@@ -189,11 +183,6 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   }
 
   const doSyncToTmux = async (value) => {
-    if (deferSyncUntilSubmitRef.current) {
-      setSyncing(false)
-      notifySyncIdle()
-      return
-    }
     if (syncInFlightRef.current) {
       pendingSyncValueRef.current = value
       return
@@ -231,7 +220,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
     }
   }
 
-  // Handle input change locally; tmux receives the complete value on Submit.
+  // Handle input change and mirror it interactively into tmux.
   const handleInputChange = (e) => {
     const newValue = e.target.value
     setInput(newValue)
@@ -239,8 +228,10 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
     lastLocalEditRef.current = Date.now()
 
     if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
-    syncTimeoutRef.current = null
-    setSyncing(false)
+    setSyncing(true)
+    syncTimeoutRef.current = setTimeout(() => {
+      doSyncToTmux(newValue)
+    }, 150)
   }
 
   // Send raw tmux keys
@@ -282,10 +273,16 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       const message = input.trim()
       if (message) {
         log.action('submit', { agentId, len: message.length })
+        const alreadySynced = message === lastSentInput.current.trim()
         const res = await fetch(api(`api/agent/${agentId}/input`), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: message, previous: lastSentInput.current, submit: true })
+          body: JSON.stringify({
+            text: message,
+            previous: lastSentInput.current,
+            submit: true,
+            already_synced: alreadySynced,
+          })
         })
         if (!res.ok) {
           const data = await res.json().catch(() => ({}))
@@ -299,7 +296,6 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       setInput('')
       inputValueRef.current = ''
       lastSentInput.current = ''
-      deferSyncUntilSubmitRef.current = true
     } catch (err) {
       console.error('Submit error:', err)
       alert(`Envoi impossible : ${err.message}`)
@@ -378,18 +374,12 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       }
       if (paths) {
         log.action('upload', { agentId, fileCount: files.length })
-        // À partir du premier upload, ne plus co-éditer ce composer dans tmux :
-        // le chemin serait interprété avant la soumission puis recollé une
-        // seconde fois par handleSubmit.
-        deferSyncUntilSubmitRef.current = true
-        if (syncTimeoutRef.current) {
-          clearTimeout(syncTimeoutRef.current)
-          syncTimeoutRef.current = null
-        }
         setInput(prev => prev + paths)
         inputValueRef.current += paths
         lastLocalEditRef.current = Date.now()
-        setSyncing(false)
+        setSyncing(true)
+        if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
+        syncTimeoutRef.current = setTimeout(() => doSyncToTmux(inputValueRef.current), 150)
       }
     } catch (err) {
       log.error('upload failed', { agentId, error: err.message })

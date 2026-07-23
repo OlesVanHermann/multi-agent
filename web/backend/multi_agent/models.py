@@ -71,6 +71,7 @@ class UpdateInput(BaseModel):
     text: str
     previous: str = ""
     submit: bool = False
+    already_synced: bool = False
 
 
 class SendKeys(BaseModel):

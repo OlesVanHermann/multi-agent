@@ -436,6 +436,20 @@ async def update_agent_input(agent_id: str, data: UpdateInput):
             raise HTTPException(status_code=404, detail=f"Agent {agent_id} session not found")
 
         if data.submit:
+            if data.already_synced:
+                # Le composer interactif contient déjà exactement ce texte :
+                # le recoller créerait un doublon. Une seule validation suffit.
+                await _run_subprocess(
+                    ["tmux", "send-keys", "-t", target, "Enter"], check=True
+                )
+                _log_prompt_history(agent_id, data.text)
+                return {
+                    "status": "updated",
+                    "agent_id": agent_id,
+                    "text": data.text,
+                    "submitted": True,
+                    "timestamp": int(time.time()),
+                }
             # Soumission atomique : ne pas dependre d'une co-edition encore en
             # vol. Le bracketed-paste preserve les prompts Markdown longs et la
             # pause separe l'Enter de la rafale de collage detectee par Codex.
