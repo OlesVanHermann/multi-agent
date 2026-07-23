@@ -25,6 +25,10 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   const fileRef = useRef(null)
   const lastSentInput = useRef('')
   const syncTimeoutRef = useRef(null)
+  // Un chemin uploadé doit arriver une seule fois au TUI, lors de la
+  // soumission atomique. Une co-édition préalable peut déjà le transformer en
+  // pièce jointe ; recoller ensuite le prompt complet dupliquerait l'image.
+  const deferSyncUntilSubmitRef = useRef(false)
 
   // Scroll/pause refs
   const userScrolledRef = useRef(false)
@@ -103,6 +107,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       setInput('')
       inputValueRef.current = ''
       lastSentInput.current = ''
+      deferSyncUntilSubmitRef.current = false
       lastLocalEditRef.current = 0
       lastSubmitRef.current = 0
       userScrolledRef.current = false
@@ -142,6 +147,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       }
     },
     onInputSync: (tmuxInput) => {
+      if (deferSyncUntilSubmitRef.current) return
       const now = Date.now()
       if (now - lastLocalEditRef.current < 800) return
       if (now - lastSubmitRef.current < 3000) return
@@ -183,6 +189,11 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   }
 
   const doSyncToTmux = async (value) => {
+    if (deferSyncUntilSubmitRef.current) {
+      setSyncing(false)
+      notifySyncIdle()
+      return
+    }
     if (syncInFlightRef.current) {
       pendingSyncValueRef.current = value
       return
@@ -291,6 +302,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       setInput('')
       inputValueRef.current = ''
       lastSentInput.current = ''
+      deferSyncUntilSubmitRef.current = false
     } catch (err) {
       console.error('Submit error:', err)
       alert(`Envoi impossible : ${err.message}`)
@@ -369,12 +381,18 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       }
       if (paths) {
         log.action('upload', { agentId, fileCount: files.length })
+        // À partir du premier upload, ne plus co-éditer ce composer dans tmux :
+        // le chemin serait interprété avant la soumission puis recollé une
+        // seconde fois par handleSubmit.
+        deferSyncUntilSubmitRef.current = true
+        if (syncTimeoutRef.current) {
+          clearTimeout(syncTimeoutRef.current)
+          syncTimeoutRef.current = null
+        }
         setInput(prev => prev + paths)
         inputValueRef.current += paths
         lastLocalEditRef.current = Date.now()
-        setSyncing(true)
-        if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
-        syncTimeoutRef.current = setTimeout(() => doSyncToTmux(inputValueRef.current), 150)
+        setSyncing(false)
       }
     } catch (err) {
       log.error('upload failed', { agentId, error: err.message })
