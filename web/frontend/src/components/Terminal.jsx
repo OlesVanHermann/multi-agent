@@ -25,10 +25,10 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
   const fileRef = useRef(null)
   const lastSentInput = useRef('')
   const syncTimeoutRef = useRef(null)
-  // Un chemin uploadé doit arriver une seule fois au TUI, lors de la
-  // soumission atomique. Une co-édition préalable peut déjà le transformer en
-  // pièce jointe ; recoller ensuite le prompt complet dupliquerait l'image.
-  const deferSyncUntilSubmitRef = useRef(false)
+  // Le composer web reste local jusqu'à Submit. Pré-injecter un préfixe dans
+  // le TUI puis recoller le prompt complet duplique ce préfixe lorsque Ctrl-U
+  // ne vide pas totalement un composer Claude replié ou mis en queue.
+  const deferSyncUntilSubmitRef = useRef(true)
 
   // Scroll/pause refs
   const userScrolledRef = useRef(false)
@@ -107,7 +107,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       setInput('')
       inputValueRef.current = ''
       lastSentInput.current = ''
-      deferSyncUntilSubmitRef.current = false
+      deferSyncUntilSubmitRef.current = true
       lastLocalEditRef.current = 0
       lastSubmitRef.current = 0
       userScrolledRef.current = false
@@ -231,19 +231,16 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
     }
   }
 
-  // Handle input change - sync to tmux with debounce
+  // Handle input change locally; tmux receives the complete value on Submit.
   const handleInputChange = (e) => {
     const newValue = e.target.value
     setInput(newValue)
     inputValueRef.current = newValue
-    setSyncing(true)
     lastLocalEditRef.current = Date.now()
 
     if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
-
-    syncTimeoutRef.current = setTimeout(() => {
-      doSyncToTmux(newValue)
-    }, 150)
+    syncTimeoutRef.current = null
+    setSyncing(false)
   }
 
   // Send raw tmux keys
@@ -302,7 +299,7 @@ function Terminal({ agentId, focused, pollInterval = 1.0 }) {
       setInput('')
       inputValueRef.current = ''
       lastSentInput.current = ''
-      deferSyncUntilSubmitRef.current = false
+      deferSyncUntilSubmitRef.current = true
     } catch (err) {
       console.error('Submit error:', err)
       alert(`Envoi impossible : ${err.message}`)

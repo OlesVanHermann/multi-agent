@@ -16,6 +16,15 @@ def test_uploaded_path_is_deferred_until_atomic_submit():
     assert "setTimeout(() => doSyncToTmux" not in upload
 
 
+def test_all_web_typing_stays_local_until_atomic_submit():
+    source = TERMINAL.read_text(encoding="utf-8")
+    change = source[source.index("const handleInputChange"):source.index("// Send raw tmux keys")]
+
+    assert "doSyncToTmux" not in change
+    assert "setTimeout" not in change
+    assert "deferSyncUntilSubmitRef = useRef(true)" in source
+
+
 def test_web_submit_sends_exactly_one_enter_without_pane_retry():
     source = AGENTS.read_text(encoding="utf-8")
     submit = source[source.index("if data.submit:"):source.index("else:", source.index("if data.submit:"))]
