@@ -139,7 +139,7 @@ engine_apply_model_effort() {
     # Le dashboard affiche H quand aucun fichier .effort n'existe. Le moteur
     # doit utiliser le même défaut, sinon Codex tombait silencieusement sur M
     # (high) tandis que l'interface annonçait H (xhigh / Extra high).
-    local session="$1" cli="$2" model="$3" effort="${4:-H}"
+    local session="$1" cli="$2" model="$3" effort="${4:-M}"
     local target="${session}:0.0"
     case "$cli" in
         claude)

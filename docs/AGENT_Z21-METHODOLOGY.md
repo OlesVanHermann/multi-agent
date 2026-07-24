@@ -169,12 +169,12 @@ for id in {ID}-1{XX} {ID}-{ID} {ID}-5{XX} {ID}-7{XX} {ID}-8{XX} {ID}-9{XX}; do
 done
 
 # Model + Login
-ln -s ../fable-5.model {ID}-1{XX}.model     # Master = fable-5
-ln -s ../fable-5.model {ID}-{ID}.model      # Dev = fable-5
+ln -s ../gpt-5-6-sol.model {ID}-1{XX}.model # Master = gpt-5.6-sol
+ln -s ../opus-5.model {ID}-{ID}.model       # Dev = claude-opus-5
 ln -s ../sonnet-5.model {ID}-5{XX}.model    # Tester = sonnet-5
 ln -s ../sonnet-5.model {ID}-7{XX}.model    # Reviewer = sonnet-5
 ln -s ../sonnet-5.model {ID}-8{XX}.model    # Coach = sonnet-5
-ln -s ../fable-5.model {ID}-9{XX}.model     # Architect = fable-5
+ln -s ../gpt-5-6-sol.model {ID}-9{XX}.model # Architect = gpt-5.6-sol
 
 ln -s ../login1a.login {ID}-1{XX}.login
 ln -s ../login1a.login {ID}-{ID}.login

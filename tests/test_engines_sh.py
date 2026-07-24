@@ -155,17 +155,16 @@ class TestEffortCommand:
     def test_empty_effort_emits_nothing(self):
         assert sh('engine_effort_level codex ""', check_rc=True).stdout.strip() == ''
 
-    def test_apply_defaults_to_h_when_effort_file_is_absent(self):
-        """Le backend affiche H sans default.effort : la couche moteur doit
-        donc normaliser une valeur absente vers H, jamais vers M/high."""
+    def test_apply_defaults_to_m_when_effort_file_is_absent(self):
+        """Le backend affiche M sans default.effort : la couche moteur doit
+        donc normaliser une valeur absente vers M/high."""
         source = open(ENGINES_SH).read()
-        assert 'effort="${4:-H}"' in source
-        assert 'engine_codex_effort_digit "${effort:-M}"' not in source
+        assert 'effort="${4:-M}"' in source
         assert '"${lvl_digit:-4}"' in source
 
-    def test_fresh_clone_has_explicit_h_default(self):
+    def test_fresh_clone_has_explicit_m_default(self):
         path = os.path.join(BASE_DIR, 'prompts', 'default.effort')
-        assert open(path).read().strip() == 'H'
+        assert open(path).read().strip() == 'M'
 
     def test_apply_function_is_shared(self):
         """Une seule danse TUI, partagée par agent.sh, infra.sh et le backend."""

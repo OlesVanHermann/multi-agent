@@ -87,4 +87,4 @@ python3 scripts/scaffold-observers.py 345 \
   --contradictor-login login3a
 ```
 
-Le Contradictor utilise par défaut `gpt-5-6-sol`, `login3a` et l'effort `H`.
+Le Contradictor utilise par défaut `opus-5`, `login3a` et l'effort `M`.

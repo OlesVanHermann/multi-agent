@@ -146,24 +146,24 @@ cd ~/multi-agent/prompts
 ln -sf login1a.login default.login
 ```
 
-Le dépôt inclut déjà `default.model -> opus-4-8.model` (Claude Opus 4.8 par défaut).
+Le dépôt inclut déjà `default.model -> opus-5.model` (Claude Opus 5 par défaut).
 Pour utiliser un autre modèle, mettre à jour le symlink :
 
 ```bash
-# Modèles disponibles : fable-5, sonnet-5, opus-4-8, opus-4-7, opus-4-6, sonnet-4-6, sonnet-4-5, haiku-4-5
-ln -sf fable-5.model default.model      # → claude-fable-5
-# ou garder opus-4-8 (défaut)
+# Modèles disponibles : opus-5, gpt-5-6-sol, gpt-5-6-terra, gpt-5-6-luna,
+# sonnet-5, opus-4-8, opus-4-7, opus-4-6, sonnet-4-6, sonnet-4-5, haiku-4-5
+ln -sf opus-5.model default.model       # → claude-opus-5
 ```
 
-Convention par classe d'agents (x45/z21) : **fable-5** pour 1XX (masters),
-3XX (developers), 9XX (architects) et le dev `{ID}-{ID}` ; **sonnet-5** pour
-5XX (testers), 6XX (releasers), 7XX (reviewers), 8XX (coachs).
+Convention x45/z21 : les rôles auparavant sur `fable-5` utilisent
+`gpt-5-6-sol`; ceux auparavant sur `gpt-5-6-sol` utilisent `opus-5`.
+L'effort livré est `M`, et le Coach utilise désormais `login1a`.
 
 Vérifier :
 
 ```bash
 ls -la prompts/default.login prompts/default.model
-cat prompts/default.model    # → claude-opus-4-8  (ou le modèle choisi)
+cat prompts/default.model    # → claude-opus-5 (ou le modèle choisi)
 ```
 
 ---

@@ -201,10 +201,10 @@ cohérence globale et évite les doublons ou les zones sans propriétaire.
 
 | Rôles | Login | Effort |
 |---|---|---|
-| Developer ou principal mono | `login1a` | `H` |
-| Observer | `login1a` | `H` |
-| Coach | `login2a` | `H` |
-| Master + Contradictor | `login3a` | `H` |
-| Curator + Architect | `login4a` | `H` |
+| Developer ou principal mono | `login1a` | `M` |
+| Observer | `login1a` | `M` |
+| Coach | `login1a` | `M` |
+| Master + Contradictor | `login3a` | `M` |
+| Curator + Architect | `login4a` | `M` |
 
 Tous les profils utilisent le slot `a` par défaut.

@@ -9,13 +9,13 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent.parent
 
 ROLE_DEFAULTS = {
-    "master": ("100", "fable-5", "login3a", "H"),
-    "contradictor": ("200", "gpt-5-6-sol", "login3a", "H"),
-    "developer": ("300", "gpt-5-6-sol", "login1a", "H"),
-    "observer": ("500", "fable-5", "login1a", "H"),
-    "curator": ("700", "fable-5", "login4a", "H"),
-    "coach": ("800", "gpt-5-6-sol", "login2a", "H"),
-    "architect": ("900", "fable-5", "login4a", "H"),
+    "master": ("100", "gpt-5-6-sol", "login3a", "M"),
+    "contradictor": ("200", "opus-5", "login3a", "M"),
+    "developer": ("300", "opus-5", "login1a", "M"),
+    "observer": ("500", "gpt-5-6-sol", "login1a", "M"),
+    "curator": ("700", "gpt-5-6-sol", "login4a", "M"),
+    "coach": ("800", "opus-5", "login1a", "M"),
+    "architect": ("900", "gpt-5-6-sol", "login4a", "M"),
 }
 
 ROLE_BY_HUNDRED = {

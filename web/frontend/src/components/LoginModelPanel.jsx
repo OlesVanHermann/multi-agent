@@ -211,7 +211,7 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
                 {['L', 'M', 'H'].map(lvl => (
                   <button
                     key={lvl}
-                    className={`lm-effort-btn ${(default_effort || 'H') === lvl ? 'lm-effort-active' : ''}`}
+                    className={`lm-effort-btn ${(default_effort || 'M') === lvl ? 'lm-effort-active' : ''}`}
                     onClick={() => handleEffort('default', lvl)}
                   >{lvl}</button>
                 ))}

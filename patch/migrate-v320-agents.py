@@ -107,7 +107,7 @@ def apply(base, actions):
         if kind == "mono":
             main_suffix, contra_suffix = mono.default_suffixes(prefix)
             mono.scaffold(base, prefix, main_suffix, contra_suffix, directory_name,
-                          "gpt-5-6-sol", "codex3a", "fable-5", "login1a")
+                          "opus-5", "login3a", "gpt-5-6-sol", "login1a")
             completed.append(f"{directory_name}: mono -> {prefix}-{main_suffix}+{prefix}-{contra_suffix}")
         else:
             observers.scaffold(base, prefix, directory_name, "codex3a",

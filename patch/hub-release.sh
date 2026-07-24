@@ -119,6 +119,7 @@ FRAMEWORK_PATHS=(scripts web docs patch setup tests templates examples framework
                  prompts/AGENT.md prompts/CHROME.md
                  prompts/agent_mono.type prompts/agent_x45.type prompts/agent_z21.type
                  prompts/gpt-5-6-luna.model prompts/gpt-5-6-sol.model prompts/gpt-5-6-terra.model
+                 prompts/opus-5.model
                  'prompts/codex*.login'
                  requirements.txt CLAUDE.md AGENTS.md README.md LICENSE .gitignore)
 # ':!...' = pathspec git d'exclusion (le manifest ne peut pas se contenir lui-même)

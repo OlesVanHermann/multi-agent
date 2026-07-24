@@ -71,7 +71,7 @@ def test_scaffold_is_parameterized_for_new_install(tmp_path):
     shutil.copytree(ROOT / "templates", tmp_path / "templates")
     prompts = tmp_path / "prompts"
     prompts.mkdir()
-    for name in ("gpt-5-6-sol.model", "fable-5.model", "login1a.login"):
+    for name in ("gpt-5-6-sol.model", "opus-5.model", "login1a.login"):
         (prompts / name).write_text(name)
     (prompts / "AGENT.md").write_text("loader")
     target, workflow = scaffold_mod.scaffold(
@@ -98,8 +98,8 @@ def test_model_assignment_is_parameterized(tmp_path):
         assignments[role] = (suffix, model, login, effort)
     models_mod.configure(tmp_path, "427", "427-project", assignments)
     assert (target / "427-300.model").is_symlink()
-    assert (target / "427-100.effort").read_text() == "H\n"
-    assert all(effort == "H" for _suffix, _model, _login, effort
+    assert (target / "427-100.effort").read_text() == "M\n"
+    assert all(effort == "M" for _suffix, _model, _login, effort
                in models_mod.ROLE_DEFAULTS.values())
 
 
@@ -110,13 +110,13 @@ def test_role_suffixes_follow_triangle_number():
 
 def test_x45_z21_role_model_matrix():
     assert models_mod.ROLE_DEFAULTS == {
-        "master": ("100", "fable-5", "login3a", "H"),
-        "contradictor": ("200", "gpt-5-6-sol", "login3a", "H"),
-        "developer": ("300", "gpt-5-6-sol", "login1a", "H"),
-        "observer": ("500", "fable-5", "login1a", "H"),
-        "curator": ("700", "fable-5", "login4a", "H"),
-        "coach": ("800", "gpt-5-6-sol", "login2a", "H"),
-        "architect": ("900", "fable-5", "login4a", "H"),
+        "master": ("100", "gpt-5-6-sol", "login3a", "M"),
+        "contradictor": ("200", "opus-5", "login3a", "M"),
+        "developer": ("300", "opus-5", "login1a", "M"),
+        "observer": ("500", "gpt-5-6-sol", "login1a", "M"),
+        "curator": ("700", "gpt-5-6-sol", "login4a", "M"),
+        "coach": ("800", "opus-5", "login1a", "M"),
+        "architect": ("900", "gpt-5-6-sol", "login4a", "M"),
     }
 
 
@@ -128,13 +128,13 @@ def test_topology_assignments_use_existing_role_suffixes(tmp_path):
     assignments = models_mod.topology_assignments(directory, "161")
     by_suffix = {value[0]: value[1:3] for value in assignments.values()}
     assert by_suffix == {
-        "161": ("fable-5", "login3a"),
-        "261": ("gpt-5-6-sol", "login3a"),
-        "361": ("gpt-5-6-sol", "login1a"),
-        "561": ("fable-5", "login1a"),
-        "761": ("fable-5", "login4a"),
-        "861": ("gpt-5-6-sol", "login2a"),
-        "961": ("fable-5", "login4a"),
+        "161": ("gpt-5-6-sol", "login3a"),
+        "261": ("opus-5", "login3a"),
+        "361": ("opus-5", "login1a"),
+        "561": ("gpt-5-6-sol", "login1a"),
+        "761": ("gpt-5-6-sol", "login4a"),
+        "861": ("opus-5", "login1a"),
+        "961": ("gpt-5-6-sol", "login4a"),
     }
 
 
@@ -172,24 +172,25 @@ def test_mono_is_compound_main_plus_contradictor(tmp_path):
     (mono / "345-example.md").write_text("principal")
     (mono / "345-example.model").write_text("fable-5")
     (mono / "345-example.login").write_text("login1a")
-    (prompts / "fable-5.model").write_text("claude-fable-5")
     (prompts / "login1a.login").write_text("login1a")
+    (prompts / "login3a.login").write_text("login3a")
     (prompts / "gpt-5-6-sol.model").write_text("gpt-5.6-sol")
+    (prompts / "opus-5.model").write_text("claude-opus-5")
     main, contradictor = mono_pair_mod.scaffold(
-        tmp_path, "345", "145", "245", "345-example", "gpt-5-6-sol", "login1a")
+        tmp_path, "345", "145", "245", "345-example", "opus-5", "login3a")
     assert (main, contradictor) == ("345-145", "345-245")
     assert (mono / "345-145-system.md").read_text() == "principal"
     assert (mono / "345-145-memory.md").is_file()
     assert (mono / "345-145-methodology.md").is_file()
     assert (mono / "345-145.md").is_symlink()
-    assert (mono / "345-145.model").read_text() == "claude-fable-5"
+    assert (mono / "345-145.model").read_text() == "gpt-5.6-sol"
     assert (mono / "345-145.login").read_text() == "login1a"
     assert "Contradictor" in (mono / "345-245-system.md").read_text()
     assert (mono / "345-245-memory.md").is_file()
     assert (mono / "345-245-methodology.md").is_file()
     assert (mono / "345-245.md").is_symlink()
-    assert (mono / "345-245.model").read_text() == "gpt-5.6-sol"
-    assert (mono / "345-245.login").read_text() == "login1a"
+    assert (mono / "345-245.model").read_text() == "claude-opus-5"
+    assert (mono / "345-245.login").read_text() == "login3a"
     assert not (mono / "345-example.md").exists()
     assert json.loads((mono / "mono-pair.json").read_text())["main"] == main
 
@@ -209,11 +210,11 @@ def test_creators_require_local_observers_and_mono_pair():
     assert "scaffold-mono-pair.py" in mono
     assert "principal `3XX-1XX`" in mono
     assert "Contradictor `3XX-2XX`" in mono
-    assert "fable-5" in mono and "gpt-5-6-sol" in mono
-    assert "Master `NNN-1XX` = `fable-5.model`" in x45
-    assert "Contradictor `NNN-2XX` = `gpt-5-6-sol.model`" in x45
-    assert "Master `NNN-1XX` = `fable-5.model`" in z21
-    assert "Contradictor `NNN-2XX` = `gpt-5-6-sol.model`" in z21
+    assert "gpt-5-6-sol" in mono and "opus-5" in mono
+    assert "Master `NNN-1XX` = `gpt-5-6-sol.model`" in x45
+    assert "Contradictor `NNN-2XX` = `opus-5.model`" in x45
+    assert "Master `NNN-1XX` = `gpt-5-6-sol.model`" in z21
+    assert "Contradictor `NNN-2XX` = `opus-5.model`" in z21
 
 
 def test_installed_topologies_have_two_or_seven_agents():

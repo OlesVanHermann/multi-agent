@@ -1,14 +1,16 @@
-# Multi-Agent System v3.2.3
+# Multi-Agent System v3.2.4
 
-La ligne 3.2 étend la preuve exécutable aux boucles x45/z21 : contrats pour
+La ligne 3.2 ajoute `claude-opus-5`, utilise l'effort `M` par défaut et étend
+la preuve exécutable aux boucles x45/z21 : contrats pour
 livrables non testables, gate de méthodologie, apprentissage delta, ablations,
 topologies comparables et agents d'observation paramétriques `NNN-2XX` /
 `NNN-8XX`. Voir [docs/V3.2.md](docs/V3.2.md).
 
 La ligne 3.1 ajoute OpenAI Codex CLI en mode interactif, avec authentification
-ChatGPT (forfait, sans API) et trois modèles : `gpt-5.6-sol`,
+ChatGPT (forfait, sans API) et trois modèles Codex : `gpt-5.6-sol`,
 `gpt-5.6-terra` et `gpt-5.6-luna`. Le moteur est déduit du modèle : choisir un
-modèle `gpt-*` utilise Codex, choisir un modèle `claude-*` utilise Claude Code.
+modèle `gpt-*` utilise Codex, choisir `opus-5` (`claude-opus-5`) ou un autre
+modèle `claude-*` utilise Claude Code.
 Les prompts, fichiers mémoire, historique et canaux Redis restent ceux de
 l'agent, quel que soit le moteur.
 
@@ -339,4 +341,4 @@ MIT - voir [LICENSE](LICENSE)
 
 ---
 
-*Multi-Agent System v3.2.3 - 2026*
+*Multi-Agent System v3.2.4 - 2026*

@@ -1,4 +1,4 @@
-# Multi-Agent System v3.2.3
+# Multi-Agent System v3.2.4
 
 Système d'orchestration multi-agents pour projets de développement complexes avec Claude Code.
 
@@ -125,7 +125,7 @@ multi-agent/
 │   ├── 160-create-x45/          # Créateur de pipelines x45
 │   ├── 170-create-z21/          # Créateur de pipelines z21
 │   ├── *.login                  # Profils Claude (8 templates)
-│   └── *.model                  # Modèles (fable-5, sonnet-5, haiku…)
+│   └── *.model                  # Modèles (opus-5, gpt-5-6-sol, sonnet…)
 │
 ├── examples/                    # Exemples complets par mode
 │   ├── 1-mono-simple/           # Pipeline mono minimal
@@ -609,4 +609,4 @@ git push origin main --tags
 
 ---
 
-*Multi-Agent System v3.2.3 - Juillet 2026*
+*Multi-Agent System v3.2.4 - Juillet 2026*

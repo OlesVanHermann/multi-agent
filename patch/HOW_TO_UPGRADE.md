@@ -70,6 +70,65 @@ les tâches importées depuis votre historique et vos résultats survivent.
 > démarrage relève d'une opération distincte décidée explicitement par
 > l'opérateur.
 
+### Migration v3.2.3 → v3.2.4 : Opus 5, modèles et effort M
+
+La v3.2.4 ajoute `prompts/opus-5.model`, dont la valeur TUI est
+`claude-opus-5`. Elle applique la translation depuis la configuration
+**antérieure** :
+
+| Avant | Après |
+|---|---|
+| `fable-5.model` | `gpt-5-6-sol.model` |
+| `gpt-5-6-sol.model` | `opus-5.model` |
+| effort `H` | effort `M` |
+| `login2a.login` | `login1a.login` |
+
+Après l'upgrade, laisser l'infrastructure et les agents arrêtés. Pour migrer
+les liens existants sans remplacement en cascade, capturer d'abord les deux
+ensembles, puis modifier leurs cibles :
+
+```bash
+./scripts/infra.sh stop 2>/dev/null || true
+# Bootstrap requis par l'ancien upgrade.sh : le nouveau configurateur utilise
+# ce catalogue pendant la première passe, avant que v3.2.4 ne le synchronise.
+printf 'claude-opus-5\n' > prompts/opus-5.model
+./patch/upgrade.sh v3.2.4
+
+mapfile -t from_fable < <(find prompts -type l -name '*.model' -lname '*fable-5.model' -print)
+mapfile -t from_sol < <(find prompts -type l -name '*.model' -lname '*gpt-5-6-sol.model' -print)
+
+for link in "${from_fable[@]}"; do
+  target=$(readlink "$link")
+  prefix="${target%fable-5.model}"
+  ln -sfn "${prefix}gpt-5-6-sol.model" "$link"
+done
+for link in "${from_sol[@]}"; do
+  target=$(readlink "$link")
+  prefix="${target%gpt-5-6-sol.model}"
+  ln -sfn "${prefix}opus-5.model" "$link"
+done
+
+while IFS= read -r link; do
+  target=$(readlink "$link")
+  prefix="${target%login2a.login}"
+  ln -sfn "${prefix}login1a.login" "$link"
+done < <(find prompts -type l -name '*.login' -lname '*login2a.login' -print)
+
+find prompts -type f -name '*.effort' -exec sed -i 's/^H$/M/' {} +
+python3 scripts/configure-x45-models.py --all --check
+```
+
+La dernière commande doit afficher `updated=0` si les pipelines x45/z21
+correspondent déjà à la matrice v3.2.4. Sinon, appliquer la matrice hors ligne :
+
+```bash
+python3 scripts/configure-x45-models.py --all
+python3 scripts/configure-x45-models.py --all --check
+```
+
+Ne pas exécuter `./scripts/infra.sh start` ni
+`./scripts/agent.sh start all` dans cette procédure d'upgrade.
+
 ### Dashboard systemd durci (v3.1.4+)
 
 `upgrade.sh` met à jour le framework, mais ne modifie jamais les unités locales

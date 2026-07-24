@@ -182,7 +182,7 @@ def _configured_model(agent_id):
 
 
 def _configured_effort(agent_id):
-    return _configured_value(agent_id, "effort", "H")
+    return _configured_value(agent_id, "effort", "M")
 
 
 def _expected_effort_name(effort):

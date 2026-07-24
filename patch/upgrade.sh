@@ -77,7 +77,7 @@ PROMPTS_FRAMEWORK_DIRS=(150-create-mono 160-create-x45 170-create-z21)
 # Configurations nouvelles nécessaires aux agents 2XX. Les defaults locaux ne
 # sont jamais remplacés ; seuls ces noms stables appartenant au framework le sont.
 PROMPTS_FRAMEWORK_FILES=(agent_mono.type agent_x45.type agent_z21.type
-    gpt-5-6-luna.model gpt-5-6-sol.model gpt-5-6-terra.model
+    gpt-5-6-luna.model gpt-5-6-sol.model gpt-5-6-terra.model opus-5.model
     codex1a.login codex1b.login codex2a.login codex2b.login
     codex3a.login codex3b.login codex4a.login codex4b.login)
 
@@ -90,6 +90,7 @@ MANIFEST_PATHS=(scripts web docs patch setup tests templates examples framework 
                 prompts/AGENT.md prompts/CHROME.md
                 prompts/agent_mono.type prompts/agent_x45.type prompts/agent_z21.type
                 prompts/gpt-5-6-luna.model prompts/gpt-5-6-sol.model prompts/gpt-5-6-terra.model
+                prompts/opus-5.model
                 'prompts/codex*.login'
                 requirements.txt CLAUDE.md AGENTS.md README.md LICENSE .gitignore)
 

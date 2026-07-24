@@ -103,10 +103,10 @@ async def get_logins_models():
             model_ids[name] = ""
 
     # Read default effort
-    default_effort = "H"
+    default_effort = "M"
     de = prompts_dir / "default.effort"
     if de.exists():
-        default_effort = de.read_text().strip() or "H"
+        default_effort = de.read_text().strip() or "M"
 
     # Resolve default symlinks
     default_login = ""

@@ -28,7 +28,7 @@ def archive(path, removed):
 
 def scaffold(base, prefix, main_suffix, contradictor_suffix, directory_name,
              contradictor_model, contradictor_login,
-             main_model="fable-5", main_login="login1a"):
+             main_model="gpt-5-6-sol", main_login="login1a"):
     prompts = base / "prompts"
     directory = prompts / directory_name
     if not directory.is_dir():
@@ -115,8 +115,8 @@ def scaffold(base, prefix, main_suffix, contradictor_suffix, directory_name,
         destination = directory / f"{agent_id}.{ext}"
         archive(destination, removed)
         destination.symlink_to(Path("..") / source_path.name)
-    (directory / f"{contradictor_id}.effort").write_text("H\n")
-    (directory / f"{main_id}.effort").write_text("H\n")
+    (directory / f"{contradictor_id}.effort").write_text("M\n")
+    (directory / f"{main_id}.effort").write_text("M\n")
     # Marqueur de transaction écrit en dernier: sa présence signifie que toute
     # la paire et toutes ses configurations ont été matérialisées avec succès.
     (directory / "mono-pair.json").write_text(
@@ -132,9 +132,9 @@ def main():
     parser.add_argument("--main-suffix", help="slot 1XX (défaut: mêmes dizaines/unités)")
     parser.add_argument("--contradictor-suffix", help="slot 2XX (défaut: mêmes dizaines/unités)")
     parser.add_argument("--base", type=Path, default=BASE)
-    parser.add_argument("--contradictor-model", default="gpt-5-6-sol")
+    parser.add_argument("--contradictor-model", default="opus-5")
     parser.add_argument("--contradictor-login", default="login3a")
-    parser.add_argument("--main-model", default="fable-5")
+    parser.add_argument("--main-model", default="gpt-5-6-sol")
     parser.add_argument("--main-login", default="login1a")
     args = parser.parse_args()
     try:

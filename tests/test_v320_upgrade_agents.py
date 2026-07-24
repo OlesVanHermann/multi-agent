@@ -17,7 +17,8 @@ def make_base(tmp_path):
     shutil.copy2(ROOT / "scripts" / "scaffold-observers.py", tmp_path / "scripts")
     source = ROOT / "templates" / "x45"
     shutil.copytree(source, tmp_path / "templates" / "x45")
-    for name in ("fable-5.model", "gpt-5-6-sol.model", "login1a.login", "codex3a.login"):
+    for name in ("fable-5.model", "gpt-5-6-sol.model", "opus-5.model",
+                 "login1a.login", "login3a.login", "codex3a.login"):
         (tmp_path / "prompts" / name).write_text(name + "\n")
     for name in ("agent_mono.type", "agent_x45.type", "agent_z21.type"):
         (tmp_path / "prompts" / name).touch()
