@@ -253,6 +253,12 @@ STREAM_MAXLEN = 1000
 IO_STREAM_MAXLEN = int(os.environ.get("IO_STREAM_MAXLEN", 10000))
 
 
+def _matches_api_error(text, patterns=None):
+    """Détecte une erreur API à partir des regex propres au moteur."""
+    candidates = API_ERROR_PATTERNS if patterns is None else patterns
+    return any(re.search(pattern, text, re.IGNORECASE) for pattern in candidates)
+
+
 def _parse_pane_state(out, pane_cmd, agent_id, process_names=None, busy_scope=None,
                       markers=None):
     """B6 : déduit l'état d'un agent depuis le contenu de son pane tmux.
@@ -335,7 +341,11 @@ def _parse_pane_state(out, pane_cmd, agent_id, process_names=None, busy_scope=No
         'done_compacting': done_compacting,
         'prompt_loaded': prompt_loaded,
         'context_limit': m['context_limit'] in out,
-        'api_error': out.count(m['api_error']) >= 3 or (claude_alive and not bp_line),
+        'api_error': (
+            _matches_api_error(out, m['api_error_patterns'])
+            or out.count(m['api_error']) >= 3
+            or (claude_alive and not bp_line)
+        ),
         'model_change': m['model_change'] in out,
         'claude_alive': claude_alive,
     }
@@ -1356,7 +1366,7 @@ class TmuxAgent:
             # API error detection — retry with backoff (max 2 retries)
             # A1: motifs externalisés dans markers.yaml (API_ERROR_PATTERNS)
             retry_count = task.get('_retry_count', 0)
-            is_api_error = any(pat in response for pat in API_ERROR_PATTERNS)
+            is_api_error = _matches_api_error(response)
 
             if is_api_error and retry_count < 2:
                 self._log(f"API ERROR detected (retry {retry_count+1}/2), re-queuing prompt")

@@ -330,6 +330,7 @@ def build_pane_eval(markers):
     busy_re = "|".join(str(b) for b in markers["busy_markers"])
     login_re = "|".join(str(x) for x in markers["login_expired_markers"])
     ctx_re = "|".join(str(p) for p in markers["context_pct_patterns"])
+    api_error_re = "|".join(str(p) for p in markers["api_error_patterns"])
     prompt0 = str(markers["prompt_markers"][0])
 
     return (
@@ -360,6 +361,7 @@ def build_pane_eval(markers):
         'if [ -n "$pct" ]; then ctx=$pct; fi; '
         f'if printf "%s" "$out" | grep -qF {_q(markers["context_limit"])}; then ctx_limit=1; fi; '
         f'api_err_count=$(printf "%s" "$out" | grep -cF {_q(markers["api_error"])} 2>/dev/null || echo 0); '
+        f'if printf "%s" "$out" | grep -qiE {_q(api_error_re)}; then api_error=1; fi; '
         'if [ "$api_err_count" -ge 3 ]; then api_error=1; fi; '
         'if [ "$alive" -eq 1 ] && [ -z "$bp_line" ]; then api_error=1; fi; '
         f'if printf "%s" "$out" | grep -qF {_q(markers["model_change"])}; then model_change=1; fi; '

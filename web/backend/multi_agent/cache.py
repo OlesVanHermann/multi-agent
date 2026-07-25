@@ -214,7 +214,7 @@ async def _resolve_agent_statuses_batch(agents_data: list) -> dict:
                 _log_event(aid, "compacting", "started")
             # api_error False→True
             if st.get('api_error') and not prev.get('api_error'):
-                _log_event(aid, "api_error", "3+ API errors")
+                _log_event(aid, "api_error", "API error detected")
             # context_limit False→True
             if st.get('context_limit') and not prev.get('context_limit'):
                 _log_event(aid, "context_limit", "reached")

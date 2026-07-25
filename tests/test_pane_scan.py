@@ -371,6 +371,16 @@ CODEX_PANES = {
         "■ Rate limit exceeded                                                          \n"
         f"{CODEX_FOOTER_IDLE}\n"
     ),
+    'api_error_503_circuit_open': (
+        "⚠ Falling back from WebSockets to HTTPS transport. unexpected status 503 "
+        "Service Unavailable: ServiceUnavailable, "
+        "url: wss://chatgpt.com/backend-api/codex/responses, auth error: 503, "
+        "auth error code: biscuit_baker_service_me_circuit_open\n"
+        "■ unexpected status 503 Service Unavailable: Service Unavailable, "
+        "url: https://chatgpt.com/backend-api/codex/responses, auth error: 503, "
+        "auth error code: biscuit_baker_service_me_circuit_open\n"
+        f"{CODEX_FOOTER_IDLE}\n"
+    ),
 
     # [Source: footer.rs:1015 — « {used} used » quand le % est inconnu]
     'tokens_used_no_pct': f"{CODEX_COMPOSER}\n  ? for shortcuts                     123K used  \n",
@@ -483,6 +493,9 @@ class TestCodexSemantics:
 
     def test_api_error(self):
         assert self._st('api_error')['api_error'] is True
+
+    def test_single_503_circuit_open_is_api_error(self):
+        assert self._st('api_error_503_circuit_open')['api_error'] is True
 
     def test_missing_status_line_flags_api_error(self):
         assert self._st('no_status_line')['api_error'] is True
