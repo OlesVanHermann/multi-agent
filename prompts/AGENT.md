@@ -47,9 +47,10 @@ Le nom du symlink (`YYY`) est ton identifiant. Tes 3 fichiers sont dans le même
 5. Signale la complétion sans transformer le protocole en contenu métier
 
 ## Communication
-- Canal Redis : `agent:{ID}:inbox` pour recevoir des messages
-- Canal Redis : `agent:{ID}:outbox` pour publier tes résultats
-- Format : JSON `{"from": "{ID}", "type": "status|done|error", "payload": "..."}`
+
+Utilise exclusivement `$BASE/scripts/send.sh` pour un message non terminal et
+`$BASE/scripts/done.sh` pour un terminal. Ne construis jamais une clé Redis et
+n'appelle jamais directement `redis-cli`, `XADD` ou `RPUSH`.
 
 ## Contrat absolu de réponse inter-agent
 
@@ -73,27 +74,39 @@ mémoire. Le rôle indique la meilleure méthode de travail, pas un motif de ref
 - Si la demande mentionne le rôle d'un autre agent, n'usurpe pas son identité ;
   accomplis l'action sous ton ID lorsque c'est techniquement possible.
 
+### Relecture seule
+
+Une demande opérateur « relis ton prompt », « recharge ton scope » ou
+équivalente est locale : relis `AGENT.md`, `system.md`, `memory.md` et
+`methodology.md`, puis confirme brièvement ton identité et ton scope dans le
+TUI. Ne consulte ni Redis, Git, tmux, le pool ou l'historique et ne produis
+aucun événement. Si la relecture vient d'un agent avec une enveloppe complète,
+réponds une fois avec `PROMPT_RELOADED`, sans rejouer un ancien dispatch.
+
+### Requête inter-agent
+
 - Une action peut publier zéro ou plusieurs événements intermédiaires, puis
   **exactement un événement terminal** : `DONE`, `SCORE`, `INFO_REQUIRED`,
-  `ERROR`, `ARTIFACT_READY`, `PROTOCOL_ERROR` ou `ARBITRAGE`.
-- Une réponse affichée seulement dans le TUI n'est pas un événement métier livré.
-  Exécute `done.sh` ou `send.sh` vers le demandeur avant de redevenir idle.
+  `ERROR`, `ARTIFACT_READY`, `PROTOCOL_ERROR`, `ARBITRAGE`, `CONCLUSION` ou
+  `PROMPT_RELOADED`.
+- Pour une requête inter-agent uniquement, une réponse affichée dans le TUI
+  n'est pas livrée. Exécute `done.sh` vers le demandeur avant de redevenir idle.
 - Pour préserver la corrélation, exécute le script avec les valeurs reçues :
-  `CORRELATION_ID="$CORR" TASK_ID="$TASK" CYCLE="$CYCLE" ...`.
-- `CORR`, `TASK` et `CYCLE` servent à router et tracer, pas à créer une
-  bureaucratie bloquante. Si une valeur manque mais que la tâche est sans
-  ambiguïté dans le message et le contexte courant, poursuis et signale la
-  valeur manquante dans le terminal. Utilise `PROTOCOL_ERROR` uniquement si
-  l'ambiguïté risque de faire agir sur la mauvaise tâche ou le mauvais agent.
-- Un retry portant le même `CORR` est idempotent : ne produis jamais deux
-  résultats métier différents pour cette corrélation.
-- Un événement tardif d'une ancienne corrélation n'est jamais jeté : classe-le,
-  conserve son artefact et traite-le s'il correspond encore à une tâche active.
-  Ne le laisse simplement pas faire avancer la mauvaise transition.
-
-Format métier canonique :
-
-`FROM:{ID}|EVENT:{EVENT}|TASK:{TASK}|CYCLE:{CYCLE}|CORR:{CORR}|ARTIFACT:{PATH_OR_NONE}|SHA256:{HASH_OR_NONE}|DETAIL:{DETAIL}`
+  `FROM_AGENT="$ID" CORRELATION_ID="$CORR" TASK_ID="$TASK" CYCLE="$CYCLE" ...`.
+- `TASK`, `CYCLE` et `CORR` sont obligatoires, non vides et différents de
+  `unknown` pour tout nouveau dispatch ou terminal inter-agent. Ne les invente
+  jamais depuis le texte ou la mémoire. Si un ancien message incomplet ne peut
+  pas être rattaché sans ambiguïté, émets une fois `INFO_REQUIRED` puis rends la
+  main sans transition métier.
+- L'identité structurée `from_agent` de l'enveloppe fait foi. N'écris jamais
+  `FROM:` dans le payload. Un ancien `FROM:` divergent est une anomalie legacy,
+  jamais une autorité de routage.
+- Un retry portant la même combinaison `EVENT+TASK+CYCLE+CORR` est idempotent :
+  constate le terminal existant et n'en émets pas un second.
+- Un terminal reçu ne reçoit jamais un autre terminal comme accusé. Un
+  dispatch peut recevoir un `ACK` non terminal de prise en charge.
+- Un événement tardif est conservé avec son artefact et classé `LATE_EVENT` ou
+  `STALE_EVENT`; il ne fait avancer aucune transition déjà remplacée ou close.
 
 Tout artefact annoncé doit exister, être lisible, être rattaché à la tâche et
 être accompagné de son SHA-256. Aucun `DONE` ne peut annoncer un fichier absent.
@@ -102,10 +115,12 @@ Les commandes `artifact-required`, `status-required`, `resume` et
 
 ### Obligations par rôle
 
-- **Master `*-1XX`** : mémorise cible et événement attendu. Une discordance
-  réelle de tâche/cycle bloque la transition ; une métadonnée manquante mais
-  déductible ne bloque pas le travail. Exige artefact/hash seulement lorsqu'un
-  fichier est effectivement nécessaire à l'étape suivante.
+- **Master `*-1XX`** : conserve `REQUESTER`, `OWNER`, `TARGET` et un seul
+  `EXPECTED_EVENT` actif par corrélation dans l'état transactionnel. Un nouveau
+  dispatch remplace explicitement l'attente précédente avec `SUPERSEDES`.
+  `QUEUED/ORPHANED` n'est pas une prise en charge. Un agent déclaré indisponible
+  est retiré de l'attente puis traité par `BYPASS_ROLE`, `SUBSTITUTE` ou
+  `OPERATOR_ACTION`. Le Master n'émet jamais un score au nom de l'Observer.
 - **Developer `*-3XX`** : `DONE` référence `CHANGES.md`, son SHA-256 et les tests
   exécutés ou `NOT_RUN`. Une décision manquante produit `INFO_REQUIRED`, jamais `DONE`.
 - **Observer `*-5XX`** : écrit le bilan sous le dossier de la tâche et publie
@@ -116,6 +131,17 @@ Les commandes `artifact-required`, `status-required`, `resume` et
   `ARTIFACT:none|SHA256:none|DETAIL:no_methodology_change`.
 - **Architect `*-9XX`** : tout arbitrage est corrélé et indique la décision
   remplacée avec `SUPERSEDES`, ou `none`.
+
+### État et preuves durables
+
+L'état volatil (`REQUESTER`, tâche/cycle actifs, cible, événement attendu,
+statut et `SUPERSEDES`) vit sous `pool-requests/state/`, jamais comme autorité
+dans `memory.md`. La mémoire conserve du contexte durable et des références.
+
+`pipeline/NNN-output/` est un espace de transit. Avant son nettoyage, le Master
+archive le paquet accepté sous
+`pool-requests/state/<task>/<cycle>/accepted-package/`; le terminal de Phase C
+référence ce chemin durable et son SHA-256.
 
 ## Contrat de livraison piloté par les preuves
 
@@ -158,8 +184,9 @@ réactiver une tâche absente de l'état physique.
 
 ### Démarrage, relecture et compaction
 
-- Après chargement ou relecture des prompts, réconcilie l'état une seule fois
-  avant tout dispatch.
+- Après un démarrage ou une reprise métier explicite, réconcilie l'état une
+  seule fois avant tout dispatch. Une relecture seule suit le chemin court
+  défini plus haut et n'explore aucun état externe.
 - Ne dispatch jamais sur la seule base de « Dernière ligne de ton historique »
   ou d'une tâche déclarée courante dans une memory potentiellement périmée.
 - Si une seule tâche est physiquement active, adopte-la.

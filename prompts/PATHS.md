@@ -221,46 +221,27 @@ ws.close()
 
 ## Communication Redis (Bridge)
 
-**Format actuel : Redis Streams** (pas Lists)
-
-### Envoyer un message à un agent
-
-```bash
-# Fonction helper
-send_to_agent() {
-    TO=$1
-    MSG=$2
-    FROM=${3:-$(basename $0 .md | cut -d'-' -f1)}
-    redis-cli XADD "ma:agent:${TO}:inbox" '*' \
-        prompt "$MSG" \
-        from_agent "$FROM" \
-        timestamp "$(date +%s)" > /dev/null
-}
-
-# Exemples
-send_to_agent 100 "301 done example.com"
-send_to_agent 302 "go example.com" 100
-```
-
-### Ou directement
+Les noms de streams, préfixes et paramètres Redis appartiennent au bridge. Un
+prompt métier ne construit et n'inspecte jamais une clé Redis.
 
 ```bash
-redis-cli XADD "ma:agent:100:inbox" '*' prompt "301 done example.com" from_agent "301" timestamp "$(date +%s)"
+# Dispatch ou information non terminale
+FROM_AGENT="$ID" TASK_ID="$TASK" CYCLE="$CYCLE" \
+CORRELATION_ID="$CORR" MESSAGE_EVENT=DISPATCH EXPECTED_EVENT=DONE \
+  $BASE/scripts/send.sh "$TO" "instruction"
+
+# Terminal
+FROM_AGENT="$ID" TASK_ID="$TASK" CYCLE="$CYCLE" \
+CORRELATION_ID="$CORR" \
+  $BASE/scripts/done.sh "$TO" DONE \
+  "ARTIFACT:$PATH|SHA256:$HASH|DETAIL:$DETAIL"
+
+# Diagnostic Redis explicitement demandé par l'opérateur uniquement
+$BASE/scripts/redis.sh PING
 ```
 
-### Script officiel
-
-```bash
-$BASE/scripts/send.sh FROM TO "message"
-$BASE/scripts/send.sh 301 100 "301 done example.com"
-```
-
-### ANCIEN format (OBSOLETE - ne plus utiliser)
-
-```bash
-# NE PLUS UTILISER
-redis-cli RPUSH "ma:inject:100" "message"
-```
+Interdits dans les prompts : `redis-cli`, `XADD`, `RPUSH`, anciennes clés
+préfixées et ancienne signature `send.sh FROM TO`.
 
 ---
 

@@ -10,6 +10,31 @@ Le script de mise à jour est dans `patch/upgrade.sh`. Il préserve automatiquem
 
 ---
 
+## Migration du contrat de communication
+
+L'upgrade synchronise les scripts puis exécute
+`patch/rebalance-agent-prompts.py`. Cette migration idempotente ajoute aux
+prompts existants le contrat décrit dans `docs/AGENT-COMMUNICATION.md` :
+enveloppe autoritaire, corrélation héritée, terminal unique, états
+`DELIVERED`/`ORPHANED`, preuves durables et hard gates. Les originaux modifiés
+sont sauvegardés sous `removed/rebalance-prompts/<horodatage>/`.
+
+Après l'upgrade :
+
+```bash
+python3 patch/rebalance-agent-prompts.py --check
+```
+
+Le résultat attendu est `updated=0`. Inspecter et corriger manuellement les
+instructions locales qui utilisent encore `FROM:` dans le texte, Redis
+directement ou un score comme gate de livraison.
+
+**Ne pas exécuter automatiquement** `./scripts/infra.sh start` ni
+`./scripts/agent.sh start all`. L'opérateur choisit quand relancer, après avoir
+vérifié les profils, les sessions et les migrations.
+
+---
+
 ## Structure des fichiers
 
 ### Fichiers FRAMEWORK (mis à jour automatiquement)

@@ -12,6 +12,7 @@ MARKER = "## Priorité au résultat"
 CREATOR_MARKER = "## Contrat de création résultat-first"
 DELIVERY_MARKER = "## Contrat de livraison piloté par les preuves"
 CONTRADICTOR_SCOPE_MARKER = "## Scope triangle et relance du développement"
+COMMUNICATION_MARKER = "## Contrat de communication déterministe"
 
 
 def is_creator(path):
@@ -137,6 +138,50 @@ def contradictor_scope_contract(path, text):
 """
 
 
+def communication_contract(path, text):
+    """Contrat commun : enveloppe autoritaire, terminal unique et preuves."""
+    title = next((line.lower() for line in text.splitlines() if line.startswith("# ")), "")
+    sample = f"{path.parent.name.lower()} {path.name.lower()} {title}"
+    body = """
+- Utilise exclusivement `$BASE/scripts/send.sh` pour un événement non terminal
+  et `$BASE/scripts/done.sh` pour un terminal. N'utilise jamais directement
+  Redis et n'écris jamais `FROM:` dans le message.
+- Entre agents, renseigne explicitement `TASK_ID`, `CYCLE`, `CORRELATION_ID`,
+  `REQUESTER_ID` et `OWNER_ID`. Pour `MESSAGE_EVENT=DISPATCH`, renseigne aussi
+  `EXPECTED_EVENT`. L'enveloppe fait foi ; n'infère aucune métadonnée du texte.
+- Hérite sans les réécrire de `TASK_ID`, `CYCLE`, `CORRELATION_ID` et
+  `REQUESTER_ID`. Un nouveau dispatch peut changer `OWNER_ID` et `TARGET`, mais
+  conserve le demandeur initial.
+- `send.sh` n'acquitte pas un travail : `DELIVERED` signifie seulement que la
+  session cible existe ; `ORPHANED` signifie que le message est persisté mais
+  qu'aucune attente active ne doit commencer.
+- Émets exactement un terminal avec `done.sh`. Un ACK de réception est
+  non-terminal et ne répond jamais à `DONE`, `BLOCKED`, `ERROR`,
+  `INFO_REQUIRED`, `ARTIFACT_READY`, `CONCLUSION`, `ARBITRAGE`,
+  `PROTOCOL_ERROR` ou `PROMPT_RELOADED`.
+- Ignore pour toute transition un événement dupliqué, tardif, d'un autre cycle
+  ou d'une autre corrélation. Signale une enveloppe invalide avec
+  `PROTOCOL_ERROR` ; n'invente pas les champs manquants.
+- Les décisions reposent sur les hard gates, critères d'acceptation et preuves
+  durables (`ARTIFACT`, `HASH`, tests). Un score seul n'est jamais terminal.
+- Conserve l'état transactionnel sous `pool-requests/state/`, pas seulement en
+  mémoire. Archive le paquet de preuves accepté avant de clôturer.
+"""
+    if "master" in sample or re.search(r"-1\d\d-system\.md$", path.name):
+        body += """
+- Le Master possède une seule attente active par corrélation et connaît
+  `TARGET` et `EXPECTED_EVENT`. Il ne traite pas `ORPHANED` comme accepté,
+  dégrade explicitement si un rôle est indisponible et ne fait jamais parler
+  l'Observer à la place de l'Observer.
+"""
+    if "observer" in sample or "tester" in sample or re.search(r"-5\d\d-system\.md$", path.name):
+        body += """
+- L'Observer publie son propre verdict canonique avec les preuves observées ;
+  son identité ne peut pas être simulée par le Master ou le Developer.
+"""
+    return f"\n\n{COMMUNICATION_MARKER}\n\n{body.strip()}\n"
+
+
 def block(path, text):
     finality = purpose(path, text)
     result = f"""
@@ -173,7 +218,9 @@ de score mou. Le Master intègre et clôture ; l'Observer rend un verdict canoni
 et sépare blocants Dev, actions d'intégration et améliorations facultatives ; le
 Coach améliore le prochain cycle sans bloquer celui qui est livrable.
 """
-    return result + delivery_contract(path, text) + contradictor_scope_contract(path, text)
+    return (result + delivery_contract(path, text)
+            + contradictor_scope_contract(path, text)
+            + communication_contract(path, text))
 
 
 def insert(text, addition):
@@ -253,21 +300,27 @@ def migrate(base, backup=True, refresh_existing=False, check=False):
             bool(contradictor_scope_contract(path, text))
             and CONTRADICTOR_SCOPE_MARKER not in text
         )
+        needs_communication_contract = COMMUNICATION_MARKER not in text
         if (MARKER in text and not refresh_existing and not needs_creator_contract
-                and not needs_delivery_contract and not needs_contradictor_scope):
+                and not needs_delivery_contract and not needs_contradictor_scope
+                and not needs_communication_contract):
             continue
         if MARKER in text:
             if refresh_existing:
                 cleaned = remove_sections(text, DELIVERY_MARKER)
+                cleaned = remove_sections(cleaned, CONTRADICTOR_SCOPE_MARKER)
+                cleaned = remove_sections(cleaned, COMMUNICATION_MARKER)
                 desired = refresh(cleaned, block(path, cleaned))
             else:
                 desired = text
             if needs_creator_contract:
                 desired = insert(desired, block(path, text))
-            elif needs_delivery_contract:
+            if needs_delivery_contract and DELIVERY_MARKER not in desired:
                 desired = insert(desired, delivery_contract(path, text))
-            elif needs_contradictor_scope:
+            if needs_contradictor_scope and CONTRADICTOR_SCOPE_MARKER not in desired:
                 desired = insert(desired, contradictor_scope_contract(path, text))
+            if needs_communication_contract and COMMUNICATION_MARKER not in desired:
+                desired = insert(desired, communication_contract(path, text))
         else:
             desired = insert(text, block(path, text))
         if desired == text:

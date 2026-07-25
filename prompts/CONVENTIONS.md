@@ -303,10 +303,10 @@ puis relis ton prompt
 **En pratique avec Redis :**
 ```bash
 # Envoyer /clear
-redis-cli XADD "ma:agent:XXX:inbox" '*' prompt "/clear" from_agent "100" timestamp "$(date +%s)"
+TASK_ID="$TASK_ID" CYCLE="$CYCLE" CORRELATION_ID="$CORRELATION_ID" MESSAGE_EVENT=CONTROL $BASE/scripts/send.sh XXX "/clear"
 
 # Puis un SECOND message séparé :
-redis-cli XADD "ma:agent:XXX:inbox" '*' prompt "relis ton prompt" from_agent "100" timestamp "$(date +%s)"
+TASK_ID="$TASK_ID" CYCLE="$CYCLE" CORRELATION_ID="$CORRELATION_ID" MESSAGE_EVENT=CONTROL $BASE/scripts/send.sh XXX "relis ton prompt"
 ```
 
 ---

@@ -40,7 +40,7 @@ $BASE/scripts/send.sh 011-511 "evaluate — {TASK_ID} cycle {N}"
 ```
 Rendre la main ; reprise sur `FROM:011-511|SCORE {N}`.
 
-### Step 4 : Coach (011-811) — si score < 98
+### Step 4 : Coach (011-811) — si une amélioration facultative est utile
 ```bash
 $BASE/scripts/send.sh 011-811 "coach — {TASK_ID} cycle {N} score {SCORE}"
 ```
@@ -51,5 +51,6 @@ Retour à Step 1 avec cycle N+1.
 
 ```bash
 mv plan-DOING/{CAT}/{task}.md plan-DONE/{CAT}/{task}.md
-$BASE/scripts/send.sh 100 "FROM:011-111|DONE {TASK_ID} score:{SCORE} cycles:{N}"
+TASK_ID="$TASK_ID" CYCLE="$CYCLE" CORRELATION_ID="$CORRELATION_ID" \
+  $BASE/scripts/done.sh 100 DONE "score:{SCORE} cycles:{N}"
 ```

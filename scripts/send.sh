@@ -60,19 +60,32 @@ if [ -z "$MESSAGE" ]; then
 fi
 
 TIMESTAMP=$(date +%s)
-CORRELATION_ID="${CORRELATION_ID:-$(cat /proc/sys/kernel/random/uuid)}"
+PROVIDED_CORRELATION_ID="${CORRELATION_ID:-}"
 TASK_ID="${TASK_ID:-}"
 CYCLE="${CYCLE:-}"
+MESSAGE_EVENT="${MESSAGE_EVENT:-MESSAGE}"
+REQUESTER_ID="${REQUESTER_ID:-$FROM_AGENT}"
+OWNER_ID="${OWNER_ID:-$FROM_AGENT}"
+EXPECTED_EVENT="${EXPECTED_EVENT:-}"
 
-# Compatibilité des prompts existants : extraire l'identité métier des formats
-# "start — task-id cycle N", "evaluate — ...", "artifact-required — ...".
-# Les variables explicites restent toujours prioritaires.
-if [ -z "$CYCLE" ] && [[ "$MESSAGE" =~ [Cc][Yy][Cc][Ll][Ee][[:space:]]+([0-9]+) ]]; then
-    CYCLE="${BASH_REMATCH[1]}"
+# Une commande opérateur peut rester libre. Entre agents, l'enveloppe est
+# obligatoire et le texte ne sert jamais à inventer une métadonnée.
+if [ "$FROM_AGENT" != "cli" ]; then
+    if [ -z "$TASK_ID" ] || [ "$TASK_ID" = "unknown" ] \
+       || [ -z "$CYCLE" ] || [ "$CYCLE" = "unknown" ] \
+       || [ -z "$PROVIDED_CORRELATION_ID" ]; then
+        echo "invalid: inter-agent message requires TASK_ID, CYCLE and CORRELATION_ID" >&2
+        exit 2
+    fi
+    if [ "$MESSAGE_EVENT" = "DISPATCH" ] && [ -z "$EXPECTED_EVENT" ]; then
+        echo "invalid: DISPATCH requires EXPECTED_EVENT" >&2
+        exit 2
+    fi
 fi
-if [ -z "$TASK_ID" ] && [[ "$MESSAGE" =~ ^[^[:space:]]+[[:space:]]+[—-][[:space:]]+([^[:space:]]+) ]]; then
-    TASK_ID="${BASH_REMATCH[1]}"
-fi
+
+# Seul l'opérateur peut obtenir automatiquement une nouvelle corrélation.
+# Un agent doit créer ou hériter explicitement de la sienne avant l'appel.
+CORRELATION_ID="${PROVIDED_CORRELATION_ID:-$(cat /proc/sys/kernel/random/uuid)}"
 
 # ── Triangle auto-resolve (règle partagée : resolve_triangle_target, lib.sh) ──
 TO_AGENT=$(resolve_triangle_target "$FROM_AGENT" "$TO_AGENT" "send.sh")
@@ -81,9 +94,13 @@ TO_AGENT=$(resolve_triangle_target "$FROM_AGENT" "$TO_AGENT" "send.sh")
 MSG_ID=$($REDIS_CLI XADD "$(agent_inbox_key "$TO_AGENT")" MAXLEN '~' "${IO_STREAM_MAXLEN:-10000}" '*' \
     prompt "$MESSAGE" \
     from_agent "$FROM_AGENT" \
+    event "$MESSAGE_EVENT" \
     correlation_id "$CORRELATION_ID" \
     task_id "$TASK_ID" \
     cycle "$CYCLE" \
+    requester "$REQUESTER_ID" \
+    owner "$OWNER_ID" \
+    expected_event "$EXPECTED_EVENT" \
     timestamp "$TIMESTAMP" 2>/dev/null)
 
 if [ -z "$MSG_ID" ]; then
@@ -92,8 +109,8 @@ if [ -z "$MSG_ID" ]; then
 fi
 
 if ! tmux has-session -t "=$(agent_session_name "$TO_AGENT")" 2>/dev/null; then
-    echo "ko: agent $TO_AGENT not running — msg $MSG_ID in orphan queue" >&2
-    exit 1
+    echo "queued: $TO_AGENT $MSG_ID corr=$CORRELATION_ID state=ORPHANED" >&2
+    exit 2
 fi
 
-echo "ok: $TO_AGENT $MSG_ID corr=$CORRELATION_ID"
+echo "ok: $TO_AGENT $MSG_ID corr=$CORRELATION_ID state=DELIVERED"

@@ -5,7 +5,7 @@
 2. Lire le contenu intégral
 3. Appliquer la grille de `system.md` critère par critère
 4. Calculer le score total
-5. Formuler 1-2 points d'amélioration précis si score < 98
+5. Formuler 1-2 améliorations facultatives sans bloquer un verdict livrable
 
 ## Format du rapport
 ```

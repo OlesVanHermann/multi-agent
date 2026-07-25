@@ -62,7 +62,7 @@ class TestDoneShValidation:
     def test_invalid_signal_fails(self):
         result = self._run('100', 'FINISHED')
         assert result.returncode != 0
-        assert 'Unknown signal' in result.stderr
+        assert 'Unknown terminal' in result.stderr
 
     def test_score_requires_numeric_value(self):
         result = self._run('100', 'SCORE', 'high')
@@ -96,7 +96,8 @@ class TestDoneShIntegration:
         prefix = 'TESTA7'
         completion = 'completion'
         inbox = 'agent:100:inbox'
-        r.delete(completion, inbox)
+        dedup = 'terminal:300:SCORE:task-a7:3:corr-a7'
+        r.delete(completion, inbox, dedup)
         try:
             env = dict(os.environ)
             env['FROM_AGENT'] = '300'
@@ -122,8 +123,11 @@ class TestDoneShIntegration:
             inbox_entries = r.xrange(inbox)
             assert len(inbox_entries) == 1
             _, msg = inbox_entries[0]
-            assert msg['prompt'] == 'FROM:300|SCORE 85 qualité OK'
+            assert msg['prompt'] == (
+                'EVENT:SCORE|TASK:task-a7|CYCLE:3|CORR:corr-a7|'
+                'DETAIL:SCORE 85 qualité OK')
             assert msg['from_agent'] == '300'
+            assert msg['event'] == 'SCORE'
             assert msg['correlation_id'] == 'corr-a7'
             assert msg['task_id'] == 'task-a7'
             assert msg['cycle'] == '3'
@@ -131,6 +135,14 @@ class TestDoneShIntegration:
             # exit code: 0 si la cible tourne, sinon ko (orphan queue) —
             # ici pas de tmux cible, le message doit quand même être délivré
             if result.returncode != 0:
-                assert 'orphan queue' in result.stderr
+                assert 'state=ORPHANED' in result.stderr
+
+            duplicate = subprocess.run(
+                ['bash', _DONE_SH, '100', 'SCORE', '85', 'qualité OK'],
+                capture_output=True, text=True, env=env, timeout=30)
+            assert duplicate.returncode == 0
+            assert 'duplicate:' in duplicate.stdout
+            assert len(r.xrange(completion)) == 1
+            assert len(r.xrange(inbox)) == 1
         finally:
-            r.delete(completion, inbox)
+            r.delete(completion, inbox, dedup)

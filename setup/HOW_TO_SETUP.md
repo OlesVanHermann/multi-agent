@@ -7,6 +7,22 @@ Les étapes marquées **[HUMAIN]** requièrent une interaction utilisateur — a
 
 ---
 
+## Contrat de communication à installer
+
+Avant de créer ou démarrer les agents, lire
+`docs/AGENT-COMMUNICATION.md`, `prompts/AGENT.md`, `prompts/RULES.md` et
+`prompts/PATHS.md`. Tout agent créé doit utiliser `scripts/send.sh` pour les
+événements non terminaux et `scripts/done.sh` pour son unique terminal corrélé.
+Ne recopier aucun ancien exemple contenant `FROM:` dans le texte ou un appel
+direct à Redis.
+
+L'installation initiale peut ensuite suivre les étapes de démarrage décrites
+ci-dessous. Cette autorisation ne s'applique pas à une mise à jour d'un système
+déjà actif : après upgrade, ne lancer automatiquement ni `infra.sh start` ni
+`agent.sh start all`.
+
+---
+
 ## Étape 0 — Vérifier les prérequis
 
 ```bash

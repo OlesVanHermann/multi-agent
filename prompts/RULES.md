@@ -52,7 +52,9 @@ pas des motifs suffisants pour répondre « hors mission » ou « hors rôle ».
   methodologies, même pour une demande nouvelle.
 - Considérer les listes de fichiers et tâches anciennes comme des snapshots,
   pas comme des whitelists permanentes.
-- Déduire les métadonnées manquantes lorsqu'elles ne créent aucune ambiguïté.
+- Pour une commande opérateur, ne pas exiger de métadonnées. Pour un échange
+  inter-agent, recopier les métadonnées structurées reçues et ne jamais les
+  déduire du texte.
 - Refuser seulement une frontière forte réelle : secret, destruction non
   autorisée, usurpation d'identité, tests protégés ou périmètre explicitement
   interdit par l'utilisateur.
@@ -78,14 +80,17 @@ Une instruction directe et claire de l’utilisateur prime sur la tâche mémori
 
 ```bash
 # Signal de complétion : TOUJOURS via le script dédié (canal explicite)
-./scripts/done.sh 100 DONE "{ENTREPRISE} - {RÉSUMÉ COMPLET}"
+FROM_AGENT="$ID" TASK_ID="$TASK" CYCLE="$CYCLE" CORRELATION_ID="$CORR" \
+  ./scripts/done.sh 100 DONE \
+  "ARTIFACT:$ARTEFACT|SHA256:$HASH|DETAIL:{RÉSUMÉ COMPLET}"
 
-# Score : ./scripts/done.sh 100 SCORE 85 "{détails}"
+# Score : mêmes variables + bilan et SHA-256 obligatoires
 ```
 
 **IMPORTANT :** le bridge ne lit PLUS les signaux DONE/SCORE dans le texte
 de tes réponses. Écrire "DONE" dans ta réponse ne déclenche RIEN.
-Seule l'EXÉCUTION de `done.sh` ou `send.sh` émet le signal inter-agent.
+Seule l'EXÉCUTION de `done.sh` émet un terminal inter-agent. `send.sh` est
+réservé aux dispatchs et informations non terminales.
 Pour une commande directe `FROM=cli`, répondre dans le TUI et ne jamais tenter
 `send.sh cli`, `done.sh cli` ou un `XADD` de contournement.
 
@@ -96,21 +101,15 @@ Le rapport DOIT contenir:
 - ✅ Erreurs rencontrées (si applicable)
 - ✅ Prochaine action recommandée
 
-**Exemple de rapport CORRECT:**
-```
-FROM:300|DONE example.com - SUCCESS
-Crawl terminé: 479 pages HTML
-Fichiers: studies/example.com/300/html/*.html (479 fichiers, 125MB)
-Durée: 2h15m
-Erreurs: 3 timeouts (retry OK)
-Prochaine étape: Agent 306 peut extraire
-```
+**Exemple correct :** exécuter `done.sh` avec `TASK_ID`, `CYCLE`,
+`CORRELATION_ID`, artefact et hash. L'identité vient de l'enveloppe ; ne jamais
+écrire `FROM:` dans le texte.
 
 **Exemple de rapport INCORRECT:**
 ```
-FROM:300|Crawl en cours...
+FROM:300|DONE
 ```
-(Pas assez d'info pour que 100 décide)
+(ancien terminal textuel, non corrélé et sans preuve)
 
 ## 3. GESTION DES ERREURS
 

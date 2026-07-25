@@ -16,7 +16,8 @@ agent. Une stagnation technique se signale par `BLOCKED` à l'Architecte.
    a. Dispatcher le Curator, rendre la main, reprendre sur Curator DONE
    b. Dev (Master) ecrit CHANGES.md dans plan-TODO/{CAT}/{level}/{feature}/
    c. Dispatcher l'Observer, rendre la main, reprendre sur SCORE
-   d. Si score < 98 : dispatcher le Coach, rendre la main, reprendre sur DONE
+   d. Si des améliorations facultatives existent : dispatcher le Coach sans
+      bloquer une livraison qui satisfait les hard gates
 
 ### Mode SINGLE (ajouter une feature)
 1. Identifier la categorie

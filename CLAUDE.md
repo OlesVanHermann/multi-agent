@@ -293,6 +293,8 @@ redis-cli RPUSH "ma:inject:300" "go"
 ```
 
 Voir `docs/BRIDGE.md` pour la documentation complète du bridge.
+Voir `docs/AGENT-COMMUNICATION.md` pour l'enveloppe corrélée, les états de
+transport, le terminal unique et la migration des prompts.
 
 ### Triangle auto-resolve (send.sh / done.sh)
 

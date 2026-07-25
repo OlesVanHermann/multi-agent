@@ -161,7 +161,7 @@ Quand le Reviewer retourne avec BLOCANTS CODE + BLOCANTS TEST independants :
 
 ## Reporting au Master 100
 Apres chaque cycle complet :
-$BASE/scripts/send.sh 100 "FROM:{ID}-1{XX}|DONE {ctx} - {resume 1 ligne}"
+TASK_ID="$TASK_ID" CYCLE="$CYCLE" CORRELATION_ID="$CORRELATION_ID" $BASE/scripts/done.sh 100 DONE "{ctx} - {resume 1 ligne}"
 
 ## Auto-apprentissage
 - Identifier les frictions (dispatch mal route, contexte manquant, retry excessif)
@@ -443,7 +443,7 @@ $BASE/scripts/send.sh {ID}-{ID} "<PASS|FAIL>. <Details: tests en echec + cause s
 
 ### 3. Master 100 (vision globale)
 ```bash
-$BASE/scripts/send.sh 100 "FROM:{ID}-5{XX}|DONE {service}-tests - SUCCESS/FAILED. N/N tests. Resume 1 ligne."
+TASK_ID="$TASK_ID" CYCLE="$CYCLE" CORRELATION_ID="$CORRELATION_ID" $BASE/scripts/done.sh 100 DONE "{service}-tests - SUCCESS/FAILED. N/N tests. Resume 1 ligne."
 ```
 
 **JAMAIS terminer sans envoyer ces 3 messages.**
