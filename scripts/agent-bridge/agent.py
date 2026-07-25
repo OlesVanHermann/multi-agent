@@ -342,7 +342,7 @@ def _parse_pane_state(out, pane_cmd, agent_id, process_names=None, busy_scope=No
         'prompt_loaded': prompt_loaded,
         'context_limit': m['context_limit'] in out,
         'api_error': (
-            _matches_api_error(out, m['api_error_patterns'])
+            _matches_api_error(out, m['api_error_immediate_patterns'])
             or out.count(m['api_error']) >= 3
             or (claude_alive and not bp_line)
         ),

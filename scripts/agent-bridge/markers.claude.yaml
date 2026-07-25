@@ -103,6 +103,14 @@ api_error_patterns:
   - 'rate_limit'
   - 'overloaded_error'
 
+# Motifs suffisamment spécifiques pour rendre le pane rouge dès la première
+# occurrence. Le générique « API Error: » conserve son seuil historique de 3.
+api_error_immediate_patterns:
+  - 'API Error: 401'
+  - 'authentication_error'
+  - 'rate_limit'
+  - 'overloaded_error'
+
 # E1 — Libellés indiquant une session d'authentification expirée / absente.
 # Consommés par le sweep keepalive (scripts/crontab-scheduler.py). Comparés en
 # minuscules. Étaient codés en dur dans LOGIN_EXPIRED_MARKERS.

@@ -179,6 +179,18 @@ api_error_patterns:
   - '■ .*\b429\b'
   - '■ .*\b5[0-9][0-9]\b'
 
+# Les cartes d'erreur Codex sont terminales et suffisamment spécifiques pour
+# colorer l'agent dès leur première apparition.
+api_error_immediate_patterns:
+  - '■ .*[Rr]ate limit'
+  - '■ .*[Uu]sage limit'
+  - '■ .*stream disconnected'
+  - '■ .*request failed'
+  - '■ .*Service Unavailable'
+  - '■ .*biscuit_baker_service_me_circuit_open'
+  - '■ .*\b429\b'
+  - '■ .*\b5[0-9][0-9]\b'
+
 # ── [D] Session d'authentification expirée / absente ────────────────────────
 # Écran d'onboarding d'authentification, et carte de statut.
 # Comparés en minuscules par le sweep keepalive.

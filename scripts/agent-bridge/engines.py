@@ -140,6 +140,7 @@ REQUIRED_KEYS = (
     "bashes_pattern",
     "context_pct_patterns",
     "api_error_patterns",
+    "api_error_immediate_patterns",
     "login_expired_markers",
 )
 
@@ -330,7 +331,9 @@ def build_pane_eval(markers):
     busy_re = "|".join(str(b) for b in markers["busy_markers"])
     login_re = "|".join(str(x) for x in markers["login_expired_markers"])
     ctx_re = "|".join(str(p) for p in markers["context_pct_patterns"])
-    api_error_re = "|".join(str(p) for p in markers["api_error_patterns"])
+    api_error_re = "|".join(
+        str(p) for p in markers["api_error_immediate_patterns"]
+    )
     prompt0 = str(markers["prompt_markers"][0])
 
     return (
