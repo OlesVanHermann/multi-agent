@@ -111,6 +111,10 @@ PANES = {
         "API Error: 401\nAPI Error: 401\nAPI Error: 401\n"
         f"{STATUS}\n"
     ),
+    'api_error_529': (
+        "API Error: 529 overloaded_error\n"
+        f"{STATUS}\n"
+    ),
     # bp_line absente alors que le process tourne = sonde de vie négative
     'no_status_line': "quelque chose d'inattendu\n",
     'model_change': (
@@ -190,6 +194,10 @@ class TestSemantics:
 
     def test_missing_status_line_flags_api_error(self):
         st = run_bash_eval(MARKERS, PANES['no_status_line'], 'claude', '300')
+        assert st['api_error'] is True
+
+    def test_single_explicit_529_is_api_error(self):
+        st = run_bash_eval(MARKERS, PANES['api_error_529'], 'claude', '300')
         assert st['api_error'] is True
 
     def test_prompt_loaded_requires_compaction_done(self):
@@ -381,6 +389,14 @@ CODEX_PANES = {
         "auth error code: biscuit_baker_service_me_circuit_open\n"
         f"{CODEX_FOOTER_IDLE}\n"
     ),
+    'api_error_401': (
+        "■ request failed with status 401 authentication_error\n"
+        f"{CODEX_FOOTER_IDLE}\n"
+    ),
+    'api_error_network': (
+        "■ network error while connecting to WebSocket\n"
+        f"{CODEX_FOOTER_IDLE}\n"
+    ),
 
     # [Source: footer.rs:1015 — « {used} used » quand le % est inconnu]
     'tokens_used_no_pct': f"{CODEX_COMPOSER}\n  ? for shortcuts                     123K used  \n",
@@ -496,6 +512,12 @@ class TestCodexSemantics:
 
     def test_single_503_circuit_open_is_api_error(self):
         assert self._st('api_error_503_circuit_open')['api_error'] is True
+
+    def test_single_401_is_api_error(self):
+        assert self._st('api_error_401')['api_error'] is True
+
+    def test_single_network_error_is_api_error(self):
+        assert self._st('api_error_network')['api_error'] is True
 
     def test_missing_status_line_flags_api_error(self):
         assert self._st('no_status_line')['api_error'] is True

@@ -94,22 +94,43 @@ context_pct_patterns:
   - '[0-9]+% until auto-compact'
   - 'auto-compact: [0-9]+%'
 
-# Motifs d'erreur API qui déclenchent un retry du prompt
+# Motifs d'erreur API qui déclenchent un retry du prompt.
+# Sources officielles :
+# - https://docs.anthropic.com/en/api/errors
+# - https://support.claude.com/en/articles/14552646-troubleshoot-claude-code-installation-and-authentication
 api_error_patterns:
+  - 'API Error: (400|401|403|404|413|429|500|529)\b'
+  - 'invalid_request_error'
   - 'API Error: 401'
   - 'authentication_error'
+  - 'permission_error'
+  - 'not_found_error'
+  - 'request_too_large'
+  - 'rate_limit_error'
   - 'API error'
   - 'APIError'
   - 'rate_limit'
   - 'overloaded_error'
+  - '5-hour limit reached'
+  - 'organization disabled'
+  - 'model not available'
 
 # Motifs suffisamment spécifiques pour rendre le pane rouge dès la première
 # occurrence. Le générique « API Error: » conserve son seuil historique de 3.
 api_error_immediate_patterns:
+  - 'API Error: (400|401|403|404|413|429|500|529)\b'
+  - 'invalid_request_error'
   - 'API Error: 401'
   - 'authentication_error'
+  - 'permission_error'
+  - 'not_found_error'
+  - 'request_too_large'
+  - 'rate_limit_error'
   - 'rate_limit'
   - 'overloaded_error'
+  - '5-hour limit reached'
+  - 'organization disabled'
+  - 'model not available'
 
 # E1 — Libellés indiquant une session d'authentification expirée / absente.
 # Consommés par le sweep keepalive (scripts/crontab-scheduler.py). Comparés en

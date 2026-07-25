@@ -165,7 +165,12 @@ model_change: '/model '
 api_error: '■ '
 
 # ── [D] Motifs d'erreur déclenchant un retry du prompt ──────────────────────
-# Erreurs transitoires (fournisseur / réseau) — le bridge remet le prompt en
+# Erreurs fournisseur, réseau, authentification ou quota.
+# Sources officielles :
+# - https://help.openai.com/en/articles/1000499
+# - https://help.openai.com/en/articles/5955604
+# - https://help.openai.com/en/articles/10489721-authentication-troubleshooting-faq
+# Le bridge remet le prompt en
 # file avec backoff. Les erreurs NON transitoires ne doivent pas matcher, sinon
 # le bridge boucle sur un prompt condamné.
 # [Source: tui/src/history_cell/notices.rs — new_error_event]
@@ -176,8 +181,12 @@ api_error_patterns:
   - '■ .*request failed'
   - '■ .*Service Unavailable'
   - '■ .*biscuit_baker_service_me_circuit_open'
+  - '■ .*\b4[0-9][0-9]\b'
   - '■ .*\b429\b'
   - '■ .*\b5[0-9][0-9]\b'
+  - '■ .*(authentication|permission|rate_limit|invalid_request|not_found)_error'
+  - '■ .*ip_not_authorized'
+  - '■ .*(network error|WebSocket.*error|timed out|timeout)'
 
 # Les cartes d'erreur Codex sont terminales et suffisamment spécifiques pour
 # colorer l'agent dès leur première apparition.
@@ -188,8 +197,12 @@ api_error_immediate_patterns:
   - '■ .*request failed'
   - '■ .*Service Unavailable'
   - '■ .*biscuit_baker_service_me_circuit_open'
+  - '■ .*\b4[0-9][0-9]\b'
   - '■ .*\b429\b'
   - '■ .*\b5[0-9][0-9]\b'
+  - '■ .*(authentication|permission|rate_limit|invalid_request|not_found)_error'
+  - '■ .*ip_not_authorized'
+  - '■ .*(network error|WebSocket.*error|timed out|timeout)'
 
 # ── [D] Session d'authentification expirée / absente ────────────────────────
 # Écran d'onboarding d'authentification, et carte de statut.

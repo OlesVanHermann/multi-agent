@@ -81,6 +81,9 @@ sélectionne successivement le modèle puis le niveau de raisonnement : les
 arguments directs de `/model` seraient interprétés comme un prompt. Le même
 fichier `.effort` est donc réutilisé lors d'un changement de modèle.
 
+Les erreurs TUI qui rendent un agent rouge, leur source et leur traitement sont
+documentés dans [ENGINE-ERRORS.md](ENGINE-ERRORS.md).
+
 Un changement depuis le dashboard est aussi appliqué à chaud si la session
 existe et que l'agent est libre. Sinon, le fichier est conservé et prendra
 effet au prochain démarrage.
