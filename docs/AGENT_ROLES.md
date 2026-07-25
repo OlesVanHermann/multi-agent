@@ -44,9 +44,10 @@ ne considère jamais le silence du `2XX` comme un blocage.
 
 ### Contradictor `3XX-2XX`
 
-Le Contradictor analyse exclusivement le principal `3XX-1XX`. Il vérifie si la
-demande a été correctement comprise, décidée, exécutée et satisfaite. Son avis
-est consultatif : il ne termine pas la tâche et ne pilote pas le principal.
+Le Contradictor analyse l'activité de tous les agents `3XX-YXX` du groupe. Il
+reconstruit ce qui s'est passé, identifie l'état actuel et propose au principal
+quoi faire pour relancer le développement. Il envoie sa conclusion uniquement
+au `3XX-1XX`. Son avis est consultatif.
 
 Voir [Contradictor 2XX](CONTRADICTOR.md) pour ses deux actions.
 
@@ -77,11 +78,11 @@ verdict de l'Observer, jamais depuis le score qualitatif seul.
 
 ### `2XX` — Contradictor du Master
 
-Le Contradictor examine le comportement du `1XX`, hors du cycle métier. Il
-cherche le premier écart dans la chaîne demande → compréhension → décision →
-action → résultat. Il peut discuter son analyse avec l'utilisateur, puis envoyer
-une conclusion autonome au Master. Son message ne fait avancer aucune
-transition.
+Le Contradictor examine l'activité de tous les agents du triangle, hors du
+cycle métier. Il reconstruit demande → décision → dispatchs → actions →
+résultats, puis propose au `1XX` une relance concrète du développement. Il peut
+discuter son analyse avec l'utilisateur, mais envoie uniquement au Master. Son
+message ne fait avancer aucune transition.
 
 ### `3XX` — Developer
 
@@ -145,7 +146,7 @@ demande → 1XX sélectionne le contexte → 7XX le borne → 3XX réalise
                                                    │
                                       5XX évalue → 8XX améliore
 
-2XX analyse le 1XX hors cycle              9XX maintient les contextes
+2XX analyse tout le triangle hors cycle    9XX maintient les contextes
 ```
 
 ### `1XX` — Master routeur
@@ -190,7 +191,7 @@ cohérence globale et évite les doublons ou les zones sans propriétaire.
 
 | Question | `2XX` Contradictor | `5XX` Observer |
 |---|---|---|
-| Cible | `1XX` | résultat du `3XX` |
+| Scope analysé | tous les `NNN-YXX` ; envoi au seul `1XX` | résultat du `3XX` |
 | Position | hors cycle | dans le cycle |
 | Valeur | cohérence de compréhension et d'orchestration | qualité du livrable |
 | Déclenchement | utilisateur : `analyse`, puis éventuellement `envoie` | workflow du Master |

@@ -11,6 +11,7 @@ BASE = Path(__file__).resolve().parents[1]
 MARKER = "## Priorité au résultat"
 CREATOR_MARKER = "## Contrat de création résultat-first"
 DELIVERY_MARKER = "## Contrat de livraison piloté par les preuves"
+CONTRADICTOR_SCOPE_MARKER = "## Scope triangle et relance du développement"
 
 
 def is_creator(path):
@@ -25,8 +26,8 @@ def purpose(path, text):
     if "create-" in sample or "créateur" in sample or "creation" in sample:
         return "créer des agents orientés vers leur résultat métier plutôt que vers la narration du processus"
     if "contradictor" in sample:
-        return ("améliorer la compréhension et la décision du 1XX par une "
-                "conclusion factuelle, concise et actionnable")
+        return ("donner au 1XX une vue factuelle de tout le triangle et une "
+                "relance de développement directement actionnable")
     if "curator" in sample:
         return "donner au producteur le contexte minimal, actuel et vérifiable qui lui permet de réussir"
     if "coach" in sample:
@@ -115,6 +116,27 @@ C ou un score qualitatif imparfait ne nécessitent pas ton autorisation.
     return f"\n\n{DELIVERY_MARKER}\n\n{body.strip()}\n"
 
 
+def contradictor_scope_contract(path, text):
+    """Étend les Contradictors existants sans réécrire leur prompt métier."""
+    title = next((line.lower() for line in text.splitlines() if line.startswith("# ")), "")
+    sample = f"{path.parent.name.lower()} {path.name.lower()} {title}"
+    if "contradictor" not in sample and not re.search(r"-2\d\d-system\.md$", path.name):
+        return ""
+    return f"""
+
+{CONTRADICTOR_SCOPE_MARKER}
+
+- Analyse l'activité de tous les agents `NNN-YXX` de ton triangle : décisions,
+  dispatchs, actions, blocages, résultats et état courant.
+- Produis une synthèse de ce qui s'est passé, puis une séquence concrète
+  d'actions permettant au `NNN-1XX` de relancer le développement.
+- Le seul destinataire autorisé de `envoie` reste le `NNN-1XX`. N'envoie jamais
+  la conclusion directement aux satellites.
+- La conclusion contient obligatoirement `Synthèse du triangle` et
+  `Relance du développement`.
+"""
+
+
 def block(path, text):
     finality = purpose(path, text)
     result = f"""
@@ -151,7 +173,7 @@ de score mou. Le Master intègre et clôture ; l'Observer rend un verdict canoni
 et sépare blocants Dev, actions d'intégration et améliorations facultatives ; le
 Coach améliore le prochain cycle sans bloquer celui qui est livrable.
 """
-    return result + delivery_contract(path, text)
+    return result + delivery_contract(path, text) + contradictor_scope_contract(path, text)
 
 
 def insert(text, addition):
@@ -227,7 +249,12 @@ def migrate(base, backup=True, refresh_existing=False, check=False):
         text = path.read_text(errors="replace")
         needs_creator_contract = is_creator(path) and CREATOR_MARKER not in text
         needs_delivery_contract = bool(delivery_contract(path, text)) and DELIVERY_MARKER not in text
-        if MARKER in text and not refresh_existing and not needs_creator_contract and not needs_delivery_contract:
+        needs_contradictor_scope = (
+            bool(contradictor_scope_contract(path, text))
+            and CONTRADICTOR_SCOPE_MARKER not in text
+        )
+        if (MARKER in text and not refresh_existing and not needs_creator_contract
+                and not needs_delivery_contract and not needs_contradictor_scope):
             continue
         if MARKER in text:
             if refresh_existing:
@@ -239,6 +266,8 @@ def migrate(base, backup=True, refresh_existing=False, check=False):
                 desired = insert(desired, block(path, text))
             elif needs_delivery_contract:
                 desired = insert(desired, delivery_contract(path, text))
+            elif needs_contradictor_scope:
+                desired = insert(desired, contradictor_scope_contract(path, text))
         else:
             desired = insert(text, block(path, text))
         if desired == text:

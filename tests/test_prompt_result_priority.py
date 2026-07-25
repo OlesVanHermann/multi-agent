@@ -85,6 +85,21 @@ def test_migration_adds_role_specific_delivery_contracts(tmp_path):
     assert REBALANCE.migrate(tmp_path, backup=False) == []
 
 
+def test_migration_expands_contradictor_scope_but_keeps_master_as_recipient(tmp_path):
+    directory = tmp_path / "prompts" / "345-demo"
+    directory.mkdir(parents=True)
+    contradictor = directory / "345-245-system.md"
+    contradictor.write_text(
+        "# 345-245 — Contradictor\n\n## Priorité au résultat\n\nAncien contrat.\n"
+    )
+    assert REBALANCE.migrate(tmp_path, backup=False) == [contradictor]
+    text = contradictor.read_text()
+    assert "tous les agents `NNN-YXX`" in text
+    assert "Relance du développement" in text
+    assert "seul destinataire autorisé" in text
+    assert REBALANCE.migrate(tmp_path, backup=False) == []
+
+
 def test_creators_do_not_route_cycles_from_soft_score_thresholds():
     paths = (
         ROOT / "prompts" / "160-create-x45" / "160-160-system.md",

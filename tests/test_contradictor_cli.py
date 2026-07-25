@@ -14,7 +14,8 @@ SPEC.loader.exec_module(MODULE)
 def make_triangle(tmp_path):
     directory = tmp_path / "prompts" / "345-demo"
     directory.mkdir(parents=True)
-    for agent_id in ("345-145", "345-245"):
+    for agent_id in ("345-145", "345-245", "345-345", "345-545",
+                     "345-745", "345-845", "345-945"):
         for kind in ("system", "memory", "methodology"):
             (directory / f"{agent_id}-{kind}.md").write_text(f"{agent_id} {kind}\n")
     (directory / "345-145.history").write_text("request\naction\n")
@@ -32,7 +33,17 @@ def test_collect_resolves_roles_and_writes_canonical_snapshot(tmp_path, monkeypa
     payload = json.loads((root / "snapshot.json").read_text())
     assert payload["target"] == "345-145"
     assert payload["contradictor"] == "345-245"
-    assert payload["schema"] == "multi-agent.contradictor.snapshot.v1"
+    assert payload["schema"] == "multi-agent.contradictor.snapshot.v2"
+    assert payload["analysis_scope"] == [
+        "345-145", "345-245", "345-345", "345-545",
+        "345-745", "345-845", "345-945",
+    ]
+    assert payload["delivery_target"] == "345-145"
+    assert set(payload["evidence"]["panes"]) == set(payload["analysis_scope"])
+    assert set(payload["evidence"]["histories"]) == set(payload["analysis_scope"])
+    assert set(payload["analysis_view"]["activity_by_agent"]) == set(
+        payload["analysis_scope"]
+    )
     assert (root / "state.json").is_file()
 
 
@@ -55,9 +66,13 @@ def test_send_transmits_exact_conclusion_and_archives_proof(tmp_path, monkeypatc
     monkeypatch.setattr(MODULE, "BASE", tmp_path)
     output = tmp_path / "pool-requests" / "knowledge" / "contradictor" / "345-245"
     output.mkdir(parents=True)
-    conclusion = ("CONCLUSION CONTRADICTOR\nCible : 345-145\nVerdict : ÉTABLI\n"
-                  "Constat : écart.\nCorrection demandée : avancer.\n"
-                  "Résultat attendu : progression.\n")
+    conclusion = (
+        "CONCLUSION CONTRADICTOR\nCible : 345-145\nVerdict : ÉTABLI\n"
+        "Synthèse du triangle : développement arrêté après le dispatch.\n"
+        "Constat : écart.\nCorrection demandée : avancer.\n"
+        "Relance du développement : redispatcher 345-345.\n"
+        "Résultat attendu : progression.\n"
+    )
     (output / "conclusion.md").write_text(conclusion)
     captured = {}
 
@@ -95,7 +110,10 @@ def test_analysis_view_detects_duplicate_and_memory_conflict():
     streams = {name: {"available": True, "error": "", "entries": entries if name == "wal" else []}
                for name in ("inbox", "outbox", "wal")}
     tasks = [{"id": "task-1", "path": "plans/demo/plan-DOING/A/task-1"}]
-    view = MODULE.analysis_view("345-145", tasks, "- Tache active : aucune", streams)
+    view = MODULE.analysis_view(
+        "345-145", ["345-145", "345-245", "345-745"],
+        tasks, "- Tache active : aucune", streams
+    )
     assert view["active_task"]["id"] == "task-1"
     assert view["duplicate_dispatches"][0]["count"] == 2
     assert view["memory_conflicts"][0]["type"] == "active_task_vs_memory"
@@ -107,8 +125,11 @@ def test_send_archives_message_queued_for_offline_target(tmp_path, monkeypatch):
     output = tmp_path / "pool-requests" / "knowledge" / "contradictor" / "345-245"
     output.mkdir(parents=True)
     (output / "conclusion.md").write_text(
-        "Cible : 345-145\nVerdict : ÉTABLI\nConstat : écart.\n"
-        "Correction demandée : avancer.\nRésultat attendu : progression.\n"
+        "Cible : 345-145\nVerdict : ÉTABLI\n"
+        "Synthèse du triangle : développement arrêté.\nConstat : écart.\n"
+        "Correction demandée : avancer.\n"
+        "Relance du développement : redispatcher 345-345.\n"
+        "Résultat attendu : progression.\n"
     )
 
     def fake_run(*args, **kwargs):

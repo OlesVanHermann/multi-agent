@@ -1,15 +1,16 @@
-# Contradictor 2XX — analyse et conclusion du 1XX
+# Contradictor 2XX — vue du triangle et relance par le 1XX
 
-Chaque mono, x45 ou z21 possède un Contradictor local `NNN-2XX`. Sa cible est
-toujours le `NNN-1XX` du même groupe. Il ne remplace ni l'Observer `5XX`, ni
+Chaque mono, x45 ou z21 possède un Contradictor local `NNN-2XX`. Il analyse
+tous les agents locaux `NNN-YXX`, mais sa conclusion est toujours envoyée
+uniquement au `NNN-1XX` du même groupe. Il ne remplace ni l'Observer `5XX`, ni
 l'Architect `9XX`.
 
 ## Valeur produite
 
-Le `2XX` vérifie la cohérence de la chaîne :
+Le `2XX` reconstruit la chaîne complète du triangle :
 
 ```text
-demande → compréhension du 1XX → décision → action → résultat
+demande → décision du 1XX → dispatchs → actions NNN-YXX → résultats → état actuel
 ```
 
 Il détecte notamment une mémoire ancienne utilisée comme whitelist, un refus
@@ -22,8 +23,9 @@ pas à la demande.
 ### `analyse`
 
 `analyse` suffit : l'utilisateur ne fournit ni cible, ni paquet, ni méthode. Le
-Contradictor déduit son `1XX`, retrouve l'activité pertinente et utilise les
-preuves bornées disponibles. Une discussion peut suivre avec l'utilisateur.
+Contradictor déduit son triangle et son `1XX`, retrouve l'activité pertinente
+de chaque agent `NNN-YXX` et utilise les preuves bornées disponibles. Une
+discussion peut suivre avec l'utilisateur.
 
 La collecte technique correspond à :
 
@@ -31,9 +33,10 @@ La collecte technique correspond à :
 ./scripts/contradictor.sh collect 301
 ```
 
-Le snapshot contient une `analysis_view` déjà corrélée : tâche active,
-dispatchs du Master, doublons, terminaux, corrélations, conflits de mémoire et
-artefacts ciblés. Le modèle lit cette vue avant les preuves brutes.
+Le snapshot contient `analysis_scope`, les prompts, panes, historiques et logs
+par agent, ainsi qu'une `analysis_view.activity_by_agent` corrélée. Il expose
+aussi la tâche active, les dispatchs, doublons, terminaux, corrélations,
+conflits de mémoire et artefacts ciblés.
 
 Chaque réponse se termine toujours par une section autonome :
 
@@ -41,11 +44,13 @@ Chaque réponse se termine toujours par une section autonome :
 ## Conclusion proposée pour NNN-1XX
 
 Verdict : ÉTABLI | PROBABLE | NON CONCLUANT
+Synthèse du triangle : ...
 Constat : ...
 Preuve : ...
 Origine : ...
 Impact : ...
 Correction demandée : ...
+Relance du développement : 1. ... 2. ... 3. ...
 Résultat attendu : ...
 ```
 
@@ -54,7 +59,8 @@ La conclusion évolue pendant la discussion, mais reste à tout moment prête à
 
 ### `envoie`
 
-`envoie` transmet uniquement la dernière conclusion au `1XX` cible. Le `2XX`
+`envoie` transmet uniquement la dernière conclusion au `1XX` cible, jamais aux
+autres agents du triangle. Le `2XX`
 retire le dialogue et les questions adressées à l'utilisateur, conserve une
 copie exacte et une preuve d'envoi, puis confirme l'envoi dans le TUI.
 
@@ -70,8 +76,9 @@ La transmission technique correspond à :
 
 ## Autorité et preuves
 
-Le Contradictor peut lire les preuves autorisées concernant son `1XX` et écrire
-son rapport sous `pool-requests/knowledge/contradictor/<ID-2XX>/`. Il ne lit
+Le Contradictor peut lire les preuves autorisées concernant les agents
+`NNN-YXX` de son triangle et écrire son rapport sous
+`pool-requests/knowledge/contradictor/<ID-2XX>/`. Il ne lit
 jamais les secrets, credentials, oracles ou données held-out.
 
 Le collecteur technique conserve actuellement sa route de compatibilité

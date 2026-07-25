@@ -16,6 +16,7 @@ BASE = Path(__file__).resolve().parents[2]
 MAX_TEXT = 200_000
 MAX_FILES = 30
 MAX_FIELD = 8_000
+MAX_AGENTS = 10
 
 
 def timestamp():
@@ -43,6 +44,22 @@ def role_id(directory, triangle, hundreds):
     if len(matches) != 1:
         raise SystemExit(f"rôle {hundreds}XX ambigu ou absent dans {directory}")
     return matches[0].name.removesuffix("-system.md")
+
+
+def triangle_agent_ids(directory, triangle):
+    """Détecte les agents locaux depuis la topologie matérialisée."""
+    pattern = re.compile(rf"^{re.escape(triangle)}-(\d{{3}})-system\.md$")
+    agents = sorted({
+        f"{triangle}-{match.group(1)}"
+        for path in directory.glob(f"{triangle}-???-system.md")
+        if (match := pattern.match(path.name))
+    })
+    if not agents or len(agents) > MAX_AGENTS:
+        raise SystemExit(
+            f"topologie {triangle} absente ou trop large "
+            f"({len(agents)} agents, limite {MAX_AGENTS})"
+        )
+    return agents
 
 
 def tail(path, lines):
@@ -121,14 +138,14 @@ def active_tasks(plan_root):
 def related(entry, triangle, target, contradictor, task_ids):
     fields = entry["fields"]
     agents = {fields.get("agent_id", ""), fields.get("from_agent", ""),
-              fields.get("to_agent", "")}
+              fields.get("to_agent", ""), fields.get("stream_agent", "")}
     if any(agent in {target, contradictor} or agent.startswith(f"{triangle}-")
            for agent in agents if agent):
         return True
     return fields.get("task_id", "") in task_ids
 
 
-def analysis_view(target, task_list, memory_text, streams):
+def analysis_view(target, triangle_agents, task_list, memory_text, streams):
     active = task_list[0] if len(task_list) == 1 else None
     task_ids = {task["id"] for task in task_list}
     wal = streams["wal"]["entries"]
@@ -174,7 +191,32 @@ def analysis_view(target, task_list, memory_text, streams):
     correlations = sorted({entry["fields"].get("correlation_id", "")
                            for source in streams.values() for entry in source["entries"]
                            if entry["fields"].get("correlation_id")})
-    return {"target": target, "active_task": active,
+    activity_by_agent = {}
+    for agent in triangle_agents:
+        events = []
+        for source_name, source in streams.items():
+            for entry in source["entries"]:
+                fields = entry["fields"]
+                actors = {
+                    fields.get("agent_id", ""), fields.get("from_agent", ""),
+                    fields.get("to_agent", ""), fields.get("stream_agent", ""),
+                }
+                if agent in actors:
+                    events.append({
+                        "source": source_name,
+                        "id": entry["id"],
+                        "event": fields.get("event", ""),
+                        "task_id": fields.get("task_id", ""),
+                        "from_agent": fields.get("from_agent", ""),
+                        "to_agent": fields.get("to_agent", ""),
+                        "correlation_id": fields.get("correlation_id", ""),
+                    })
+        activity_by_agent[agent] = {
+            "event_count": len(events),
+            "recent_events": events[-30:],
+        }
+    return {"target": target, "triangle_agents": triangle_agents,
+            "activity_by_agent": activity_by_agent, "active_task": active,
             "active_task_candidates": task_list,
             "memory_active_task_declaration": memory_line,
             "memory_conflicts": conflicts, "dispatches": dispatches,
@@ -213,60 +255,75 @@ def collect(triangle):
     directory = prompt_directory(triangle)
     target = role_id(directory, triangle, "1")
     contradictor = role_id(directory, triangle, "2")
+    triangle_agents = triangle_agent_ids(directory, triangle)
     output = BASE / "pool-requests" / "knowledge" / "contradictor" / contradictor
     output.mkdir(parents=True, exist_ok=True)
 
     prompt_evidence = {}
-    for kind in ("system", "memory", "methodology"):
-        path = directory / f"{target}-{kind}.md"
-        prompt_evidence[kind] = {"path": str(path.relative_to(BASE)),
-                                 "text": bounded_text(path)}
+    panes = {}
+    histories = {}
+    logs = {}
+    for agent in triangle_agents:
+        prompt_evidence[agent] = {}
+        for kind in ("system", "memory", "methodology"):
+            path = directory / f"{agent}-{kind}.md"
+            prompt_evidence[agent][kind] = {
+                "path": str(path.relative_to(BASE)),
+                "text": bounded_text(path),
+            }
+        panes[agent] = run([
+            "tmux", "capture-pane", "-p", "-t", f"agent-{agent}:0", "-S", "-1000"
+        ])
+        histories[agent] = tail(directory / f"{agent}.history", 500)
+        logs[agent] = {
+            "events": tail(BASE / "logs" / agent / "events.jsonl", 1000),
+            "bridge": tail(BASE / "logs" / agent / "bridge.log", 1000),
+        }
 
-    pane = run(["tmux", "capture-pane", "-p", "-t", f"agent-{target}:0",
-                "-S", "-1000"])
-    combined_prompts = "\n".join(value["text"] for value in prompt_evidence.values())
+    target_prompts = prompt_evidence[target]
+    combined_prompts = "\n".join(value["text"] for value in target_prompts.values())
     plan_root = declared_path(combined_prompts, r"\$BASE/(plans/[^\s`]+/plan-DOING)/?")
     artifact_root = declared_path(combined_prompts, r"\$BASE/(pipeline/[^\s`/]+)")
     task_list = active_tasks(plan_root)
     task_ids = {task["id"] for task in task_list}
     streams = {
-        "inbox": redis_entries(f"agent:{target}:inbox"),
-        "outbox": redis_entries(f"agent:{target}:outbox"),
+        "inbox": {"available": True, "error": "", "entries": []},
+        "outbox": {"available": True, "error": "", "entries": []},
         "wal": redis_entries("wal"),
     }
-    if task_ids:
-        streams["inbox"]["entries"] = [
-            entry for entry in streams["inbox"]["entries"]
-            if entry["fields"].get("task_id") in task_ids]
-        correlations = {entry["fields"].get("correlation_id", "")
-                        for entry in streams["inbox"]["entries"]}
-        streams["outbox"]["entries"] = [
-            entry for entry in streams["outbox"]["entries"]
-            if entry["fields"].get("correlation_id", "") in correlations]
-        streams["wal"]["entries"] = [
-            entry for entry in streams["wal"]["entries"]
-            if entry["fields"].get("task_id") in task_ids]
-    else:
-        streams["wal"]["entries"] = [
-            entry for entry in streams["wal"]["entries"]
-            if related(entry, triangle, target, contradictor, task_ids)]
+    for agent in triangle_agents:
+        for source_name in ("inbox", "outbox"):
+            source = redis_entries(f"agent:{agent}:{source_name}")
+            streams[source_name]["available"] &= source["available"]
+            if source["error"]:
+                streams[source_name]["error"] += (
+                    f"{agent}: {source['error']}\n"
+                )
+            for entry in source["entries"]:
+                entry["fields"].setdefault("stream_agent", agent)
+                streams[source_name]["entries"].append(entry)
+    for source in streams.values():
+        source["entries"] = [
+            entry for entry in source["entries"]
+            if related(entry, triangle, target, contradictor, task_ids)
+            or entry["fields"].get("task_id", "") in task_ids
+        ]
     payload = {
-        "schema": "multi-agent.contradictor.snapshot.v1",
+        "schema": "multi-agent.contradictor.snapshot.v2",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "triangle": triangle,
         "contradictor": contradictor,
         "target": target,
+        "analysis_scope": triangle_agents,
+        "delivery_target": target,
         "limits": {"pane_lines": 1000, "history_lines": 500,
                    "log_lines": 1000, "stream_entries": 200,
                    "recent_files": MAX_FILES, "text_chars": MAX_TEXT},
         "evidence": {
             "prompts": prompt_evidence,
-            "history": tail(directory / f"{target}.history", 500),
-            "pane": pane,
-            "logs": {
-                "events": tail(BASE / "logs" / target / "events.jsonl", 1000),
-                "bridge": tail(BASE / "logs" / target / "bridge.log", 1000),
-            },
+            "histories": histories,
+            "panes": panes,
+            "logs": logs,
             "streams": streams,
             "active_tasks": task_list,
             "recent_artifacts": recent_files([artifact_root] if artifact_root else []),
@@ -275,7 +332,8 @@ def collect(triangle):
                        "bench/heldout.txt"],
     }
     payload["analysis_view"] = analysis_view(
-        target, task_list, prompt_evidence["memory"]["text"], streams)
+        target, triangle_agents, task_list,
+        target_prompts["memory"]["text"], streams)
     encoded = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode()
     snapshots = output / "snapshots"
     snapshots.mkdir(parents=True, exist_ok=True)
@@ -287,6 +345,7 @@ def collect(triangle):
     temporary.replace(destination)
     digest = hashlib.sha256(encoded).hexdigest()
     state = {"triangle": triangle, "contradictor": contradictor, "target": target,
+             "analysis_scope": triangle_agents, "delivery_target": target,
              "snapshot": str(immutable.relative_to(BASE)),
              "latest_snapshot": str(destination.relative_to(BASE)),
              "snapshot_sha256": digest,
@@ -304,8 +363,11 @@ def send(triangle):
     if not conclusion.is_file() or not conclusion.read_text().strip():
         raise SystemExit(f"conclusion absente: {conclusion}")
     message = conclusion.read_text()
-    required = (f"Cible : {target}", "Verdict :", "Constat :",
-                "Correction demandée :", "Résultat attendu :")
+    required = (
+        f"Cible : {target}", "Verdict :", "Synthèse du triangle :",
+        "Constat :", "Correction demandée :", "Relance du développement :",
+        "Résultat attendu :",
+    )
     missing = [field for field in required if field not in message]
     if missing:
         raise SystemExit(f"conclusion invalide, champs absents: {missing}")
