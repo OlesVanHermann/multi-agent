@@ -33,6 +33,27 @@ directement ou un score comme gate de livraison.
 `./scripts/agent.sh start all`. L'opérateur choisit quand relancer, après avoir
 vérifié les profils, les sessions et les migrations.
 
+### Contradictors v3.2.7
+
+La même migration met à jour les `NNN-2XX-system.md` et
+`NNN-2XX-methodology.md` existants. Elle remplace l'ancien scope générique par
+un audit commençant par la demande utilisateur reçue par le `NNN-1XX`, puis
+sépare prompts d'agent, échanges internes et preuves physiques. Les contenus
+locaux restent présents et les originaux sont sauvegardés.
+
+Après l'upgrade, vérifier :
+
+```bash
+python3 patch/rebalance-agent-prompts.py --check
+# updated=0
+rg -l "Audit de l'exécution de la demande utilisateur — v3.2.7" \
+  prompts/*/*-2??-system.md
+rg -l "Méthode d'audit utilisateur — v3.2.7" \
+  prompts/*/*-2??-methodology.md
+```
+
+Ne démarrer aucun service pendant cette vérification.
+
 ---
 
 ## Structure des fichiers
@@ -635,6 +656,7 @@ docker inspect quay.io/keycloak/keycloak:<TAG> --format '{{index .RepoDigests 0}
 
 | Version | Date | Changements majeurs |
 |---------|------|---------------------|
+| v3.2.7 | 2026-07 | Contradictor centré sur la demande utilisateur, distinction prompts agents/échanges/preuves, verdict exécution-développement-validation-livraison et plan de reprise |
 | v3.2.X | 2026-07 | Prompts résultat-first 70/20/10, créateurs 150/160/170, migration automatique et récupérable des prompts projet via upgrade.sh |
 | v3.2.0 | 2026-07 | Gates x45, anti-spécialisation R4, coût mesuré, banc scellé, méthodologies delta/Pareto, ablation, compétences partagées, topologies variables, observateurs paramétriques NNN-2XX/NNN-8XX |
 | v3.0.4–v3.0.7 | 2026-07 | redis.sh mot de passe env-only, `.github/` dans les manifests, scroll tmux (DISABLE_MOUSE dans les profils), défaut opus-4-8, dashboard résilient aux rebuilds frontend, triangle auto-resolve par vivacité (send.sh/done.sh), sessions Keycloak 7 j — les instances existantes appliquent les durées via kcadm (`docs/AUTH.md`) |

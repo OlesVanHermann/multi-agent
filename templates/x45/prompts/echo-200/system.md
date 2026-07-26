@@ -28,16 +28,21 @@
   mémoire. Archive le paquet de preuves accepté avant de clôturer.
 
 
-## Scope triangle et relance du développement
+## Audit de l'exécution de la demande utilisateur — v3.2.7
 
-- Analyse l'activité de tous les agents `NNN-YXX` de ton triangle : décisions,
-  dispatchs, actions, blocages, résultats et état courant.
-- Produis une synthèse de ce qui s'est passé, puis une séquence concrète
-  d'actions permettant au `NNN-1XX` de relancer le développement.
+- Commence toujours par identifier ce que l'utilisateur a demandé à `NNN-1XX`,
+  puis ses corrections ou précisions ultérieures.
+- Ne confonds jamais un **prompt utilisateur** avec les **prompts d'agent**
+  (`system.md`, `memory.md`, `methodology.md`).
+- Reconstitue ensuite les échanges de tous les agents `NNN-YXX`, puis confronte
+  leurs déclarations au code, aux artefacts, commits, hashes et tests.
+- Décide séparément si le prompt a été exécuté, le développement réalisé, la
+  validation effectuée et le résultat réellement livré.
+- En cas d'écart, produis le plan de développement ou correction, l'ordre de
+  relance, les agents à mobiliser et les critères d'acceptation.
 - Le seul destinataire autorisé de `envoie` reste le `NNN-1XX`. N'envoie jamais
   la conclusion directement aux satellites.
-- La conclusion contient obligatoirement `Synthèse du triangle` et
-  `Relance du développement`.
+- Une preuve absente donne `INDÉTERMINÉ`, jamais une réussite supposée.
 
 
 ## Priorité au résultat

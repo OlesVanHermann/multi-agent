@@ -7,11 +7,27 @@ l'Architect `9XX`.
 
 ## Valeur produite
 
-Le `2XX` reconstruit la chaîne complète du triangle :
+Le `2XX` commence par reconstruire l'intention utilisateur, puis la chaîne
+complète du triangle :
 
 ```text
-demande → décision du 1XX → dispatchs → actions NNN-YXX → résultats → état actuel
+prompt utilisateur → amendements → résultat attendu
+→ décision du 1XX → dispatchs → actions NNN-YXX
+→ preuves physiques → résultat réellement livré
 ```
+
+### Ne pas confondre les deux sens de « prompt »
+
+| Source | Nom canonique | Usage |
+|---|---|---|
+| message utilisateur reçu par le `1XX` | `USER_REQUEST` | définit le résultat attendu |
+| `system.md`, `memory.md`, `methodology.md` | `AGENT_INSTRUCTION` | explique rôle, contexte et méthode |
+| messages entre agents | `INTER_AGENT_MESSAGE` | montre décisions et déclarations |
+| code, artefacts, commits, hashes, tests | `PHYSICAL_EVIDENCE` | prouve ou réfute la réalisation |
+
+Une instruction d'agent ne remplace jamais la demande utilisateur. Un `DONE`,
+un échange ou un fichier modifié ne prouve jamais seul que le développement
+fonctionne et répond à la demande.
 
 Il détecte notamment une mémoire ancienne utilisée comme whitelist, un refus
 injustifié, une instruction déformée, un mauvais dispatch, une attente
@@ -33,10 +49,11 @@ La collecte technique correspond à :
 ./scripts/contradictor.sh collect 301
 ```
 
-Le snapshot contient `analysis_scope`, les prompts, panes, historiques et logs
-par agent, ainsi qu'une `analysis_view.activity_by_agent` corrélée. Il expose
-aussi la tâche active, les dispatchs, doublons, terminaux, corrélations,
-conflits de mémoire et artefacts ciblés.
+Le snapshot v3 contient `analysis_view.user_requests` dans l'ordre,
+`evidence.agent_prompt_files`, `inter_agent_exchanges`,
+`activity_by_agent` et `physical_evidence`. Il expose aussi la tâche active,
+les dispatchs, doublons, terminaux, corrélations, conflits de mémoire et
+artefacts ciblés.
 
 Chaque réponse se termine toujours par une section autonome :
 
@@ -44,15 +61,27 @@ Chaque réponse se termine toujours par une section autonome :
 ## Conclusion proposée pour NNN-1XX
 
 Verdict : ÉTABLI | PROBABLE | NON CONCLUANT
-Synthèse du triangle : ...
-Constat : ...
-Preuve : ...
-Origine : ...
-Impact : ...
-Correction demandée : ...
-Relance du développement : 1. ... 2. ... 3. ...
+Demande utilisateur initiale : ...
+Corrections ou précisions ultérieures : ...
 Résultat attendu : ...
+Exécution du prompt : OUI | PARTIELLE | NON | INDÉTERMINÉE
+Développement réalisé : OUI | PARTIEL | NON | INDÉTERMINÉ
+Validation réalisée : OUI | PARTIELLE | NON
+Résultat effectivement livré : OUI | PARTIEL | NON
+Échanges déterminants : ...
+Écart entre demande et résultat : ...
+Cause de l'écart : ...
+Preuves : ...
+Plan de développement ou correction : 1. ... 2. ... 3. ...
+Agents à mobiliser : ...
+Ordre de relance : ...
+Critères d'acceptation : ...
+Résultat final attendu : ...
 ```
+
+`INDÉTERMINÉ` est obligatoire lorsqu'une preuve nécessaire manque. Si tout est
+déjà développé, le plan se limite aux vérifications ou à la livraison encore
+nécessaires.
 
 La conclusion évolue pendant la discussion, mais reste à tout moment prête à
 être envoyée. `analyse` n'envoie rien au `1XX`.

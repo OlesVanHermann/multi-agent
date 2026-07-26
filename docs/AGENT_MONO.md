@@ -8,6 +8,11 @@ Le format **mono v3.2** est une paire : un principal `3XX-1XX` et son
 Contradictor `3XX-2XX`. Chacun utilise le triplet x45
 `system.md + memory.md + methodology.md`.
 
+Le Contradictor v3.2.7 audite d'abord la demande utilisateur reçue par le
+principal. Les trois fichiers de son propre prompt décrivent sa méthode mais ne
+sont jamais confondus avec cette demande. Il vérifie ensuite les échanges et
+les preuves physiques avant de proposer une reprise au principal.
+
 ---
 
 ## Quand utiliser le format mono

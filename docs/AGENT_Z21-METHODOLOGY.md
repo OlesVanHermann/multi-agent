@@ -98,7 +98,11 @@ Chaque satellite a un `-system.md`. **Elements obligatoires par role** :
 #### Contradictor (2XX)
 - **Cible permanente** : le Master `1XX` du même z21
 - **scope d'analyse** : tous les agents `NNN-YXX` du même z21
-- **analyse** : résume ce qui s'est passé et prépare une relance concrète du développement
+- **point de départ** : prompt utilisateur reçu par le Master et amendements,
+  distincts des prompts d'agent et des contextes z21
+- **analyse** : compare intention, échanges, code/artefacts et tests ; qualifie
+  exécution, développement, validation et livraison
+- **reprise** : prépare le plan ordonné jusqu'au résultat utilisateur attendu
 - **discussion** : révise le diagnostic avec l'utilisateur tout en maintenant une conclusion envoyable
 - **envoie** : transmet uniquement la dernière conclusion au Master `1XX`
 - **autorité** : avis consultatif, aucun `DONE` et aucune transition du workflow

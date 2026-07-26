@@ -11,7 +11,10 @@ BASE = Path(__file__).resolve().parents[1]
 MARKER = "## Priorité au résultat"
 CREATOR_MARKER = "## Contrat de création résultat-first"
 DELIVERY_MARKER = "## Contrat de livraison piloté par les preuves"
-CONTRADICTOR_SCOPE_MARKER = "## Scope triangle et relance du développement"
+LEGACY_CONTRADICTOR_SCOPE_MARKER = "## Scope triangle et relance du développement"
+CONTRADICTOR_SCOPE_MARKER = "## Audit de l'exécution de la demande utilisateur — v3.2.7"
+CONTRADICTOR_METHOD_MARKER = "## Méthode d'audit utilisateur — v3.2.7"
+CONTRADICTOR_FALLBACK_MARKER = "### Demande utilisateur non attribuée"
 COMMUNICATION_MARKER = "## Contrat de communication déterministe"
 
 
@@ -127,14 +130,59 @@ def contradictor_scope_contract(path, text):
 
 {CONTRADICTOR_SCOPE_MARKER}
 
-- Analyse l'activité de tous les agents `NNN-YXX` de ton triangle : décisions,
-  dispatchs, actions, blocages, résultats et état courant.
-- Produis une synthèse de ce qui s'est passé, puis une séquence concrète
-  d'actions permettant au `NNN-1XX` de relancer le développement.
+- Commence par identifier la demande adressée par l'utilisateur au `NNN-1XX`,
+  ses corrections ultérieures et le dernier résultat attendu.
+- Distingue strictement `USER_REQUEST`, `AGENT_INSTRUCTION`,
+  `INTER_AGENT_MESSAGE` et `PHYSICAL_EVIDENCE`. Les fichiers `system.md`,
+  `memory.md` et `methodology.md` ne sont jamais des prompts utilisateur.
+- Reconstitue ensuite les échanges de tous les agents `NNN-YXX`, puis confronte
+  leurs déclarations au code, aux artefacts, commits, hashes et tests.
+- Qualifie séparément l'exécution du prompt, le développement, la validation et
+  la livraison avec `OUI`, `PARTIEL`, `NON` ou `INDÉTERMINÉ`.
+- Pour tout écart, donne au `NNN-1XX` le plan de développement ou correction,
+  les agents à mobiliser, l'ordre de relance et les critères d'acceptation.
 - Le seul destinataire autorisé de `envoie` reste le `NNN-1XX`. N'envoie jamais
   la conclusion directement aux satellites.
-- La conclusion contient obligatoirement `Synthèse du triangle` et
-  `Relance du développement`.
+- Un `DONE`, un échange ou un fichier modifié ne prouve jamais seul le résultat.
+"""
+
+
+def contradictor_methodology_contract():
+    return f"""
+
+{CONTRADICTOR_METHOD_MARKER}
+
+Cet ordre remplace toute séquence antérieure contradictoire :
+
+1. `USER_REQUEST` : demande initiale au `1XX`, amendements, résultat attendu.
+   Si elle est absente, les historiques/panes sont seulement des candidats non
+   attribués ; ne jamais substituer un prompt d'agent.
+2. `AGENT_INSTRUCTION` : rôles et contraintes, sans les confondre avec la demande.
+3. `INTER_AGENT_MESSAGE` : décisions, dispatchs, réponses et terminaux de tout le triangle.
+4. `PHYSICAL_EVIDENCE` : code, artefacts, commits, hashes et tests.
+5. Verdict séparé sur exécution, développement, validation et livraison.
+6. Écart causal puis plan concret jusqu'au résultat final attendu.
+
+La conclusion contient toutes les rubriques canoniques de
+`docs/CONTRADICTOR.md`. Une preuve absente vaut `INDÉTERMINÉ`.
+
+{CONTRADICTOR_FALLBACK_MARKER}
+
+Si `analysis_view.user_requests` est vide, les historiques et panes du `1XX`
+restent des candidats non attribués. Leur origine incertaine impose
+`INDÉTERMINÉ`; un prompt d'agent ne les remplace jamais.
+"""
+
+
+def contradictor_fallback_contract():
+    return f"""
+
+{CONTRADICTOR_FALLBACK_MARKER}
+
+Si `analysis_view.user_requests` est vide, les historiques et panes du `1XX`
+ne sont que des candidats non attribués. Signale cette incertitude et conclus
+`INDÉTERMINÉ` si leur origine ne peut être établie. Ne substitue jamais un
+fichier `system.md`, `memory.md` ou `methodology.md` à la demande utilisateur.
 """
 
 
@@ -309,6 +357,7 @@ def migrate(base, backup=True, refresh_existing=False, check=False):
             if refresh_existing:
                 cleaned = remove_sections(text, DELIVERY_MARKER)
                 cleaned = remove_sections(cleaned, CONTRADICTOR_SCOPE_MARKER)
+                cleaned = remove_sections(cleaned, LEGACY_CONTRADICTOR_SCOPE_MARKER)
                 cleaned = remove_sections(cleaned, COMMUNICATION_MARKER)
                 desired = refresh(cleaned, block(path, cleaned))
             else:
@@ -318,6 +367,8 @@ def migrate(base, backup=True, refresh_existing=False, check=False):
             if needs_delivery_contract and DELIVERY_MARKER not in desired:
                 desired = insert(desired, delivery_contract(path, text))
             if needs_contradictor_scope and CONTRADICTOR_SCOPE_MARKER not in desired:
+                desired = remove_sections(
+                    desired, LEGACY_CONTRADICTOR_SCOPE_MARKER)
                 desired = insert(desired, contradictor_scope_contract(path, text))
             if needs_communication_contract and COMMUNICATION_MARKER not in desired:
                 desired = insert(desired, communication_contract(path, text))
@@ -334,6 +385,41 @@ def migrate(base, backup=True, refresh_existing=False, check=False):
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, destination)
         path.write_text(desired)
+        changed.append(path)
+
+    methodology_candidates = []
+    for root in (base / "prompts", base / "examples"):
+        if not root.exists():
+            continue
+        methodology_candidates.extend(
+            path for path in root.rglob("*-2??-methodology.md")
+            if path.is_file() and not path.is_symlink() and "removed" not in path.parts
+        )
+    template_root = base / "templates" / "x45" / "prompts"
+    if template_root.exists():
+        methodology_candidates.extend(
+            path for path in template_root.rglob("methodology.md")
+            if path.is_file() and path.parent.name in {"contradictor-2xx", "echo-200"}
+        )
+    for path in sorted(set(methodology_candidates)):
+        text = path.read_text(errors="replace")
+        needs_method = CONTRADICTOR_METHOD_MARKER not in text
+        needs_fallback = CONTRADICTOR_FALLBACK_MARKER not in text
+        if not needs_method and not needs_fallback:
+            continue
+        if check:
+            changed.append(path)
+            continue
+        if backup:
+            relative = path.relative_to(base)
+            destination = backup_root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, destination)
+        addition = (
+            contradictor_methodology_contract()
+            if needs_method else contradictor_fallback_contract()
+        )
+        path.write_text(insert(text, addition))
         changed.append(path)
     return changed
 

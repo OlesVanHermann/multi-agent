@@ -145,7 +145,68 @@ def related(entry, triangle, target, contradictor, task_ids):
     return fields.get("task_id", "") in task_ids
 
 
-def analysis_view(target, triangle_agents, task_list, memory_text, streams):
+def stream_order(message_id):
+    """Ordre Redis déterministe, même pour les identifiants synthétiques."""
+    try:
+        milliseconds, sequence = message_id.split("-", 1)
+        return int(milliseconds), int(sequence)
+    except (AttributeError, ValueError):
+        return 0, 0
+
+
+def classify_messages(target, triangle_agents, streams):
+    """Sépare intention utilisateur et protocole interne.
+
+    `requester=cli` reste autoritatif après plusieurs relais : on ne perd donc
+    pas l'origine utilisateur lorsque le Master redispatche sa demande.
+    """
+    user_requests = []
+    inter_agent = []
+    seen = set()
+    for source_name in ("inbox", "outbox"):
+        for entry in streams[source_name]["entries"]:
+            fields = entry["fields"]
+            identity = (source_name, fields.get("stream_agent", ""), entry["id"])
+            if identity in seen:
+                continue
+            seen.add(identity)
+            prompt = fields.get("prompt", "").strip()
+            if not prompt:
+                continue
+            item = {
+                "source": source_name,
+                "stream_agent": fields.get("stream_agent", ""),
+                "id": entry["id"],
+                "from_agent": fields.get("from_agent", ""),
+                "to_agent": fields.get("to_agent", ""),
+                "event": fields.get("event", ""),
+                "task_id": fields.get("task_id", ""),
+                "cycle": fields.get("cycle", ""),
+                "correlation_id": fields.get("correlation_id", ""),
+                "requester": fields.get("requester", ""),
+                "prompt": prompt,
+            }
+            reaches_target = (
+                source_name == "inbox"
+                and fields.get("stream_agent", "") == target
+            )
+            user_origin = (
+                fields.get("from_agent", "") == "cli"
+                or fields.get("event", "").upper() == "USER_REQUEST"
+            )
+            if reaches_target and user_origin:
+                user_requests.append(item)
+            elif fields.get("from_agent", "") in triangle_agents:
+                inter_agent.append(item)
+    user_requests.sort(key=lambda item: stream_order(item["id"]))
+    inter_agent.sort(key=lambda item: stream_order(item["id"]))
+    for index, item in enumerate(user_requests):
+        item["request_kind"] = "INITIAL" if index == 0 else "AMENDMENT"
+    return user_requests, inter_agent
+
+
+def analysis_view(target, triangle_agents, task_list, memory_text, streams,
+                  target_history=None):
     active = task_list[0] if len(task_list) == 1 else None
     task_ids = {task["id"] for task in task_list}
     wal = streams["wal"]["entries"]
@@ -215,7 +276,33 @@ def analysis_view(target, triangle_agents, task_list, memory_text, streams):
             "event_count": len(events),
             "recent_events": events[-30:],
         }
+    user_requests, inter_agent = classify_messages(
+        target, triangle_agents, streams)
+    unattributed_candidates = []
+    if not user_requests:
+        unattributed_candidates = [
+            {"source": "target_history", "text": line,
+             "classification": "UNATTRIBUTED_CANDIDATE"}
+            for line in (target_history or [])[-20:] if line.strip()
+        ]
     return {"target": target, "triangle_agents": triangle_agents,
+            "user_requests": user_requests,
+            "unattributed_request_candidates": unattributed_candidates,
+            "inter_agent_exchanges": inter_agent,
+            "source_legend": {
+                "USER_REQUEST": "message utilisateur reçu par le 1XX",
+                "AGENT_INSTRUCTION": "fichier system/memory/methodology",
+                "INTER_AGENT_MESSAGE": "échange interne au triangle",
+                "PHYSICAL_EVIDENCE": "artefact, code, commit ou test vérifiable",
+            },
+            "execution_assessment": {
+                "prompt_executed": "TO_ASSESS",
+                "development_realized": "TO_ASSESS",
+                "validation_realized": "TO_ASSESS",
+                "result_delivered": "TO_ASSESS",
+                "allowed_values": ["YES", "PARTIAL", "NO", "UNDETERMINED"],
+                "rule": "DONE ou un message seul ne constitue pas une preuve physique",
+            },
             "activity_by_agent": activity_by_agent, "active_task": active,
             "active_task_candidates": task_list,
             "memory_active_task_declaration": memory_line,
@@ -309,7 +396,7 @@ def collect(triangle):
             or entry["fields"].get("task_id", "") in task_ids
         ]
     payload = {
-        "schema": "multi-agent.contradictor.snapshot.v2",
+        "schema": "multi-agent.contradictor.snapshot.v3",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "triangle": triangle,
         "contradictor": contradictor,
@@ -320,7 +407,7 @@ def collect(triangle):
                    "log_lines": 1000, "stream_entries": 200,
                    "recent_files": MAX_FILES, "text_chars": MAX_TEXT},
         "evidence": {
-            "prompts": prompt_evidence,
+            "agent_prompt_files": prompt_evidence,
             "histories": histories,
             "panes": panes,
             "logs": logs,
@@ -333,7 +420,15 @@ def collect(triangle):
     }
     payload["analysis_view"] = analysis_view(
         target, triangle_agents, task_list,
-        target_prompts["memory"]["text"], streams)
+        target_prompts["memory"]["text"], streams, histories[target])
+    payload["evidence"]["user_requests"] = payload["analysis_view"]["user_requests"]
+    payload["evidence"]["inter_agent_exchanges"] = (
+        payload["analysis_view"]["inter_agent_exchanges"])
+    payload["evidence"]["physical_evidence"] = {
+        "active_tasks": task_list,
+        "recent_artifacts": payload["evidence"]["recent_artifacts"],
+        "terminal_events": payload["analysis_view"]["terminal_events"],
+    }
     encoded = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode()
     snapshots = output / "snapshots"
     snapshots.mkdir(parents=True, exist_ok=True)
@@ -350,6 +445,14 @@ def collect(triangle):
              "latest_snapshot": str(destination.relative_to(BASE)),
              "snapshot_sha256": digest,
              "collected_at": payload["created_at"]}
+    if payload["analysis_view"]["user_requests"]:
+        latest_request = payload["analysis_view"]["user_requests"][-1]
+        state.update({
+            "task_id": latest_request.get("task_id", ""),
+            "cycle": latest_request.get("cycle", ""),
+            "correlation_id": latest_request.get("correlation_id", ""),
+            "requester": latest_request.get("requester", "") or "cli",
+        })
     (output / "state.json").write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps(state, ensure_ascii=False))
 
@@ -364,22 +467,48 @@ def send(triangle):
         raise SystemExit(f"conclusion absente: {conclusion}")
     message = conclusion.read_text()
     required = (
-        f"Cible : {target}", "Verdict :", "Synthèse du triangle :",
-        "Constat :", "Correction demandée :", "Relance du développement :",
-        "Résultat attendu :",
+        f"Cible : {target}", "Verdict :", "Demande utilisateur initiale :",
+        "Corrections ou précisions ultérieures :", "Résultat attendu :",
+        "Exécution du prompt :",
+        "Développement réalisé :", "Validation réalisée :",
+        "Résultat effectivement livré :", "Échanges déterminants :",
+        "Écart entre demande et résultat :", "Cause de l'écart :", "Preuves :",
+        "Plan de développement ou correction :", "Agents à mobiliser :",
+        "Ordre de relance :", "Critères d'acceptation :",
+        "Résultat final attendu :",
     )
     missing = [field for field in required if field not in message]
     if missing:
         raise SystemExit(f"conclusion invalide, champs absents: {missing}")
     env = os.environ.copy()
     env["FROM_AGENT"] = contradictor
+    state_path = output / "state.json"
+    state = {}
+    if state_path.is_file():
+        try:
+            state = json.loads(state_path.read_text())
+        except (OSError, ValueError):
+            state = {}
+    env["TASK_ID"] = state.get("task_id") or f"contradictor-audit-{triangle}"
+    env["CYCLE"] = state.get("cycle") or "audit"
+    env["CORRELATION_ID"] = (
+        state.get("correlation_id")
+        or state.get("snapshot_sha256", "")[:32]
+        or f"contradictor-{timestamp()}"
+    )
+    env["REQUESTER_ID"] = state.get("requester") or "cli"
+    env["OWNER_ID"] = contradictor
+    env["MESSAGE_EVENT"] = "ADVISORY_CONCLUSION"
     try:
         result = subprocess.run([str(BASE / "scripts" / "send.sh"), target], cwd=BASE,
                                 input=message, text=True, capture_output=True, env=env,
                                 timeout=20, check=False)
     except subprocess.TimeoutExpired as error:
         raise SystemExit(f"envoi expiré: {error}") from error
-    queued = "orphan queue" in (result.stderr or "")
+    queued = (
+        "orphan queue" in (result.stderr or "")
+        or "state=ORPHANED" in (result.stderr or "")
+    )
     if result.returncode != 0 and not queued:
         sys.stderr.write(result.stderr or result.stdout)
         raise SystemExit(result.returncode)
@@ -393,7 +522,6 @@ def send(triangle):
              "sent_at": datetime.now(timezone.utc).isoformat(),
              "delivery": "queued" if queued else "delivered",
              "snapshot_sha256": "", "transport": (result.stdout + result.stderr).strip()}
-    state_path = output / "state.json"
     if state_path.is_file():
         try:
             proof["snapshot_sha256"] = json.loads(state_path.read_text()).get(

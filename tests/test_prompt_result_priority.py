@@ -95,9 +95,27 @@ def test_migration_expands_contradictor_scope_but_keeps_master_as_recipient(tmp_
     assert REBALANCE.migrate(tmp_path, backup=False) == [contradictor]
     text = contradictor.read_text()
     assert "tous les agents `NNN-YXX`" in text
-    assert "Relance du développement" in text
+    assert "demande adressée par l'utilisateur" in text
+    assert "plan de développement ou correction" in text
     assert "seul destinataire autorisé" in text
     assert REBALANCE.migrate(tmp_path, backup=False) == []
+
+
+def test_migration_updates_existing_contradictor_methodology(tmp_path):
+    directory = tmp_path / "prompts" / "345-demo"
+    directory.mkdir(parents=True)
+    methodology = directory / "345-245-methodology.md"
+    methodology.write_text("# Méthodologie Contradictor\n\nAncien ordre.\n")
+    changed = REBALANCE.migrate(tmp_path, backup=True)
+    assert methodology in changed
+    text = methodology.read_text()
+    assert "Méthode d'audit utilisateur — v3.2.7" in text
+    assert "USER_REQUEST" in text
+    assert REBALANCE.migrate(tmp_path, backup=True) == []
+    backups = list(
+        (tmp_path / "removed" / "rebalance-prompts").rglob(
+            "345-245-methodology.md"))
+    assert len(backups) == 1
 
 
 def test_creators_do_not_route_cycles_from_soft_score_thresholds():

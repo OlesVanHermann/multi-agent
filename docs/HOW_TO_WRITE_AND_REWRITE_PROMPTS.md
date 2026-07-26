@@ -73,7 +73,7 @@ donne artificiellement plus de poids au processus qu'au travail.
 |---|---|
 | Principal mono | accomplir sa mission fonctionnelle et livrer le résultat |
 | Master `1XX` | faire aboutir la demande jusqu'à un résultat livré et vérifié |
-| Contradictor `2XX` | améliorer la décision du Master par une conclusion actionnable |
+| Contradictor `2XX` | établir si la demande utilisateur a été exécutée, développée, validée et livrée, puis donner le plan de reprise |
 | Developer `3XX` | produire un livrable fonctionnel, intégré et vérifié |
 | Observer `5XX` | établir si le résultat satisfait réellement le besoin |
 | Curator `7XX` | donner le contexte minimal permettant au Developer de réussir |
@@ -99,6 +99,13 @@ séparation des défauts Dev/actions Phase C/améliorations facultatives, Phase 
 appartenant au Master et Coach non bloquant. Aucun template ne doit encoder
 `score < 98` comme motif suffisant de nouveau cycle.
 
+Pour le Contradictor v3.2.7, le prompt impose l'ordre
+`USER_REQUEST → AGENT_INSTRUCTION → INTER_AGENT_MESSAGE → PHYSICAL_EVIDENCE`.
+Le terme « prompt utilisateur » désigne uniquement la demande reçue par le
+`1XX`, jamais `system.md`, `memory.md` ou `methodology.md`. La conclusion
+sépare exécution, développement, validation et livraison et fournit un plan
+ordonné lorsque le résultat n'est pas prouvé.
+
 Les sources normatives sont :
 
 - `prompts/AGENT.md` et `prompts/RULES.md` ;
@@ -121,7 +128,8 @@ python3 patch/rebalance-agent-prompts.py
 La migration :
 
 - sélectionne uniquement les prompts exécutables ;
-- ignore les memories, methodologies, documents, archives et symlinks loaders ;
+- ignore les memories, documents, archives et symlinks loaders ; seule la
+  méthodologie des Contradictors `NNN-2XX` reçoit aussi le contrat v3.2.7 ;
 - déduit la finalité depuis le rôle ;
 - ajoute `Priorité au résultat` sans remplacer le contenu métier local ;
 - injecte le contrat spécialisé de livraison dans les rôles 1XX/3XX/5XX/7XX/8XX/9XX ;

@@ -19,6 +19,10 @@ Les sections d'infrastructure partagée plus bas décrivent l'architecture x45
 historique et ses possibilités de mise à l'échelle ; elles ne remplacent pas
 la topologie locale v3.2.
 
+Depuis v3.2.7, le Contradictor commence par la demande utilisateur reçue par le
+Master, la distingue des trois fichiers de prompt de chaque agent, puis analyse
+les échanges et les preuves physiques avant de proposer le plan de reprise.
+
 ## Schéma global
 
 ```

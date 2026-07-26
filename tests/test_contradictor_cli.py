@@ -33,7 +33,7 @@ def test_collect_resolves_roles_and_writes_canonical_snapshot(tmp_path, monkeypa
     payload = json.loads((root / "snapshot.json").read_text())
     assert payload["target"] == "345-145"
     assert payload["contradictor"] == "345-245"
-    assert payload["schema"] == "multi-agent.contradictor.snapshot.v2"
+    assert payload["schema"] == "multi-agent.contradictor.snapshot.v3"
     assert payload["analysis_scope"] == [
         "345-145", "345-245", "345-345", "345-545",
         "345-745", "345-845", "345-945",
@@ -44,6 +44,10 @@ def test_collect_resolves_roles_and_writes_canonical_snapshot(tmp_path, monkeypa
     assert set(payload["analysis_view"]["activity_by_agent"]) == set(
         payload["analysis_scope"]
     )
+    assert "agent_prompt_files" in payload["evidence"]
+    assert "user_requests" in payload["analysis_view"]
+    assert "physical_evidence" in payload["evidence"]
+    assert payload["analysis_view"]["unattributed_request_candidates"]
     assert (root / "state.json").is_file()
 
 
@@ -68,10 +72,18 @@ def test_send_transmits_exact_conclusion_and_archives_proof(tmp_path, monkeypatc
     output.mkdir(parents=True)
     conclusion = (
         "CONCLUSION CONTRADICTOR\nCible : 345-145\nVerdict : ÉTABLI\n"
-        "Synthèse du triangle : développement arrêté après le dispatch.\n"
-        "Constat : écart.\nCorrection demandée : avancer.\n"
-        "Relance du développement : redispatcher 345-345.\n"
-        "Résultat attendu : progression.\n"
+        "Demande utilisateur initiale : développer X.\n"
+        "Corrections ou précisions ultérieures : aucune.\n"
+        "Résultat attendu : X fonctionnel.\nExécution du prompt : NON\n"
+        "Développement réalisé : NON\nValidation réalisée : NON\n"
+        "Résultat effectivement livré : NON\n"
+        "Échanges déterminants : dispatch sans artefact.\n"
+        "Écart entre demande et résultat : X absent.\n"
+        "Cause de l'écart : développement arrêté.\nPreuves : aucun artefact.\n"
+        "Plan de développement ou correction : développer X.\n"
+        "Agents à mobiliser : 345-345.\nOrdre de relance : 345-345 puis 345-545.\n"
+        "Critères d'acceptation : tests verts.\n"
+        "Résultat final attendu : X livré.\n"
     )
     (output / "conclusion.md").write_text(conclusion)
     captured = {}
@@ -119,6 +131,36 @@ def test_analysis_view_detects_duplicate_and_memory_conflict():
     assert view["memory_conflicts"][0]["type"] == "active_task_vs_memory"
 
 
+def test_analysis_view_separates_user_requests_from_agent_exchanges():
+    inbox = [
+        {"id": "1-0", "fields": {
+            "stream_agent": "345-145", "from_agent": "cli",
+            "requester": "cli", "event": "USER_REQUEST",
+            "prompt": "Développe l'import CSV"}},
+        {"id": "2-0", "fields": {
+            "stream_agent": "345-145", "from_agent": "345-345",
+            "requester": "cli", "event": "STATUS",
+            "prompt": "Le développement est en cours"}},
+        {"id": "3-0", "fields": {
+            "stream_agent": "345-145", "from_agent": "cli",
+            "requester": "cli", "event": "USER_REQUEST",
+            "prompt": "Ajoute aussi les fichiers TSV"}},
+    ]
+    streams = {
+        "inbox": {"available": True, "error": "", "entries": inbox},
+        "outbox": {"available": True, "error": "", "entries": []},
+        "wal": {"available": True, "error": "", "entries": []},
+    }
+    view = MODULE.analysis_view(
+        "345-145", ["345-145", "345-245", "345-345"], [], "", streams)
+    assert [item["request_kind"] for item in view["user_requests"]] == [
+        "INITIAL", "AMENDMENT"]
+    assert view["user_requests"][0]["prompt"] == "Développe l'import CSV"
+    assert view["user_requests"][1]["prompt"] == "Ajoute aussi les fichiers TSV"
+    assert view["inter_agent_exchanges"][0]["from_agent"] == "345-345"
+    assert view["execution_assessment"]["prompt_executed"] == "TO_ASSESS"
+
+
 def test_send_archives_message_queued_for_offline_target(tmp_path, monkeypatch):
     make_triangle(tmp_path)
     monkeypatch.setattr(MODULE, "BASE", tmp_path)
@@ -126,10 +168,16 @@ def test_send_archives_message_queued_for_offline_target(tmp_path, monkeypatch):
     output.mkdir(parents=True)
     (output / "conclusion.md").write_text(
         "Cible : 345-145\nVerdict : ÉTABLI\n"
-        "Synthèse du triangle : développement arrêté.\nConstat : écart.\n"
-        "Correction demandée : avancer.\n"
-        "Relance du développement : redispatcher 345-345.\n"
-        "Résultat attendu : progression.\n"
+        "Demande utilisateur initiale : développer X.\n"
+        "Corrections ou précisions ultérieures : aucune.\n"
+        "Résultat attendu : X fonctionnel.\nExécution du prompt : NON\n"
+        "Développement réalisé : NON\nValidation réalisée : NON\n"
+        "Résultat effectivement livré : NON\nÉchanges déterminants : aucun.\n"
+        "Écart entre demande et résultat : X absent.\n"
+        "Cause de l'écart : arrêt.\nPreuves : aucune.\n"
+        "Plan de développement ou correction : développer X.\n"
+        "Agents à mobiliser : 345-345.\nOrdre de relance : Dev puis Observer.\n"
+        "Critères d'acceptation : tests verts.\nRésultat final attendu : X livré.\n"
     )
 
     def fake_run(*args, **kwargs):

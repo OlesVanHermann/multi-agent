@@ -16,6 +16,12 @@ Avant de créer ou démarrer les agents, lire
 Ne recopier aucun ancien exemple contenant `FROM:` dans le texte ou un appel
 direct à Redis.
 
+Pour chaque topologie mono/x45/z21, vérifier aussi le Contradictor `NNN-2XX`
+selon `docs/CONTRADICTOR.md`. Son prompt doit contenir
+`Audit de l'exécution de la demande utilisateur — v3.2.7` et sa méthodologie
+`Méthode d'audit utilisateur — v3.2.7`. Il distingue demande utilisateur,
+instructions d'agents, échanges internes et preuves physiques.
+
 L'installation initiale peut ensuite suivre les étapes de démarrage décrites
 ci-dessous. Cette autorisation ne s'applique pas à une mise à jour d'un système
 déjà actif : après upgrade, ne lancer automatiquement ni `infra.sh start` ni
