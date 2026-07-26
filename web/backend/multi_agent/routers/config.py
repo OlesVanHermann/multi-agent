@@ -46,6 +46,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+async def _collect_keepalive_profile(profile: str) -> tuple[bool, str]:
+    """Exécute le collecteur moteur partagé pour une session déjà démarrée."""
+    collector = cfg.BASE_DIR / "scripts" / "crontab-scheduler.py"
+    try:
+        collected = await _run_subprocess(
+            [os.sys.executable, str(collector), "--keepalive-profile", profile],
+            text=True,
+            timeout=130,
+        )
+    except Exception as exc:
+        logger.warning("keepalive collection failed for %s: %s", profile, exc)
+        return False, str(exc)
+    if collected.returncode != 0:
+        detail = collected.stderr.strip()
+        logger.warning("keepalive collection failed for %s: %s", profile, detail)
+        return False, detail
+    return True, ""
+
+
 def _archive_keepalive_marker(path: Path) -> None:
     """Archive un marqueur opposé sans suppression définitive."""
     if not path.exists():
@@ -836,7 +855,7 @@ async def get_keepalive():
 
 @router.post("/api/config/keepalive/start")
 async def start_keepalive(data: dict):
-    """Start a Claude login session with keepalive."""
+    """Démarre le profil puis collecte immédiatement identité et quotas."""
     profile = data.get("profile", "")
     if not PROFILE_RE.match(profile):
         raise HTTPException(status_code=400, detail="invalid profile")
@@ -890,7 +909,18 @@ async def start_keepalive(data: dict):
     if not keepalive_file.exists():
         keepalive_file.write_text("toujours en vie ?\n")
 
-    return {"status": "started", "session": session}
+    # Un Start doit produire un écran exploitable sans attendre le sweep 12 h.
+    # Le collecteur partagé connaît les différences de TUI Claude/Codex et
+    # publie des caches portant obligatoirement la provenance de cette session.
+    collection_ok, detail = await _collect_keepalive_profile(profile)
+    if not collection_ok:
+        return {
+            "status": "started",
+            "session": session,
+            "collection": "error",
+            "detail": detail,
+        }
+    return {"status": "started", "session": session, "collection": "ok"}
 
 
 @router.post("/api/config/keepalive/stop")
@@ -915,23 +945,33 @@ async def stop_keepalive(data: dict):
 
 @router.post("/api/config/keepalive/probe")
 async def probe_keepalive(data: dict):
-    """Read cached profile info from static JSON file."""
+    """Retourne le snapshot ; le crée immédiatement s'il manque pour une session live."""
     profile = data.get("profile", "")
     if not PROFILE_RE.match(profile):
         raise HTTPException(status_code=400, detail="invalid profile")
 
     info_file = cfg.KEEPALIVE_DIR / f"info_{profile}.json"
     expected_session = f"agent-002-{profile}"
-    if info_file.exists():
+    def read_valid_info():
+        if not info_file.exists():
+            return {}
         try:
             info = json.loads(info_file.read_text())
             # Les fichiers antérieurs à la migration ne portent aucune
             # provenance, et peuvent venir d'une session A-agent-* disparue.
             if info.get("source_session") != expected_session:
-                info = {}
+                return {}
+            return info
         except Exception:
-            info = {}
-    else:
-        info = {}
+            return {}
+
+    info = read_valid_info()
+    if not info:
+        running = await _run_subprocess(
+            ["tmux", "has-session", "-t", expected_session], text=True,
+        )
+        if running.returncode == 0:
+            await _collect_keepalive_profile(profile)
+            info = read_valid_info()
 
     return {"profile": profile, "info": info}

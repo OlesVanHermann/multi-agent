@@ -1705,10 +1705,21 @@ body {
 /* Usage bars (keepalive profiles) */
 .lm-usage-bars {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.8rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.ka-usage-item {
+  display: inline-block;
   align-items: center;
 }
+.ka-usage-label,
+.ka-usage-reset {
+  color: var(--text-secondary);
+  font-size: 0.58rem;
+}
 .lm-usage-bar {
+  display: inline-block;
   position: relative;
   width: 4rem;
   height: 0.9rem;
@@ -2038,6 +2049,11 @@ body {
   color: var(--text-secondary);
   font-size: 0.58rem;
   white-space: nowrap;
+}
+.ka-runtime-meta {
+  margin-right: 0.8rem;
+  color: var(--text-secondary);
+  font-size: 0.58rem;
 }
 
 .keepalive-table {

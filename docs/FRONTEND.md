@@ -190,6 +190,23 @@ Frontend → Backend (+ JWT) → Validation locale (clé publique)
 
 ## Fonctionnalités
 
+### Login Keep Alive et usage
+
+Le panneau Keepalive affiche une ligne compacte par profil : profil, login
+tronqué à 15 caractères, état, sliders de quotas et action Start/Stop. Les
+libellés et resets restent disponibles au survol. Les détails secondaires
+(organisation, modèle, CWD, version CLI) restent dans le snapshot sans
+encombrer le tableau.
+
+Chaque en-tête de fenêtre Agent résout le slot neutre `login1a…login4b` vers
+son profil moteur effectif (`claude1a` ou `codex1a`) et affiche ce profil suivi
+uniquement des sliders et pourcentages. La requête part dès le premier rendu
+avec le client authentifié, puis est rafraîchie toutes les 15 secondes.
+
+`Start` collecte les données avant de rendre la main. Une session déjà active
+sans snapshot valide est sondée à l'ouverture du panneau. Le sweep périodique
+reste fixé par `MA_KEEPALIVE_SWEEP_MIN` (défaut 720 minutes).
+
 ### MVP (v1)
 
 - [ ] Grille agents avec statut couleur

@@ -19,29 +19,54 @@ function KeepAliveSplit({ keepAlive, focused, pollInterval }) {
         </div>
         <table className="crontab-table keepalive-table">
           <thead>
-            <tr><th>Profil</th><th>Login</th><th>Org</th><th>Email</th><th>CWD</th><th>Actions</th></tr>
+            <tr><th>Profil</th><th>Login</th><th>État</th><th>Usage</th><th>Actions</th></tr>
           </thead>
           <tbody>
             {keepAliveEntries.map((e) => {
               const ki = keepAliveInfo[e.profile]
               const usage = keepAliveUsage[e.profile]
               const bars = usage?.bars || []
-              const scanAge = usage?.last_scan
-                ? Math.max(0, Math.floor(Date.now() / 1000 - usage.last_scan))
-                : null
               return (
-              <React.Fragment key={e.profile}>
-              <tr>
+              <tr key={e.profile} title={ki ? [
+                ki.login_method, ki.organization, ki.email, ki.model, ki.cwd,
+              ].filter(Boolean).join(' · ') : ''}>
                 <td>
                   <button
                     className={`crontab-status ${e.running ? 'crontab-status-on' : 'crontab-status-off'} ka-profile-btn`}
                     onClick={() => setSelectedKeepAlive(e.session)}
                   >{e.profile}</button>
                 </td>
-                <td className="keepalive-info">{ki ? (ki.login_method || '?').slice(0, 20) : (e.running ? '...' : '—')}</td>
-                <td className="keepalive-info">{ki ? (ki.organization || '?').slice(0, 20) : ''}</td>
-                <td className="keepalive-info">{ki ? (ki.email || '?').slice(0, 20) : ''}</td>
-                <td className="keepalive-info">{ki ? './' + (ki.cwd || '').split('/').filter(Boolean).pop() + '/' : ''}</td>
+                <td className="keepalive-info" title={ki?.email || ki?.login_method || ''}>
+                  {e.running ? (ki?.email || ki?.login_method || '—').slice(0, 15) : '—'}
+                </td>
+                <td className="keepalive-info">
+                  {e.running ? (ki?.collection_status || usage?.status || 'collecte…') : 'arrêté'}
+                </td>
+                <td>
+                  {bars.length > 0 ? (
+                    <><span className="lm-usage-bars">
+                      {bars.map((b, i) => (
+                        <span key={i} className="ka-usage-item" title={`${b.label}: ${b.percent}% — reset ${b.resets || 'inconnu'}`}>
+                          <span className="lm-usage-bar">
+                            <span className="lm-usage-bar-fill" style={{
+                              width: `${b.percent}%`,
+                              background: b.percent > 80 ? 'var(--red)' : b.percent > 50 ? 'var(--orange)' : 'var(--green)'
+                            }} />
+                            <span className="lm-usage-bar-text">{b.percent}%</span>
+                          </span>
+                        </span>
+                      ))}
+                    </span></>
+                  ) : (
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.6rem', fontStyle: 'italic' }}>
+                      {e.running
+                        ? ki?.collection_status === 'login_required'
+                          ? 'connexion requise — exécuter /login dans cette session'
+                          : 'pas de données usage pour cette session'
+                        : 'session arrêtée — données historiques masquées'}
+                    </span>
+                  )}
+                </td>
                 <td className="crontab-actions">
                   {e.running
                     ? <button className="crontab-suspend" onClick={() => kaStop(e.profile)}>Stop</button>
@@ -49,35 +74,10 @@ function KeepAliveSplit({ keepAlive, focused, pollInterval }) {
                   }
                 </td>
               </tr>
-              <tr className="ka-usage-row">
-                <td></td>
-                <td colSpan="5">
-                  {bars.length > 0 ? (
-                    <><span className="lm-usage-bars">
-                      {bars.map((b, i) => (
-                        <span key={i} className="lm-usage-bar" title={`${b.label}: ${b.percent}% — resets ${b.resets || ''}`}>
-                          <span className="lm-usage-bar-fill" style={{
-                            width: `${b.percent}%`,
-                            background: b.percent > 80 ? 'var(--red)' : b.percent > 50 ? 'var(--orange)' : 'var(--green)'
-                          }} />
-                          <span className="lm-usage-bar-text">{b.percent}%</span>
-                        </span>
-                      ))}
-                    </span><span className="ka-scan-age" title="Âge de la dernière mesure de cette session">
-                      {scanAge === null ? '' : scanAge < 60 ? `il y a ${scanAge}s` : `il y a ${Math.floor(scanAge / 60)}min`}
-                    </span></>
-                  ) : (
-                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.6rem', fontStyle: 'italic' }}>
-                      {e.running ? 'pas de données usage pour cette session' : 'session arrêtée — données historiques masquées'}
-                    </span>
-                  )}
-                </td>
-              </tr>
-              </React.Fragment>
               )
             })}
             {keepAliveEntries.length === 0 && (
-              <tr><td colSpan={6} style={{textAlign:'center',color:'var(--text-secondary)',fontStyle:'italic'}}>Aucun profil de login</td></tr>
+              <tr><td colSpan={5} style={{textAlign:'center',color:'var(--text-secondary)',fontStyle:'italic'}}>Aucun profil de login</td></tr>
             )}
           </tbody>
         </table>

@@ -358,6 +358,18 @@ def _parse_status_info(text, engine):
         dm = re.search(r'Directory:\s+(\S+)', text)
         if dm:
             info["cwd"] = dm.group(1)
+        version = re.search(r'OpenAI Codex \(v([^)]+)\)', text)
+        if version:
+            info["cli_version"] = version.group(1)
+        effort = re.search(r'Model:\s+\S+.*?\(reasoning\s+([^,\s)]+)', text)
+        if effort:
+            info["effort"] = effort.group(1)
+        permissions = re.search(r'Permissions:\s+([^\n│]+)', text)
+        if permissions:
+            info["permissions"] = permissions.group(1).strip()
+        agents_md = re.search(r'Agents\.md:\s+([^\n│]+)', text)
+        if agents_md:
+            info["agents_md"] = agents_md.group(1).strip()
     else:
         for line in text.split('\n'):
             line = line.strip()
@@ -366,7 +378,7 @@ def _parse_status_info(text, engine):
                     info[field.lower().replace(" ", "_")] = line.split(":", 1)[1].strip()
 
     # Garder la carte la plus récente si le scrollback en contient plusieurs.
-    models = re.findall(r'^\s*Model:\s+(\S+)', text, re.MULTILINE)
+    models = re.findall(r'\bModel:\s+(\S+)', text)
     if models:
         info["model"] = models[-1]
     return info
@@ -400,7 +412,9 @@ def _scrape_codex_status(session_name):
         deadline = time.time() + 15
         while time.time() < deadline:
             time.sleep(1)
-            text = _pane_text(session_name)
+            # La boîte Codex dépasse couramment 30 lignes : Account et Model
+            # peuvent se trouver de part et d'autre de cette limite.
+            text = _pane_text(session_name, lines=80)
             if "Account:" in text or "limit:" in text:
                 break
 
@@ -480,12 +494,17 @@ def _scrape_usage_tab(session_name):
         )
         time.sleep(3)
 
-        # Verify dialog is open (must see "Settings:" in last 15 lines)
+        # Vérifier la barre d'onglets réelle. Claude 2.1.220 rend
+        # « Settings  Status  Config  Usage  Stats » sans deux-points.
         cap_check = subprocess.run(
             ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-15"],
             capture_output=True, text=True, timeout=5
         )
-        if "Settings:" not in cap_check.stdout or "dismissed" in cap_check.stdout:
+        tabs_open = all(
+            label in cap_check.stdout
+            for label in ("Settings", "Status", "Config", "Usage", "Stats")
+        )
+        if not tabs_open:
             # Dialog didn't open or was dismissed — try once more
             subprocess.run(
                 ["tmux", "send-keys", "-t", session_name, "Escape"],
@@ -498,42 +517,60 @@ def _scrape_usage_tab(session_name):
             )
             time.sleep(3)
 
-        # Capture Status tab (info fields)
-        cap_info = subprocess.run(
-            ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-30"],
-            capture_output=True, text=True, timeout=5
-        )
-        info = (_parse_status_info(cap_info.stdout, "claude")
-                if cap_info.returncode == 0 else {})
+        # Les onglets bouclent : compter les flèches ne permet pas d'ancrer la
+        # navigation. Tourner jusqu'au contenu réel de Status.
+        status_output = ""
+        for _ in range(4):
+            cap_info = subprocess.run(
+                ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-35"],
+                capture_output=True, text=True, timeout=5,
+            )
+            status_output = cap_info.stdout
+            if any(field in status_output for field in (
+                "Login method:", "Organization:", "Email:",
+            )):
+                break
+            subprocess.run(
+                ["tmux", "send-keys", "-t", session_name, "Left"],
+                timeout=5,
+            )
+            time.sleep(1)
+        info = _parse_status_info(status_output, "claude")
 
-        # Navigate: Status → Config → Usage (Right, Right — one at a time)
-        subprocess.run(
-            ["tmux", "send-keys", "-t", session_name, "Right"],
-            timeout=5
-        )
-        time.sleep(1)
-        subprocess.run(
-            ["tmux", "send-keys", "-t", session_name, "Right"],
-            timeout=5
-        )
-
-        # Wait for usage data to load
-        # Poll every 3s up to 30s total. Check only last 15 lines (avoid buffer residue)
+        # Tourner jusqu'au contenu réel de Usage.
         output = ""
-        for _ in range(10):
+        for _ in range(4):
+            subprocess.run(
+                ["tmux", "send-keys", "-t", session_name, "Right"],
+                timeout=5,
+            )
             time.sleep(3)
             cap = subprocess.run(
-                ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-15"],
+                ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-25"],
                 capture_output=True, text=True, timeout=5
             )
             output = cap.stdout
             if "% used" in output:
                 break
-            # Check if dialog is still open (last lines)
-            last_lines = output.strip().split('\n')[-5:]
-            last_text = '\n'.join(last_lines)
-            if "Loading" not in last_text and "Settings:" not in last_text:
-                break  # dialog closed or something else
+
+        # Tourner jusqu'au contenu réel de Stats.
+        stats_output = ""
+        for _ in range(4):
+            subprocess.run(
+                ["tmux", "send-keys", "-t", session_name, "Right"],
+                timeout=5,
+            )
+            time.sleep(1)
+            cap_stats = subprocess.run(
+                ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-25"],
+                capture_output=True, text=True, timeout=5,
+            )
+            stats_output = cap_stats.stdout
+            if "Total cost:" in stats_output:
+                break
+        session_stats = _parse_claude_session_stats(stats_output)
+        if session_stats:
+            info["session_stats"] = session_stats
 
         # Close settings
         subprocess.run(
@@ -550,14 +587,14 @@ def _scrape_usage_tab(session_name):
                 continue
             pct = int(pct_match.group(1))
             label = ""
-            for j in range(i - 1, max(i - 4, -1), -1):
+            for j in range(i - 1, max(i - 7, -1), -1):
                 stripped = lines[j].strip()
                 if stripped.startswith(("Current", "Daily", "Weekly", "Extra")):
                     label = stripped
                     break
             resets = ""
             spent = ""
-            for j in range(i + 1, min(i + 3, len(lines))):
+            for j in range(i + 1, min(i + 6, len(lines))):
                 reset_match = re.search(r'Resets\s+(.+)', lines[j])
                 if reset_match:
                     resets = reset_match.group(1).strip()
@@ -570,6 +607,14 @@ def _scrape_usage_tab(session_name):
             if spent:
                 bar["spent"] = spent
             bars.append(bar)
+
+        # Un resize ou un ancien rendu encore présent dans le scrollback peut
+        # faire apparaître deux fois une carte. La plus basse est la plus
+        # récente, comme pour le parseur Codex.
+        unique_bars = {}
+        for bar in bars:
+            unique_bars[bar["label"] or "Quota"] = bar
+        bars = list(unique_bars.values())
 
         return (bars if bars else None, info)
 
@@ -585,6 +630,127 @@ def _scrape_usage_tab(session_name):
         ts = time.strftime("%H:%M:%S")
         print(f"{ts} KEEPALIVE usage scrape error [{session_name}]: {e}")
         return (None, {})
+
+
+def _write_profile_snapshot(profile, session, bars, info, status):
+    """Publie un snapshot attribuable à la session tmux courante."""
+    now = int(time.time())
+    enriched_info = dict(info or {})
+    enriched_info.update({
+        "engine": _profile_engine(profile),
+        "collection_status": status,
+        "source_session": session,
+        "last_scan": now,
+    })
+    if enriched_info:
+        with open(os.path.join(KEEPALIVE_DIR, f"info_{profile}.json"), "w") as f:
+            json.dump(enriched_info, f, indent=2)
+    usage_data = {
+        "profile": profile,
+        "bars": bars or [],
+        "info": enriched_info,
+        "source_session": session,
+        "status": status,
+        "last_scan": now,
+    }
+    with open(os.path.join(KEEPALIVE_DIR, f"usage_{profile}.json"), "w") as f:
+        json.dump(usage_data, f, indent=2)
+    return usage_data
+
+
+def _parse_runtime_banner(text, engine):
+    """Extrait les données locales disponibles même sans authentification."""
+    info = {}
+    if engine == "claude":
+        version = re.search(r"Claude Code v([^\s]+)", text)
+        banner = re.search(
+            r"^\s*[▝▐]?[▜█████▛▘\s]*"
+            r"(.+?)\s+with\s+([A-Za-z]+)\s+effort\s+·\s+(.+?)\s*$",
+            text,
+            re.MULTILINE,
+        )
+        cwd = re.search(r"^[^~\n]*(~/\S+)\s*$", text, re.MULTILINE)
+        if version:
+            info["cli_version"] = version.group(1)
+        if banner:
+            info["model"] = banner.group(1).strip()
+            info["effort"] = banner.group(2).lower()
+            info["billing"] = banner.group(3).strip()
+        if cwd:
+            info["cwd"] = cwd.group(1)
+    else:
+        version = re.search(r"OpenAI Codex \(v([^)]+)\)", text)
+        model = re.search(r"model:\s+(\S+)\s+(\S+)", text, re.IGNORECASE)
+        cwd = re.search(r"(?:directory|Directory):\s+(\S+)", text)
+        if version:
+            info["cli_version"] = version.group(1)
+        if model:
+            info["model"], info["effort"] = model.group(1), model.group(2)
+        if cwd:
+            info["cwd"] = cwd.group(1)
+    return info
+
+
+def _parse_claude_session_stats(text):
+    """Parse l'onglet Stats sans confondre usage session et quotas du plan."""
+    stats = {}
+    for field, pattern in {
+        "total_cost": r"Total cost:\s+(\S+)",
+        "duration_api": r"Total duration \(API\):\s+(.+?)\s*$",
+        "duration_wall": r"Total duration \(wall\):\s+(.+?)\s*$",
+    }.items():
+        match = re.search(pattern, text, re.MULTILINE)
+        if match:
+            stats[field] = match.group(1).strip()
+    changes = re.search(
+        r"Total code changes:\s+(\d+)\s+lines added,\s+(\d+)\s+lines removed",
+        text,
+    )
+    if changes:
+        stats["lines_added"] = int(changes.group(1))
+        stats["lines_removed"] = int(changes.group(2))
+    usage = re.search(
+        r"Usage:\s+(\d+)\s+input,\s+(\d+)\s+output,\s+"
+        r"(\d+)\s+cache read,\s+(\d+)\s+cache write",
+        text,
+    )
+    if usage:
+        stats.update({
+            "input_tokens": int(usage.group(1)),
+            "output_tokens": int(usage.group(2)),
+            "cache_read_tokens": int(usage.group(3)),
+            "cache_write_tokens": int(usage.group(4)),
+        })
+    return stats
+
+
+def _collect_profile_status(profile, wait_timeout=90):
+    """Attend le TUI puis collecte immédiatement identité, modèle, CWD et quotas."""
+    if not PROFILE_RE.fullmatch(profile):
+        raise ValueError(f"profil invalide : {profile!r}")
+    session = f"agent-002-{profile}"
+    check = subprocess.run(
+        ["tmux", "has-session", "-t", session],
+        capture_output=True, timeout=5,
+    )
+    if check.returncode != 0:
+        raise RuntimeError(f"session absente : {session}")
+    state = _wait_prompt(session, timeout_s=wait_timeout, profile=profile)
+    if state != "ready":
+        runtime_info = _parse_runtime_banner(
+            _pane_text(session, lines=50), _profile_engine(profile),
+        )
+        return _write_profile_snapshot(
+            profile, session, None, runtime_info, state,
+        )
+    engine = _profile_engine(profile)
+    if engine == "codex":
+        bars, info = _scrape_codex_status(session)
+    else:
+        bars, info = _scrape_usage_tab(session)
+    return _write_profile_snapshot(
+        profile, session, bars, info, "ok" if bars else "no_bars",
+    )
 
 
 def scan_keepalive():
@@ -633,32 +799,14 @@ def scan_keepalive():
         ts = time.strftime("%H:%M:%S")
         print(f"{ts} KEEPALIVE usage scraping {profile} ({idx+1}/{len(all_profiles)})")
 
-        bars, info = _scrape_usage_tab(session)
-
-        # Write static info file
-        if info:
-            info_path = os.path.join(KEEPALIVE_DIR, f"info_{profile}.json")
-            try:
-                with open(info_path, "w") as f:
-                    json.dump(info, f, indent=2)
-            except Exception:
-                pass
-
-        usage_data = {
-            "profile": profile,
-            "bars": bars or [],
-            "info": info,
-            "last_scan": int(time.time()),
-        }
-        out_path = os.path.join(KEEPALIVE_DIR, f"usage_{profile}.json")
         try:
-            with open(out_path, "w") as f:
-                json.dump(usage_data, f, indent=2)
+            usage_data = _collect_profile_status(profile, wait_timeout=30)
         except Exception as e:
-            print(f"{ts} KEEPALIVE usage write error {out_path}: {e}")
+            print(f"{ts} KEEPALIVE usage scrape error {profile}: {e}")
+            usage_data = {"bars": []}
 
-        if bars:
-            bar_summary = " | ".join(f"{b['percent']}%" for b in bars)
+        if usage_data["bars"]:
+            bar_summary = " | ".join(f"{b['percent']}%" for b in usage_data["bars"])
             print(f"{ts} KEEPALIVE usage {profile}: {bar_summary}")
         else:
             print(f"{ts} KEEPALIVE usage {profile}: no bars")
@@ -723,7 +871,10 @@ def _wait_prompt(session, timeout_s=90, profile=None):
             subprocess.run(["tmux", "send-keys", "-t", session, "Enter"], timeout=5)
             time.sleep(2)
             continue
-        last_lines = [l for l in text.strip().split("\n") if l.strip()][-3:]
+        # Claude peut ajouter sous le composer une barre de statut puis
+        # « Now using usage credits » : le prompt est alors la 4e ligne non
+        # vide en partant du bas. Garder une petite fenêtre tolérante.
+        last_lines = [l for l in text.strip().split("\n") if l.strip()][-8:]
         if any(any(m in l for m in ready) for l in last_lines):
             return "ready"
         time.sleep(3)
@@ -780,16 +931,9 @@ def _sweep_profile(profile):
     result["bars"] = len(bars) if bars else 0
     if info:
         result["email"] = info.get("email", "")
-        info["source_session"] = session
-        info["last_scan"] = int(time.time())
-        with open(os.path.join(KEEPALIVE_DIR, f"info_{profile}.json"), "w") as f:
-            json.dump(info, f, indent=2)
-    usage_data = {"profile": profile, "bars": bars or [], "info": info,
-                  "source_session": session,
-                  "status": "ok" if bars else "no_bars",
-                  "last_scan": int(time.time())}
-    with open(os.path.join(KEEPALIVE_DIR, f"usage_{profile}.json"), "w") as f:
-        json.dump(usage_data, f, indent=2)
+    _write_profile_snapshot(
+        profile, session, bars, info, "ok" if bars else "no_bars",
+    )
     # .active : la session reste vivante entre deux sweeps (modèle existant)
     active = os.path.join(KEEPALIVE_DIR, f"{profile}.active")
     if not os.path.exists(active):
@@ -1021,6 +1165,14 @@ def main():
     if "--keepalive-sweep-once" in sys.argv[1:]:
         os.makedirs(KEEPALIVE_DIR, exist_ok=True)
         _run_sweep()
+        return
+    if "--keepalive-profile" in sys.argv[1:]:
+        index = sys.argv.index("--keepalive-profile")
+        if index + 1 >= len(sys.argv):
+            raise SystemExit("--keepalive-profile exige un profil")
+        os.makedirs(KEEPALIVE_DIR, exist_ok=True)
+        snapshot = _collect_profile_status(sys.argv[index + 1])
+        print(json.dumps(snapshot))
         return
 
     print(f"Starting scheduler (tick={TICK_INTERVAL}s, dir={CRONTAB_DIR})")

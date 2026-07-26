@@ -31,12 +31,15 @@ def test_codex_status_converts_percent_left_to_used(monkeypatch):
     pane = """
 Account: user@example.com (Pro)
 Directory: ~/multi-agent
-Model: gpt-5.6-sol
+OpenAI Codex (v0.144.5)
+Model: gpt-5.6-sol (reasoning xhigh, summaries auto)
+Permissions: Full Access
+Agents.md: AGENTS.md
 Weekly limit: [████] 79% left
               (resets 22:20 on 21 Jul)
 GPT-5.3-Codex-Spark Weekly limit: [████] 100% left
 """
-    monkeypatch.setattr(scheduler, "_pane_text", lambda _session: pane)
+    monkeypatch.setattr(scheduler, "_pane_text", lambda _session, **_kwargs: pane)
     monkeypatch.setattr(scheduler.subprocess, "run", lambda *a, **k: None)
     monkeypatch.setattr(scheduler.time, "sleep", lambda _seconds: None)
     bars, info = scheduler._scrape_codex_status("agent-002-codex1a")
@@ -44,6 +47,9 @@ GPT-5.3-Codex-Spark Weekly limit: [████] 100% left
     assert info["email"] == "user@example.com"
     assert info["login_method"] == "ChatGPT account"
     assert info["model"] == "gpt-5.6-sol"
+    assert info["effort"] == "xhigh"
+    assert info["permissions"] == "Full Access"
+    assert info["cli_version"] == "0.144.5"
 
 
 def test_status_model_parser_is_shared_by_claude_and_codex():
@@ -133,6 +139,174 @@ def test_keepalive_start_is_verified_after_spawn():
     assert "await asyncio.sleep(2)" in start
     assert start.count('["tmux", "has-session", "-t", session]') >= 2
     assert "morte au lancement" in start
+    assert "await _collect_keepalive_profile(profile)" in start
+    assert '"collection": "ok"' in start
+
+
+def test_profile_snapshot_always_has_engine_session_and_scan(tmp_path, monkeypatch):
+    scheduler = _load_scheduler()
+    monkeypatch.setattr(scheduler, "KEEPALIVE_DIR", str(tmp_path))
+    snapshot = scheduler._write_profile_snapshot(
+        "codex1a", "agent-002-codex1a", [{"label": "Weekly", "percent": 2}], {
+            "email": "user@example.com",
+        }, "ok",
+    )
+    assert snapshot["source_session"] == "agent-002-codex1a"
+    assert snapshot["info"]["engine"] == "codex"
+    assert snapshot["info"]["collection_status"] == "ok"
+    assert snapshot["info"]["source_session"] == "agent-002-codex1a"
+    assert snapshot["last_scan"] > 0
+
+
+def test_round_robin_uses_engine_aware_profile_collector():
+    source = (ROOT / "scripts" / "crontab-scheduler.py").read_text()
+    scan = source[source.index("def scan_keepalive()"):source.index("def _pane_text")]
+    assert "_collect_profile_status(profile" in scan
+    assert "_scrape_usage_tab(session)" not in scan
+
+
+def test_probe_collects_live_profile_when_snapshot_is_missing():
+    source = (ROOT / "web/backend/multi_agent/routers/config.py").read_text()
+    probe = source[source.index("async def probe_keepalive"):]
+    assert "if not info:" in probe
+    assert '["tmux", "has-session", "-t", expected_session]' in probe
+    assert "await _collect_keepalive_profile(profile)" in probe
+
+
+def test_agent_usage_resolves_neutral_login_slot_to_engine_profile():
+    source = (ROOT / "web/backend/multi_agent/routers/agents.py").read_text()
+    usage = source[source.index("async def get_usage_for_agent"):source.index(
+        "async def get_agent", source.index("async def get_usage_for_agent")
+    )]
+    assert 're.fullmatch(r"login\\d[a-z]", login)' in usage
+    assert "engines.agent_engine(prompts_dir, agent_id)" in usage
+    assert "login = f\"{engine}{login.removeprefix('login')}\"" in usage
+
+
+def test_keepalive_compact_table_keeps_login_and_usage_status_fallback():
+    source = (ROOT / "web/frontend/src/components/KeepAliveSplit.jsx").read_text()
+    assert "<th>Login</th><th>État</th><th>Usage</th>" in source
+    assert "ki?.email || ki?.login_method" in source
+    assert ".slice(0, 15)" in source
+    assert "ki?.collection_status || usage?.status || 'collecte…'" in source
+    assert "ka-scan-age" not in source
+    assert "shortLabel(" not in source
+    css = (ROOT / "web/frontend/src/index.css").read_text()
+    usage_bar = css[css.index(".lm-usage-bar {"):css.index("}", css.index(".lm-usage-bar {"))]
+    assert "display: inline-block" in usage_bar
+
+
+def test_agent_header_usage_has_only_profile_and_sliders():
+    source = (ROOT / "web/frontend/src/components/terminal/UsageBars.jsx").read_text()
+    assert '<span className="usage-bar-name">{usage.login}</span>' in source
+    assert "usage-bar-track" in source
+    assert "shortLabel(" not in source
+    assert "usage-bar-short-label" not in source
+    assert "apiFetch(`api/usage/${agentId}`" in source
+    assert "agentId.slice(4)" in source
+
+
+def test_wait_prompt_sees_claude_prompt_above_usage_credit_status(monkeypatch):
+    scheduler = _load_scheduler()
+    pane = '\n'.join([
+        '────────────────',
+        '❯\\u00a0Try "fix lint errors"',
+        '────────────────',
+        '  bypass permissions on',
+        '  Now using usage credits',
+    ])
+    monkeypatch.setattr(scheduler, "_pane_text", lambda _session: pane)
+    monkeypatch.setattr(scheduler, "_ready_markers", lambda _profile: ("❯",))
+    monkeypatch.setattr(scheduler, "_login_expired_markers", lambda _profile: ())
+    assert scheduler._wait_prompt(
+        "agent-002-claude1a", timeout_s=0.1, profile="claude1a",
+    ) == "ready"
+
+
+def test_claude_usage_keeps_latest_duplicate_card(monkeypatch):
+    scheduler = _load_scheduler()
+    outputs = iter([
+        "❯ ready",
+        "Settings  Status  Config  Usage  Stats",
+        "Settings:\nLogin method: Claude Max account\nModel: claude-opus-4-8",
+        "\n".join([
+            "Current week (all models)", "10% used",
+            "Current week (all models)", "65% used",
+        ]),
+        """
+Total cost: $0.0000
+Total duration (API): 0s
+Total duration (wall): 1m
+Total code changes: 0 lines added, 0 lines removed
+Usage: 0 input, 0 output, 0 cache read, 0 cache write
+""",
+    ])
+
+    def fake_run(command, **_kwargs):
+        if command[:2] == ["tmux", "capture-pane"]:
+            return SimpleNamespace(returncode=0, stdout=next(outputs))
+        return SimpleNamespace(returncode=0, stdout="")
+
+    monkeypatch.setattr(scheduler.subprocess, "run", fake_run)
+    monkeypatch.setattr(scheduler.time, "sleep", lambda _seconds: None)
+    bars, _info = scheduler._scrape_usage_tab("agent-002-claude1a")
+    assert bars == [{
+        "label": "Current week (all models)", "percent": 65, "resets": "",
+    }]
+
+
+def test_claude_runtime_banner_is_available_while_logged_out():
+    scheduler = _load_scheduler()
+    info = scheduler._parse_runtime_banner(
+        """
+Claude Code v2.1.220
+▝▜█████▛▘  Fable 5 with xhigh effort · API Usage Billing
+  ▘▘ ▝▝    ~/multi-agent
+Not logged in · Run /login
+""",
+        "claude",
+    )
+    assert info == {
+        "cli_version": "2.1.220",
+        "model": "Fable 5",
+        "effort": "xhigh",
+        "billing": "API Usage Billing",
+        "cwd": "~/multi-agent",
+    }
+
+
+def test_claude_session_stats_parser_covers_all_visible_fields():
+    scheduler = _load_scheduler()
+    assert scheduler._parse_claude_session_stats(
+        """
+Total cost:            $0.0000
+Total duration (API):  2m 3s
+Total duration (wall): 6m 2s
+Total code changes:    12 lines added, 4 lines removed
+Usage:                 123 input, 45 output, 67 cache read, 8 cache write
+"""
+    ) == {
+        "total_cost": "$0.0000",
+        "duration_api": "2m 3s",
+        "duration_wall": "6m 2s",
+        "lines_added": 12,
+        "lines_removed": 4,
+        "input_tokens": 123,
+        "output_tokens": 45,
+        "cache_read_tokens": 67,
+        "cache_write_tokens": 8,
+    }
+
+
+def test_claude_scrape_anchors_tabs_and_collects_stats():
+    source = (ROOT / "scripts/crontab-scheduler.py").read_text()
+    scrape = source[source.index("def _scrape_usage_tab"):source.index(
+        "def _write_profile_snapshot"
+    )]
+    assert '"Login method:", "Organization:", "Email:"' in scrape
+    assert 'if "% used" in output:' in scrape
+    assert 'if "Total cost:" in stats_output:' in scrape
+    assert "_parse_claude_session_stats" in scrape
 
 
 def test_cloned_refresh_tokens_are_detected_without_exposing_secret(tmp_path, monkeypatch):

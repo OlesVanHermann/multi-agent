@@ -1,16 +1,26 @@
 import React, { useState, useEffect } from 'react'
-import { api } from '../../basePath'
+import { apiFetch } from '../../apiFetch'
 
 // Barres d'usage du plan Claude pour le login de l'agent (api/usage/{id}).
 function UsageBars({ agentId }) {
-  const [usage, setUsage] = useState(null)
+  const initialLogin = agentId?.startsWith('002-') ? agentId.slice(4) : ''
+  const [usage, setUsage] = useState(
+    initialLogin ? { login: initialLogin, bars: [], status: 'loading' } : null
+  )
 
   useEffect(() => {
     if (!agentId) return
-    fetch(api(`api/usage/${agentId}`))
+    let active = true
+    const refresh = () => apiFetch(`api/usage/${agentId}`, { cache: 'no-store' })
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.login) setUsage(d) })
+      .then(d => { if (active && d?.login) setUsage(d) })
       .catch(() => {})
+    refresh()
+    const timer = window.setInterval(refresh, 15000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
   }, [agentId])
 
   if (!usage) return null
@@ -24,7 +34,9 @@ function UsageBars({ agentId }) {
           </span>
           <span className="usage-bar-pct">{b.percent}%</span>
         </span>
-      )) : <span className="usage-bar-pct" title="Usage data unavailable (personal account)">N/A</span>}
+      )) : <span className="usage-bar-pct" title={usage.status || 'Usage indisponible'}>
+        {usage.status === 'loading' ? '…' : usage.status === 'login_required' ? 'login requis' : 'N/A'}
+      </span>}
     </span>
   )
 }

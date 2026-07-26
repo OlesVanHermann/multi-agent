@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from .. import config as cfg
 from .. import state
+import engines
 from ..deps import ValidAgentId
 from ..events import _events_dir
 from ..models import AgentStatus, SendKeys, SendMessage, UpdateInput
@@ -222,6 +223,13 @@ async def get_usage_for_agent(agent_id: str = ValidAgentId):
                     login = Path(os.readlink(dl)).stem if dl.is_symlink() else dl.read_text().strip()
                 except Exception:
                     login = "claude1a"
+
+    # Les fichiers *.login exposent des slots neutres login1a…login4b.
+    # Le profil de credentials et le snapshot d'usage sont, eux, propres au
+    # moteur : claude1a ou codex1a.
+    if login and re.fullmatch(r"login\d[a-z]", login):
+        engine = engines.agent_engine(prompts_dir, agent_id)
+        login = f"{engine}{login.removeprefix('login')}"
 
     # Read keepalive/usage_{login}.json — no fallback, show only exact profile
     usage_file = cfg.BASE_DIR / "keepalive" / f"usage_{login}.json"

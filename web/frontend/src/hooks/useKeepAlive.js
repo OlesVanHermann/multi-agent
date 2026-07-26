@@ -68,11 +68,12 @@ export function useKeepAlive(show) {
 
   const kaStart = async (profile) => {
     log.action('keepalive-start', { profile })
-    await fetch(api('api/config/keepalive/start'), {
+    const res = await fetch(api('api/config/keepalive/start'), {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ profile })
     })
-    fetchKeepAlive()
+    if (!res.ok) console.error('keepalive start:', await res.text())
+    await fetchKeepAlive()
   }
 
   const kaStop = async (profile) => {
@@ -81,7 +82,7 @@ export function useKeepAlive(show) {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ profile })
     })
-    fetchKeepAlive()
+    await fetchKeepAlive()
   }
 
   return {

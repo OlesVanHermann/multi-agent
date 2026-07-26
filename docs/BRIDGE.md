@@ -238,6 +238,16 @@ Le scheduler (`scripts/crontab-scheduler.py`, session tmux
   → la session OAuth ne s'endort pas), scrape `/status` (usage + identité)
   et écrit `keepalive/usage_{profil}.json`, `info_{profil}.json` et un
   récapitulatif `keepalive/sweep_report.json`.
+- **Collecte immédiate** : `Start` attend le TUI puis exécute une collecte
+  ciblée avant de répondre. À l'ouverture du panneau, toute session déjà active
+  sans snapshot attribuable est également sondée, sans attendre le sweep.
+- Chaque snapshot porte `source_session`, `last_scan`, `engine` et
+  `collection_status`. Le dashboard masque un ancien cache sans provenance
+  plutôt que de l'attribuer au mauvais profil.
+- Claude Code est parcouru par contenu d'onglet, pas par un nombre fixe de
+  flèches : `Status` fournit l'identité, `Usage` les limites du plan et `Stats`
+  les métriques de la session keepalive. Codex fournit compte, modèle, effort,
+  permissions et limites dans sa boîte `/status` unique.
 - **États** par profil : `ok`, `no_bars`, `login_required` (re-login à
   faire), `timeout`. Visible dans le panneau « Login Keep Alive » du
   dashboard et dans `logs/crontab-scheduler.log`.
