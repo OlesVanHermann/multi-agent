@@ -41,3 +41,18 @@ def test_upgrade_script_measures_phases_and_persists_only_real_run():
     assert "timing_summary false" in source
     assert "timing_summary true" in source
     assert "logs/action-timings.tsv" in source
+    assert "logs/action-timings" in source
+    assert "%Y%m%dT%H%M%S%6NZ" in source
+    assert "-upgrade.tsv" in source
+
+
+def test_timestamped_immutable_copy_convention_is_documented():
+    for path in (
+        "CLAUDE.md", "prompts/AGENT.md", "templates/x45/prompts/AGENT.md",
+        "setup/HOW_TO_SETUP.md", "patch/HOW_TO_UPGRADE.md",
+    ):
+        text = read(path)
+        assert "YYYYMMDDTHHMMSSffffffZ" in text
+        assert "prompt" in text.lower()
+    assert "Ne jamais horodater un fichier de" in read("CLAUDE.md")
+    assert "N'horodate jamais un fichier de prompt" in read("prompts/AGENT.md")

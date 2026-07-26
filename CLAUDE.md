@@ -508,6 +508,11 @@ Les installations et upgrades conservent leurs mesures dans
 `logs/action-timings.tsv` selon `setup/HOW_TO_SETUP.md` et
 `patch/HOW_TO_UPGRADE.md`.
 
+Seuls les logs, rapports d'exécution et plans archivés utilisent un préfixe UTC
+`YYYYMMDDTHHMMSSffffffZ`, par exemple
+`sent/20260726T125656150056Z-conclusion.md`. Ne jamais horodater un fichier de
+prompt : ses noms et chemins restent stables.
+
 ### Règle critique
 
 **Si tu lis un fichier `prompts/XXX-*.md`, tu DEVIENS cet agent et tu EXÉCUTES IMMÉDIATEMENT sa section DÉMARRAGE.**

@@ -66,12 +66,21 @@ timing_summary() {
     timing_record "total" "$total" "OK" "durée totale"
     if [ "$persist" = true ]; then
         local timing_log="${MA_TIMING_LOG:-./logs/action-timings.tsv}"
+        local timing_archive="${MA_TIMING_ARCHIVE:-./logs/action-timings}"
+        local timing_stamp
+        timing_stamp=$(date -u +%Y%m%dT%H%M%S%6NZ)
         mkdir -p "$(dirname "$timing_log")"
+        mkdir -p "$timing_archive"
         if [ ! -s "$timing_log" ]; then
             printf "timestamp\taction\tphase\tduration_seconds\tstatus\tdetails\n" > "$timing_log"
         fi
         printf "%s\n" "${TIMING_ROWS[@]}" >> "$timing_log"
+        {
+            printf "timestamp\taction\tphase\tduration_seconds\tstatus\tdetails\n"
+            printf "%s\n" "${TIMING_ROWS[@]}"
+        } > "$timing_archive/${timing_stamp}-upgrade.tsv"
         log_info "Statistiques enregistrées : $timing_log"
+        log_info "Copie horodatée : $timing_archive/${timing_stamp}-upgrade.tsv"
     fi
 }
 

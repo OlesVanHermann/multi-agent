@@ -20,6 +20,12 @@ timestamp	action	phase	duration_seconds	status	details
 2026-07-26T12:00:00Z	install	prerequisites	8	OK	6 commandes vérifiées
 ```
 
+Conserver également une copie immuable de chaque installation sous
+`logs/action-timings/<YYYYMMDDTHHMMSSffffffZ>-install.tsv`. Le préfixe est en
+UTC et comporte six chiffres de fraction de seconde ; une exécution ne réécrit
+jamais la copie d'une précédente. Cette convention s'applique aux logs et aux
+plans d'installation archivés, jamais aux fichiers de prompts.
+
 Le compte rendu final contient au minimum : prérequis, dépendances,
 infrastructure, profils/authentification, création ou migration des agents,
 checks, attente externe et total. Toute durée oubliée est marquée

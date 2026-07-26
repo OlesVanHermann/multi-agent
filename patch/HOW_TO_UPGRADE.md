@@ -16,6 +16,11 @@ Le script de mise à jour est dans `patch/upgrade.sh`. Il préserve automatiquem
 inventaire/dry-run, sauvegarde, synchronisation, migrations, dépendances et
 total. Lors d'une application réelle, il ajoute le bilan à
 `logs/action-timings.tsv`; un dry-run affiche les durées sans écrire ce journal.
+Il crée aussi une copie immuable
+`logs/action-timings/<YYYYMMDDTHHMMSSffffffZ>-upgrade.tsv`, comparable aux
+copies `sent/<horodatage>-conclusion.md` des Contradictors.
+Cette convention concerne les logs, rapports d'exécution et plans archivés.
+Les prompts conservent toujours leurs noms canoniques sans horodatage.
 
 L'agent chargé de l'upgrade communique les durées après chaque phase et dans son
 compte rendu final. Il sépare temps actif, checks et attente externe. Une phase

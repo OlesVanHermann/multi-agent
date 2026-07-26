@@ -68,6 +68,9 @@ exactement `FROM`, `TASK`, `CYCLE` et `CORR` pendant tout son traitement.
   `Durées — checks: 12 s; migration: 4 s; total: 19 s`.
 - Installation et upgrade écrivent aussi le tableau durable prévu par leur
   procédure. La durée ne remplace jamais les preuves de réussite.
+- Seuls les logs, rapports d'exécution et plans archivés utilisent le préfixe
+  UTC `YYYYMMDDTHHMMSSffffffZ`. Ne jamais horodater les fichiers de prompts :
+  `system.md`, `memory.md`, `methodology.md` et loaders restent stables.
 
 ### Commande directe de l'utilisateur (`FROM=cli`)
 
