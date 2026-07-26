@@ -75,6 +75,11 @@ exactement `FROM`, `TASK`, `CYCLE` et `CORR` pendant tout son traitement.
   `sent/20260726T125656150056Z-conclusion.md`.
 - N'horodate jamais un fichier de prompt : les noms `system.md`, `memory.md`,
   `methodology.md` et les loaders d'agents restent stables.
+- Pour un plan, crée une identité
+  `<YYYYMMDDTHHMMSSffffffZ>-<slug>.md`, puis conserve ce nom pendant
+  `plan-TODO → plan-DOING → plan-DONE`. Horodate les transitions dans
+  `created_at`, `started_at`, `completed_at` et `logs/plan-lifecycle.tsv` ;
+  ne renomme jamais le plan pendant son exécution ou son archivage.
 
 ### Commande directe de l'utilisateur (`FROM=cli`)
 

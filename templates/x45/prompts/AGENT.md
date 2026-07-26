@@ -71,6 +71,9 @@ exactement `FROM`, `TASK`, `CYCLE` et `CORR` pendant tout son traitement.
 - Seuls les logs, rapports d'exécution et plans archivés utilisent le préfixe
   UTC `YYYYMMDDTHHMMSSffffffZ`. Ne jamais horodater les fichiers de prompts :
   `system.md`, `memory.md`, `methodology.md` et loaders restent stables.
+- Un plan reçoit son préfixe horodaté à la création et garde le même nom dans
+  `plan-TODO`, `plan-DOING` et `plan-DONE`. Ses transitions utilisent
+  `created_at`, `started_at`, `completed_at` et `logs/plan-lifecycle.tsv`.
 
 ### Commande directe de l'utilisateur (`FROM=cli`)
 

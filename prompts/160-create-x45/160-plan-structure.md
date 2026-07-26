@@ -5,6 +5,13 @@
 Les plans sont dans `$BASE/plans/{nom-projet}/` (pas dans docs/).
 Exemples : `plans/train-model/`, `plans/mail/`, `plans/visio/`, `plans/edition/`
 
+Chaque plan est nommé
+`<YYYYMMDDTHHMMSSffffffZ>-<slug>.md` à sa création. Ce nom reste identique
+quand le fichier passe de `plan-TODO` à `plan-DOING`, puis `plan-DONE`.
+Renseigner dans son front matter `created_at`, `started_at`, `completed_at` et
+`status`, et journaliser chaque transition dans `logs/plan-lifecycle.tsv`.
+Cette convention ne s'applique jamais aux prompts.
+
 ## Organisation des repertoires
 
 ```

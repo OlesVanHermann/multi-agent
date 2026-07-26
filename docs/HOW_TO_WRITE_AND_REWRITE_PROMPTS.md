@@ -67,6 +67,10 @@ Le reste du triplet est réparti ainsi :
 Une même règle ne doit pas être répétée dans toutes les couches. La répétition
 donne artificiellement plus de poids au processus qu'au travail.
 
+Les plans produits par un agent suivent `docs/PLAN-LIFECYCLE.md` : préfixe UTC
+immuable créé une fois, même nom dans TODO/DOING/DONE et timestamps de
+transitions séparés. Les prompts gardent toujours leurs noms canoniques.
+
 ## Finalité attendue par rôle
 
 | Rôle | Finalité principale |

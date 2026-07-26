@@ -22,6 +22,11 @@ copies `sent/<horodatage>-conclusion.md` des Contradictors.
 Cette convention concerne les logs, rapports d'exécution et plans archivés.
 Les prompts conservent toujours leurs noms canoniques sans horodatage.
 
+Les nouveaux plans suivent `docs/PLAN-LIFECYCLE.md`. L'upgrade ne renomme pas
+les plans existants : cela casserait leurs corrélations. Un ancien plan conserve
+son nom et reçoit `started_at` ou `completed_at` lors de sa prochaine
+transition ; seuls les plans nouvellement créés reçoivent le préfixe UTC.
+
 L'agent chargé de l'upgrade communique les durées après chaque phase et dans son
 compte rendu final. Il sépare temps actif, checks et attente externe. Une phase
 non mesurée est signalée `NON MESURÉ`, jamais estimée.

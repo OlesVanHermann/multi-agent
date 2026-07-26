@@ -56,3 +56,19 @@ def test_timestamped_immutable_copy_convention_is_documented():
         assert "prompt" in text.lower()
     assert "Ne jamais horodater un fichier de" in read("CLAUDE.md")
     assert "N'horodate jamais un fichier de prompt" in read("prompts/AGENT.md")
+
+
+def test_plan_identity_is_timestamped_once_and_stable_across_transitions():
+    documentation = read("docs/PLAN-LIFECYCLE.md")
+    agent = read("prompts/AGENT.md")
+    for text in (documentation, agent):
+        assert "plan-TODO" in text
+        assert "plan-DOING" in text
+        assert "plan-DONE" in text
+        assert "created_at" in text
+        assert "started_at" in text
+        assert "completed_at" in text
+        assert "logs/plan-lifecycle.tsv" in text
+    assert "conserve ce nom" in agent
+    normalized = " ".join(documentation.split())
+    assert "ne s'applique jamais aux fichiers de prompts" in normalized

@@ -513,6 +513,10 @@ Seuls les logs, rapports d'exécution et plans archivés utilisent un préfixe U
 `sent/20260726T125656150056Z-conclusion.md`. Ne jamais horodater un fichier de
 prompt : ses noms et chemins restent stables.
 
+Les plans suivent `docs/PLAN-LIFECYCLE.md` : identifiant horodaté unique à la
+création, même nom pendant `plan-TODO → plan-DOING → plan-DONE`, et
+horodatages distincts de création, début d'exécution et archivage.
+
 ### Règle critique
 
 **Si tu lis un fichier `prompts/XXX-*.md`, tu DEVIENS cet agent et tu EXÉCUTES IMMÉDIATEMENT sa section DÉMARRAGE.**

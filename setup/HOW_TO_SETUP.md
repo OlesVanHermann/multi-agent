@@ -26,6 +26,11 @@ UTC et comporte six chiffres de fraction de seconde ; une exécution ne réécri
 jamais la copie d'une précédente. Cette convention s'applique aux logs et aux
 plans d'installation archivés, jamais aux fichiers de prompts.
 
+Les plans métier créés après l'installation suivent
+`docs/PLAN-LIFECYCLE.md` : préfixe UTC attribué une seule fois à la création,
+nom stable dans TODO/DOING/DONE et journal des transitions. Aucun prompt n'est
+renommé.
+
 Le compte rendu final contient au minimum : prérequis, dépendances,
 infrastructure, profils/authentification, création ou migration des agents,
 checks, attente externe et total. Toute durée oubliée est marquée
