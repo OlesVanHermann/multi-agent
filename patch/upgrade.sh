@@ -440,6 +440,14 @@ for file in "${FRAMEWORK_FILES[@]}"; do
     fi
 done
 
+# 5b. Persistance des sessions Codex actives. L'outil ne lit que des
+# métadonnées sûres, ne copie aucun credential et ne lance aucun login/logout.
+CODEX_SESSION_AUDIT="./scripts/audit-codex-sessions.py"
+if [ -f "$CODEX_SESSION_AUDIT" ]; then
+    $PYTHON_CMD "$CODEX_SESSION_AUDIT" --base "$(pwd)" --apply
+    log_ok "persistance des sessions Codex multi-profils"
+fi
+
 # ============================================================
 # 6. Migrations (idempotentes — v2→v3 comme v3.X→v3.X+1)
 # ============================================================

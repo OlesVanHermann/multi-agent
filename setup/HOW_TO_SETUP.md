@@ -38,6 +38,27 @@ checks, attente externe et total. Toute durée oubliée est marquée
 
 ---
 
+## Persistance des sessions Codex multi-profils
+
+Après l'authentification séparée des comptes Codex, exécuter :
+
+```bash
+python3 scripts/audit-codex-sessions.py --apply
+```
+
+L'outil détecte comme actifs les profils référencés par un agent ou possédant
+déjà un `auth.json`. Il conserve les autres paramètres et impose uniquement
+`forced_login_method = "chatgpt"` et
+`cli_auth_credentials_store = "file"`. Il applique `700` au répertoire et
+`600` à `config.toml`/`auth.json`, puis vérifie chaque `CODEX_HOME`.
+
+Le rapport n'expose que le mode d'authentification, la présence booléenne du
+refresh token et `last_refresh`, jamais un token, hash ou identifiant de
+compte. Un doublon produit seulement les commandes `codex login --device-auth`
+à exécuter humainement. Aucun logout/login ou service n'est lancé.
+
+---
+
 ## Contrat de communication à installer
 
 Avant de créer ou démarrer les agents, lire

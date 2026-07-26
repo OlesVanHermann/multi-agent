@@ -33,6 +33,25 @@ non mesurée est signalée `NON MESURÉ`, jamais estimée.
 
 ---
 
+## Persistance Codex pendant l'upgrade
+
+Après synchronisation, `upgrade.sh` exécute
+`scripts/audit-codex-sessions.py --apply`. Seuls les profils Codex actifs sont
+traités. Les autres paramètres TOML sont conservés, aucun token n'est affiché
+ou copié, aucun profil Claude n'est touché et aucun service n'est redémarré.
+
+Contrôle manuel équivalent :
+
+```bash
+python3 scripts/audit-codex-sessions.py
+python3 scripts/audit-codex-sessions.py --apply
+```
+
+Un doublon est seulement signalé avec les commandes `--device-auth` ;
+la réauthentification reste humaine.
+
+---
+
 ## Migration du contrat de communication
 
 L'upgrade synchronise les scripts puis exécute

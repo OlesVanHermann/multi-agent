@@ -20,6 +20,19 @@ source setup/login_create.sh codex1a codex1b codex2a codex2b \
   codex3a codex3b codex4a codex4b
 ```
 
+Après authentification, sécuriser et auditer la persistance :
+
+```bash
+python3 scripts/audit-codex-sessions.py --apply
+```
+
+Chaque compte conserve un `CODEX_HOME` distinct. L'outil impose la méthode
+ChatGPT et le stockage fichier, applique les permissions `700/600/600`,
+contrôle le statut et détecte les `auth.json` identiques sans afficher leur
+contenu ni leur hash. Un doublon exige une réauthentification humaine avec
+`codex login --device-auth`; aucun logout, login ou redémarrage n'est
+automatique.
+
 Choisir **Sign in with ChatGPT**. Le démarrage refuse une authentification par
 clé API, supprime `OPENAI_API_KEY` et `CODEX_API_KEY` de l’environnement et
 force `forced_login_method=chatgpt`.
