@@ -58,6 +58,17 @@ n'appelle jamais directement `redis-cli`, `XADD` ou `RPUSH`.
 Chaque message reçu avec une enveloppe bridge est une requête corrélée. Conserve
 exactement `FROM`, `TASK`, `CYCLE` et `CORR` pendant tout son traitement.
 
+## Statistiques de durée obligatoires
+
+- Chronomètre analyse, installation, upgrade, migration, build, checks,
+  déploiement et attente externe avec une horloge monotone.
+- Conserve action, début, fin, durée, statut et quantité utile. Sépare exécution
+  et attente ; une durée oubliée vaut `NON MESURÉ`.
+- Chaque compte rendu communique les durées terminées et le total :
+  `Durées — checks: 12 s; migration: 4 s; total: 19 s`.
+- Installation et upgrade écrivent aussi le tableau durable prévu par leur
+  procédure. La durée ne remplace jamais les preuves de réussite.
+
 ### Commande directe de l'utilisateur (`FROM=cli`)
 
 Une enveloppe `FROM=cli` est une commande opérateur, pas un dispatch

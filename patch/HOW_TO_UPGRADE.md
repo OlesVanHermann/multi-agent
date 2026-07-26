@@ -10,6 +10,19 @@ Le script de mise à jour est dans `patch/upgrade.sh`. Il préserve automatiquem
 
 ---
 
+## Statistiques de mise à jour
+
+`upgrade.sh` chronomètre et affiche les phases téléchargement, intégrité,
+inventaire/dry-run, sauvegarde, synchronisation, migrations, dépendances et
+total. Lors d'une application réelle, il ajoute le bilan à
+`logs/action-timings.tsv`; un dry-run affiche les durées sans écrire ce journal.
+
+L'agent chargé de l'upgrade communique les durées après chaque phase et dans son
+compte rendu final. Il sépare temps actif, checks et attente externe. Une phase
+non mesurée est signalée `NON MESURÉ`, jamais estimée.
+
+---
+
 ## Migration du contrat de communication
 
 L'upgrade synchronise les scripts puis exécute

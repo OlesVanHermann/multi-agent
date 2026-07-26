@@ -33,6 +33,48 @@ log_ok()   { printf "%s[OK]%s %s\n" "$GREEN" "$NC" "$1"; }
 log_warn() { printf "%s[WARN]%s %s\n" "$YELLOW" "$NC" "$1"; }
 log_error(){ printf "%s[ERROR]%s %s\n" "$RED" "$NC" "$1"; }
 
+# Mesures monotones par phase. Le journal durable n'est écrit qu'après une
+# application réelle réussie ; un dry-run reste strictement sans mutation.
+UPGRADE_STARTED=$SECONDS
+PHASE_STARTED=$SECONDS
+TIMING_ROWS=()
+
+human_duration() {
+    local value="$1"
+    if [ "$value" -ge 60 ]; then
+        printf "%dm%02ds" "$((value / 60))" "$((value % 60))"
+    else
+        printf "%ds" "$value"
+    fi
+}
+
+timing_record() {
+    local phase="$1" duration="$2" status="${3:-OK}" details="${4:-}"
+    TIMING_ROWS+=("$(date -u +%Y-%m-%dT%H:%M:%SZ)"$'\t'"upgrade"$'\t'"$phase"$'\t'"$duration"$'\t'"$status"$'\t'"$details")
+    log_info "Durée $phase : $(human_duration "$duration") (total $(human_duration "$((SECONDS - UPGRADE_STARTED))"))"
+}
+
+timing_mark() {
+    local phase="$1" status="${2:-OK}" details="${3:-}"
+    local duration=$((SECONDS - PHASE_STARTED))
+    timing_record "$phase" "$duration" "$status" "$details"
+    PHASE_STARTED=$SECONDS
+}
+
+timing_summary() {
+    local persist="${1:-false}" total=$((SECONDS - UPGRADE_STARTED))
+    timing_record "total" "$total" "OK" "durée totale"
+    if [ "$persist" = true ]; then
+        local timing_log="${MA_TIMING_LOG:-./logs/action-timings.tsv}"
+        mkdir -p "$(dirname "$timing_log")"
+        if [ ! -s "$timing_log" ]; then
+            printf "timestamp\taction\tphase\tduration_seconds\tstatus\tdetails\n" > "$timing_log"
+        fi
+        printf "%s\n" "${TIMING_ROWS[@]}" >> "$timing_log"
+        log_info "Statistiques enregistrées : $timing_log"
+    fi
+}
+
 # Détecter commandes
 find_cmd() {
     local cmd_name="$1"; shift
@@ -112,6 +154,7 @@ trap "rm -rf '$TEMP_DIR'" EXIT
 log_info "Téléchargement..."
 $GIT_CMD clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$TEMP_DIR" 2>&1 | tail -1
 log_ok "Téléchargé"
+timing_mark "telechargement" "OK" "$BRANCH"
 
 LOCAL_VERSION=$(version_of ./CLAUDE.md)
 NEW_VERSION=$(version_of "$TEMP_DIR/CLAUDE.md")
@@ -168,6 +211,7 @@ else
     log_warn "patch/checksums.sha256 absent (release antérieure à C3) — intégrité non vérifiée"
 fi
 echo ""
+timing_mark "integrite" "OK" "signature et checksums"
 
 # ============================================================
 # 2. Afficher ce qui va changer
@@ -313,12 +357,14 @@ done
 [ -d "./bench/results" ] && printf "  ✓ bench/results/ + bench/heldout.txt (données de site)\n"
 [ -f "./project-config.md" ] && printf "  ✓ project-config.md\n"
 echo ""
+timing_mark "inventaire" "OK" "changements et préservations"
 
 # ============================================================
 # Dry-run: on s'arrête là
 # ============================================================
 if [ "$DRY_RUN" = true ]; then
     log_warn "Dry-run terminé. Relancer sans --dry-run pour appliquer."
+    timing_summary false
     echo ""
     exit 0
 fi
@@ -327,9 +373,13 @@ fi
 # 3. Sauvegarder les secrets avant mise à jour
 # ============================================================
 SECRETS_BACKUP=""
+BACKUP_SECONDS=0
+SYNC_SECONDS=0
 if [ -f "./setup/secrets.cfg" ]; then
+    STEP_STARTED=$SECONDS
     SECRETS_BACKUP=$(mktemp)
     cp "./setup/secrets.cfg" "$SECRETS_BACKUP"
+    BACKUP_SECONDS=$((BACKUP_SECONDS + SECONDS - STEP_STARTED))
     log_info "secrets.cfg sauvegardé"
 fi
 
@@ -347,13 +397,20 @@ log_info "Sauvegarde de l'état actuel dans $BACKUP_DIR"
 for dir in "${FRAMEWORK_DIRS[@]}"; do
     if [ -d "$TEMP_DIR/$dir" ]; then
         if [ -d "./$dir" ]; then
+            STEP_STARTED=$SECONDS
             $RSYNC_CMD -a --exclude='node_modules' --exclude='dist' --exclude='secrets.cfg' "./$dir/" "$BACKUP_DIR/$dir/"
+            BACKUP_SECONDS=$((BACKUP_SECONDS + SECONDS - STEP_STARTED))
         fi
         mkdir -p "./$dir"
+        STEP_STARTED=$SECONDS
         $RSYNC_CMD -a --delete --exclude='node_modules' --exclude='dist' --exclude='secrets.cfg' "$TEMP_DIR/$dir/" "./$dir/"
+        SYNC_SECONDS=$((SYNC_SECONDS + SECONDS - STEP_STARTED))
         log_ok "$dir/"
     fi
 done
+timing_record "sauvegarde" "$BACKUP_SECONDS" "OK" "$BACKUP_DIR"
+timing_record "synchronisation" "$SYNC_SECONDS" "OK" "framework"
+PHASE_STARTED=$SECONDS
 
 # ============================================================
 # 5. Restaurer les secrets
@@ -498,10 +555,12 @@ fi
 # ============================================================
 # 7. Dépendances
 # ============================================================
+timing_mark "migrations" "OK" "prompts, topologies, modèles et adresses"
 log_info "Installation des dépendances..."
 $PIP_CMD install -q -r requirements.txt 2>/dev/null || \
 $PIP_CMD install -q --break-system-packages -r requirements.txt 2>/dev/null || true
 log_ok "Dépendances installées"
+timing_mark "dependances" "OK" "requirements.txt"
 
 # ============================================================
 # Résumé
@@ -514,4 +573,5 @@ echo ""
 echo "  Version : $LOCAL_VERSION → $NEW_VERSION"
 echo "  ARRÊT OBLIGATOIRE : ne pas démarrer l'infrastructure ni les agents."
 echo "  Le démarrage est une opération séparée, décidée explicitement par l'opérateur."
+timing_summary true
 echo ""

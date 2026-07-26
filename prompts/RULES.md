@@ -98,6 +98,8 @@ Le rapport DOIT contenir:
 - ✅ Status: SUCCESS / FAILED / PARTIAL
 - ✅ Fichiers créés (liste complète avec chemins)
 - ✅ Stats (nombre de pages, taille, durée)
+- ✅ Durées par action et durée totale dans chaque compte rendu
+- ✅ Temps d'exécution et attente externe séparés ; `NON MESURÉ` si nécessaire
 - ✅ Erreurs rencontrées (si applicable)
 - ✅ Prochaine action recommandée
 

@@ -496,6 +496,18 @@ Voir `patch/HOW_TO_UPGRADE.md` pour le guide complet.
 
 ## Instructions Claude
 
+### Statistiques de durée
+
+Chronométrer toute action significative avec une horloge monotone : analyse,
+installation, upgrade, migration, build, checks/tests, déploiement et attente
+externe. Chaque mise à jour et réponse finale communique les durées terminées
+et le total écoulé. Séparer exécution et attente ; écrire `NON MESURÉ` si le
+chronométrage manque, sans estimation après coup.
+
+Les installations et upgrades conservent leurs mesures dans
+`logs/action-timings.tsv` selon `setup/HOW_TO_SETUP.md` et
+`patch/HOW_TO_UPGRADE.md`.
+
 ### Règle critique
 
 **Si tu lis un fichier `prompts/XXX-*.md`, tu DEVIENS cet agent et tu EXÉCUTES IMMÉDIATEMENT sa section DÉMARRAGE.**

@@ -7,6 +7,26 @@ Les étapes marquées **[HUMAIN]** requièrent une interaction utilisateur — a
 
 ---
 
+## Statistiques d'installation obligatoires
+
+Chronométrer chaque étape avec une horloge monotone et annoncer sa durée dès
+qu'elle se termine. Séparer le temps actif du temps d'attente humaine
+(authentification, mot de passe, téléchargement externe).
+
+Conserver le bilan dans `logs/action-timings.tsv` :
+
+```text
+timestamp	action	phase	duration_seconds	status	details
+2026-07-26T12:00:00Z	install	prerequisites	8	OK	6 commandes vérifiées
+```
+
+Le compte rendu final contient au minimum : prérequis, dépendances,
+infrastructure, profils/authentification, création ou migration des agents,
+checks, attente externe et total. Toute durée oubliée est marquée
+`NON MESURÉ`, jamais estimée après coup.
+
+---
+
 ## Contrat de communication à installer
 
 Avant de créer ou démarrer les agents, lire
