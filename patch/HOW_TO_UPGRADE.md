@@ -36,15 +36,15 @@ non mesurée est signalée `NON MESURÉ`, jamais estimée.
 ## Persistance Codex pendant l'upgrade
 
 Après synchronisation, `upgrade.sh` exécute
-`scripts/audit-codex-sessions.py --apply`. Seuls les profils Codex actifs sont
-traités. Les autres paramètres TOML sont conservés, aucun token n'est affiché
+`scripts/audit-codex-sessions.py --apply --all-profiles`. Les huit slots Codex
+sont traités. Les autres paramètres TOML sont conservés, aucun token n'est affiché
 ou copié, aucun profil Claude n'est touché et aucun service n'est redémarré.
 
 Contrôle manuel équivalent :
 
 ```bash
 python3 scripts/audit-codex-sessions.py
-python3 scripts/audit-codex-sessions.py --apply
+python3 scripts/audit-codex-sessions.py --apply --all-profiles
 ```
 
 Un doublon est seulement signalé avec les commandes `--device-auth` ;

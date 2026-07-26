@@ -77,8 +77,27 @@ def test_active_profiles_include_references_and_existing_auth(tmp_path):
     assert MODULE.active_profiles(tmp_path) == ["codex3a", "codex4a"]
 
 
+def test_all_profiles_includes_unauthenticated_slots(tmp_path, monkeypatch):
+    for name in ("codex1a", "codex1b", "codex4b"):
+        (tmp_path / "login" / name).mkdir(parents=True)
+    monkeypatch.setattr(MODULE, "login_status",
+                        lambda base, name: "not-logged-in")
+    monkeypatch.setattr(MODULE, "codex_version", lambda base: "codex-cli test")
+
+    report = MODULE.audit(
+        tmp_path, apply=True, no_log=True, include_all=True)
+
+    assert report["profiles"] == ["codex1a", "codex1b", "codex4b"]
+    assert report["scope"] == "all-profiles"
+    for name in report["profiles"]:
+        assert (tmp_path / "login" / name / "config.toml").is_file()
+
+
 def test_upgrade_invokes_safe_apply():
     source = (ROOT / "patch" / "upgrade.sh").read_text()
     assert "audit-codex-sessions.py" in source
-    assert '"$CODEX_SESSION_AUDIT" --base "$(pwd)" --apply' in source
+    assert (
+        '"$CODEX_SESSION_AUDIT" --base "$(pwd)" --apply --all-profiles'
+        in source
+    )
     assert "login --device-auth" not in source

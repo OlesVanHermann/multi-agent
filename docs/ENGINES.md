@@ -23,7 +23,7 @@ source setup/login_create.sh codex1a codex1b codex2a codex2b \
 Après authentification, sécuriser et auditer la persistance :
 
 ```bash
-python3 scripts/audit-codex-sessions.py --apply
+python3 scripts/audit-codex-sessions.py --apply --all-profiles
 ```
 
 Chaque compte conserve un `CODEX_HOME` distinct. L'outil impose la méthode

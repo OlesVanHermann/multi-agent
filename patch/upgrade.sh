@@ -444,7 +444,7 @@ done
 # métadonnées sûres, ne copie aucun credential et ne lance aucun login/logout.
 CODEX_SESSION_AUDIT="./scripts/audit-codex-sessions.py"
 if [ -f "$CODEX_SESSION_AUDIT" ]; then
-    $PYTHON_CMD "$CODEX_SESSION_AUDIT" --base "$(pwd)" --apply
+    $PYTHON_CMD "$CODEX_SESSION_AUDIT" --base "$(pwd)" --apply --all-profiles
     log_ok "persistance des sessions Codex multi-profils"
 fi
 

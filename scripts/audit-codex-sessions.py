@@ -55,6 +55,17 @@ def active_profiles(base):
     return sorted(result)
 
 
+def all_profiles(base):
+    """Tous les slots Codex matérialisés, authentifiés ou non."""
+    login = base / "login"
+    if not login.is_dir():
+        return []
+    return sorted(
+        path.name for path in login.iterdir()
+        if path.is_dir() and PROFILE_RE.fullmatch(path.name)
+    )
+
+
 def nested_values(value, wanted):
     found = []
     if isinstance(value, dict):
@@ -220,9 +231,9 @@ def append_timing(base, timings, report, no_log):
     return destination
 
 
-def audit(base, apply=False, no_log=False):
+def audit(base, apply=False, no_log=False, include_all=False):
     total_start = time.monotonic()
-    profiles = active_profiles(base)
+    profiles = all_profiles(base) if include_all else active_profiles(base)
     inspection_start = time.monotonic()
     initial = {}
     for profile in profiles:
@@ -276,6 +287,7 @@ def audit(base, apply=False, no_log=False):
         "schema": "multi-agent.codex-session-audit.v1",
         "created_at": utc_now().isoformat(),
         "mode": "apply" if apply else "check",
+        "scope": "all-profiles" if include_all else "active-profiles",
         "profiles": profiles,
         "corrected_profiles": corrected,
         "before": initial,
@@ -296,9 +308,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument(
+        "--all-profiles", action="store_true",
+        help="audite/corrige tous les répertoires login/codex[1-4][ab]")
     parser.add_argument("--no-log", action="store_true")
     args = parser.parse_args()
-    report = audit(args.base.resolve(), args.apply, args.no_log)
+    report = audit(
+        args.base.resolve(), args.apply, args.no_log, args.all_profiles)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     if report["duplicate_credentials"]:
         print("\nRéauthentification humaine requise pour les profils dupliqués :")

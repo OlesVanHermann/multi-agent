@@ -43,11 +43,11 @@ checks, attente externe et total. Toute durée oubliée est marquée
 Après l'authentification séparée des comptes Codex, exécuter :
 
 ```bash
-python3 scripts/audit-codex-sessions.py --apply
+python3 scripts/audit-codex-sessions.py --apply --all-profiles
 ```
 
-L'outil détecte comme actifs les profils référencés par un agent ou possédant
-déjà un `auth.json`. Il conserve les autres paramètres et impose uniquement
+L'installation corrige les huit slots `codex1a…codex4b`, même ceux qui ne sont
+pas encore authentifiés. Elle conserve les autres paramètres et impose uniquement
 `forced_login_method = "chatgpt"` et
 `cli_auth_credentials_store = "file"`. Il applique `700` au répertoire et
 `600` à `config.toml`/`auth.json`, puis vérifie chaque `CODEX_HOME`.
