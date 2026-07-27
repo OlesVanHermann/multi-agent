@@ -9,6 +9,7 @@ et au diagnostic de crash du bridge.
 
 Événements émis (champ event) :
   task_assigned      — le bridge prend une tâche (agent.py)
+  response_published — réponse TUI publiée dans l'outbox (agent.py)
   verify_green       — verify vert (agent.py)
   verify_red         — verify rouge, retry (agent.py)
   verify_retry       — re-dispatch après rouge (agent.py)
@@ -16,6 +17,8 @@ et au diagnostic de crash du bridge.
   api_error_retry    — erreur API, re-queue (agent.py)
   nudge              — relance watchdog sur agent silencieux (healthcheck.py)
   escalation         — alerte critique watchdog (healthcheck.py)
+  obligation_reminder   — terminal attendu rappelé sans redispatch
+  obligation_escalation — terminal toujours absent après le rappel
 
 Toutes les écritures sont best-effort côté appelant : un émetteur ne doit
 JAMAIS crasher parce que Redis est indisponible (wrapper try/except).

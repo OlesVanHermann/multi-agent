@@ -83,22 +83,57 @@ CYCLE="${CYCLE:-}"
 REQUESTER_ID="${REQUESTER_ID:-$TO_AGENT}"
 OWNER_ID="${OWNER_ID:-$TO_AGENT}"
 
+close_obligation() {
+    python3 "$SCRIPT_DIR/agent-bridge/obligations.py" close \
+        --base "$BASE_DIR" \
+        --task "$TASK_ID" \
+        --cycle "$CYCLE" \
+        --agent "$FROM_AGENT" \
+        --correlation "$CORRELATION_ID" \
+        --event "$SIGNAL_TYPE" >/dev/null 2>&1 || \
+        echo "warning: durable obligation cleanup failed" >&2
+}
+
 if [ "$FROM_AGENT" != "cli" ]; then
     if [ -z "$TASK_ID" ] || [ "$TASK_ID" = "unknown" ] \
        || [ -z "$CYCLE" ] || [ "$CYCLE" = "unknown" ] \
        || [ -z "$CORRELATION_ID" ]; then
-        echo "invalid: terminal requires TASK_ID, CYCLE and CORRELATION_ID" >&2
-        exit 2
+        case "$SIGNAL_TYPE" in
+            INFO_REQUIRED|PROTOCOL_ERROR)
+                if [ -z "$TASK_ID" ] || [ "$TASK_ID" = "unknown" ]; then
+                    TASK_ID="unattributed"
+                fi
+                if [ -z "$CYCLE" ] || [ "$CYCLE" = "unknown" ]; then
+                    CYCLE="unattributed"
+                fi
+                CORRELATION_ID="${CORRELATION_ID:-rescue-$(cat /proc/sys/kernel/random/uuid)}"
+                echo "rescue: incomplete metadata, emitting $SIGNAL_TYPE under corr=$CORRELATION_ID" >&2
+                ;;
+            *)
+                echo "invalid: terminal requires TASK_ID, CYCLE and CORRELATION_ID" >&2
+                echo "hint: emit INFO_REQUIRED or PROTOCOL_ERROR to report the missing metadata" >&2
+                exit 2
+                ;;
+        esac
     fi
 fi
 
-# Une combinaison terminale n'est émise qu'une fois. La réservation précède
-# les XADD ; elle est retirée uniquement si le premier XADD échoue.
+# La clé réserve la combinaison terminale ; sa valeur identifie le contenu.
+# Un rejeu strict du même contenu est idempotent. Un contenu différent n'est
+# jamais assimilé à une livraison réussie.
 DEDUP_KEY="terminal:${FROM_AGENT}:${SIGNAL_TYPE}:${TASK_ID}:${CYCLE}:${CORRELATION_ID}"
-DEDUP_RESULT=$($REDIS_CLI SET "$DEDUP_KEY" "$TIMESTAMP" NX EX "${TERMINAL_DEDUP_TTL:-604800}" 2>/dev/null)
+SIGNAL_FINGERPRINT=$(printf '%s' "$SIGNAL" | sha256sum | cut -d' ' -f1)
+DEDUP_RESULT=$($REDIS_CLI SET "$DEDUP_KEY" "$SIGNAL_FINGERPRINT" NX EX "${TERMINAL_DEDUP_TTL:-604800}" 2>/dev/null)
 if [ "$DEDUP_RESULT" != "OK" ]; then
-    echo "duplicate: $TO_AGENT event=$SIGNAL_TYPE task=$TASK_ID cycle=$CYCLE corr=$CORRELATION_ID"
-    exit 0
+    PREVIOUS=$($REDIS_CLI GET "$DEDUP_KEY" 2>/dev/null)
+    if [ "$PREVIOUS" = "$SIGNAL_FINGERPRINT" ]; then
+        close_obligation
+        echo "replay: $TO_AGENT event=$SIGNAL_TYPE task=$TASK_ID cycle=$CYCLE corr=$CORRELATION_ID state=ALREADY_DELIVERED"
+        exit 0
+    fi
+    echo "refused: $TO_AGENT event=$SIGNAL_TYPE task=$TASK_ID cycle=$CYCLE corr=$CORRELATION_ID state=NOT_DELIVERED" >&2
+    echo "remedy: this terminal slot is already consumed by a different payload; open a new CYCLE/CORR then re-emit" >&2
+    exit 3
 fi
 
 # 1. Audit : stream de complétion dédié
@@ -122,6 +157,10 @@ if [ -z "$COMPLETION_ID" ]; then
     echo "invalid: completion XADD failed for agent $TO_AGENT" >&2
     exit 1
 fi
+
+# Le stream completion fait foi même si la cible est momentanément absente.
+# Archiver l'obligation après ce XADD réussi, jamais avant.
+close_obligation
 
 # 2. Délivrance : inbox de la cible
 MSG_ID=$($REDIS_CLI XADD "$(agent_inbox_key "$TO_AGENT")" MAXLEN '~' "${IO_STREAM_MAXLEN:-10000}" '*' \

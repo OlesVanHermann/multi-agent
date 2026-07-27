@@ -57,6 +57,23 @@ n'appelle jamais directement `redis-cli`, `XADD` ou `RPUSH`.
 Chaque message reçu avec une enveloppe bridge est une requête corrélée. Conserve
 exactement `FROM`, `TASK`, `CYCLE` et `CORR` pendant tout son traitement.
 
+### Vérification de livraison
+
+`send.sh` et `done.sh` rendent un état explicite. Ne conclus jamais depuis le
+seul code de retour :
+
+- `state=DELIVERED` — livré, tu peux redevenir idle ;
+- `state=ALREADY_DELIVERED` — rejeu vrai du même contenu, rien à refaire ;
+- `state=NOT_DELIVERED` — refusé, ton travail n'est pas parti : ouvre un
+  nouveau `CYCLE`/`CORR` puis réémets ;
+- `state=ORPHANED` — persisté sans session cible active : le message sera
+  rejoué au redémarrage ; ne le réémets pas en boucle ;
+- `rescue:` — seul un signal de métadonnée manquante a été émis, pas le
+  résultat métier.
+
+Tant qu'aucun de ces états n'a été lu, la tâche n'est pas terminée. Un travail
+réalisé sans terminal livré est un incident, jamais un état normal.
+
 ## Statistiques de durée obligatoires
 
 - Chronomètre chaque action significative : analyse, installation, upgrade,
@@ -162,10 +179,24 @@ L'état volatil (`REQUESTER`, tâche/cycle actifs, cible, événement attendu,
 statut et `SUPERSEDES`) vit sous `pool-requests/state/`, jamais comme autorité
 dans `memory.md`. La mémoire conserve du contexte durable et des références.
 
+Avant de commencer un travail dispatché, chaque agent — pas seulement le
+`1XX` — écrit sous `pool-requests/state/<task>/<cycle>/state.md` :
+`REQUESTER`, `TASK`, `CYCLE`, `CORR`, `EXPECTED_EVENT` et `STATUS=WORKING`.
+Après une compaction ou un redémarrage, cet état permet de retrouver le
+terminal dû sans inventer de métadonnée. Le passage à `STATUS=DELIVERED`
+n'intervient qu'après lecture d'un état de livraison confirmé.
+
 `pipeline/NNN-output/` est un espace de transit. Avant son nettoyage, le Master
 archive le paquet accepté sous
 `pool-requests/state/<task>/<cycle>/accepted-package/`; le terminal de Phase C
 référence ce chemin durable et son SHA-256.
+
+À chacun de ses propres tours, le Master relit les corrélations `WAITING_*`
+sous `pool-requests/state/`. Si une cible n'a rien émis alors que son état
+déclare le travail terminé, il envoie un `STATUS_REQUIRED` non terminal, sans
+`sleep`, polling ni redispatch au délai. Un cycle n'est clos que si, pour
+chaque cible, le nombre de dispatches reçus égale le nombre d'événements
+retournés.
 
 ## Contrat de livraison piloté par les preuves
 

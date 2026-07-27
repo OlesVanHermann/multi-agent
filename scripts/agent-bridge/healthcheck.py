@@ -21,6 +21,7 @@ import argparse
 import subprocess
 import json
 import logging
+from pathlib import Path
 from urllib.request import urlopen
 from urllib.error import URLError
 
@@ -29,6 +30,7 @@ from ids import is_valid_agent_id
 
 # V3/C2 : détection de stall via le WAL
 import wal
+import obligations
 
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
@@ -43,8 +45,10 @@ CIRCUIT_BREAKER_MAX_RESTARTS = int(os.environ.get("CIRCUIT_BREAKER_MAX_RESTARTS"
 CIRCUIT_BREAKER_WINDOW = int(os.environ.get("CIRCUIT_BREAKER_WINDOW", 300))
 # V3/C2 : agent busy sans événement WAL au-delà de ce seuil → nudge puis escalade
 WATCHDOG_STALL_THRESHOLD = int(os.environ.get("WATCHDOG_STALL_THRESHOLD", 600))
+OBLIGATION_REMINDER_S = int(os.environ.get("OBLIGATION_REMINDER_S", 900))
 STREAM_MAXLEN = 1000  # CT-009
 IO_STREAM_MAXLEN = int(os.environ.get("IO_STREAM_MAXLEN", 10000))
+BASE_DIR = Path(__file__).resolve().parents[2]
 
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD or None, decode_responses=True)
 
@@ -157,7 +161,8 @@ class AgentWatchdog:
 
     def __init__(self, redis_client, health_port_base=None,
                  poll_interval=None, fail_threshold=None, health_timeout=None,
-                 max_restarts=None, breaker_window=None, stall_threshold=None):
+                 max_restarts=None, breaker_window=None, stall_threshold=None,
+                 obligation_reminder_s=None, base_dir=None):
         """EF-002 : Initialise le watchdog avec seuils configurables."""
         self.redis = redis_client
         self.health_port_base = health_port_base or HEALTH_PORT_BASE
@@ -167,10 +172,93 @@ class AgentWatchdog:
         self.max_restarts = max_restarts or CIRCUIT_BREAKER_MAX_RESTARTS
         self.breaker_window = breaker_window or CIRCUIT_BREAKER_WINDOW
         self.stall_threshold = stall_threshold or WATCHDOG_STALL_THRESHOLD
+        self.obligation_reminder_s = (
+            obligation_reminder_s or OBLIGATION_REMINDER_S)
+        self.base_dir = Path(base_dir or BASE_DIR)
         self._fail_counts = {}       # agent_id → consecutive failures
         self._restart_history = {}   # agent_id → [timestamps]
         self._circuit_open = {}      # agent_id → bool
         self._nudged = {}            # V3/C2 : agent_id → 'nudged'|'escalated'
+
+    def _send_status_required(self, agent_id, data, message):
+        """Rappel corrélé via send.sh, jamais par XADD direct."""
+        env = dict(os.environ)
+        env.update({
+            "FROM_AGENT": "watchdog",
+            "TASK_ID": data.get("task_id", "") or "unknown",
+            "CYCLE": data.get("cycle", "") or "unknown",
+            "CORRELATION_ID": data.get("correlation_id", ""),
+            "MESSAGE_EVENT": "STATUS_REQUIRED",
+            "REQUESTER_ID": data.get("requester", "") or "watchdog",
+            "OWNER_ID": data.get("owner", "") or agent_id,
+        })
+        return subprocess.run(
+            [str(self.base_dir / "scripts" / "send.sh"), agent_id, message],
+            capture_output=True, text=True, timeout=15, env=env)
+
+    def _check_obligations(self, now=None):
+        """Réconcilie, rappelle puis escalade les obligations ouvertes."""
+        now = time.time() if now is None else now
+        results = {}
+        try:
+            obligations.reconcile(self.redis, self.base_dir)
+            open_items = list(obligations.iter_open(self.base_dir) or [])
+        except Exception as exc:
+            logger.warning("obligation reconciliation error: %s", exc)
+            return results
+        for path, data in open_items:
+            agent_id = data.get("owner", "")
+            if not is_valid_agent_id(agent_id):
+                continue
+            age = now - int(data.get("received_at", now))
+            if data.get("escalated_at"):
+                results[agent_id] = "obligation_escalated"
+                continue
+            if age >= 2 * self.obligation_reminder_s and data.get("reminder_at"):
+                self._publish_alert(
+                    "critical", agent_id,
+                    f"Terminal attendu absent depuis {int(age)}s",
+                    {
+                        "task_id": data.get("task_id", ""),
+                        "cycle": data.get("cycle", ""),
+                        "correlation_id": data.get("correlation_id", ""),
+                        "expected_event": data.get("expected_event", ""),
+                    })
+                wal.emit(
+                    self.redis, None, "obligation_escalation", agent_id,
+                    data.get("task_id"),
+                    cycle=data.get("cycle", ""),
+                    correlation_id=data.get("correlation_id", ""),
+                    expected_event=data.get("expected_event", ""),
+                    age_seconds=int(age))
+                obligations.update(path, escalated_at=int(now))
+                results[agent_id] = "obligation_escalated"
+                continue
+            if age >= self.obligation_reminder_s and not data.get("reminder_at"):
+                message = (
+                    "Terminal manquant : "
+                    f"TASK={data.get('task_id', '')} "
+                    f"CYCLE={data.get('cycle', '')} "
+                    f"CORR={data.get('correlation_id', '')} "
+                    f"EXPECTED_EVENT={data.get('expected_event', '')}. "
+                    "Vérifie ton état durable et émets le terminal dû ; "
+                    "ne recommence pas le travail.")
+                result = self._send_status_required(agent_id, data, message)
+                if result.returncode in (0, 2):
+                    obligations.update(path, reminder_at=int(now))
+                    wal.emit(
+                        self.redis, None, "obligation_reminder", agent_id,
+                        data.get("task_id"),
+                        cycle=data.get("cycle", ""),
+                        correlation_id=data.get("correlation_id", ""),
+                        expected_event=data.get("expected_event", ""),
+                        age_seconds=int(age))
+                    results[agent_id] = "obligation_reminded"
+                else:
+                    logger.warning(
+                        "obligation reminder failed for %s: %s",
+                        agent_id, result.stderr.strip())
+        return results
 
     def discover_agents(self):
         """Découvre les agents actifs via Redis heartbeat streams (EF-002).
@@ -340,13 +428,17 @@ class AgentWatchdog:
                 "warning", agent_id,
                 f"Agent {agent_id} busy sans activité WAL depuis {int(age)}s — nudge",
                 {"age_seconds": int(age)})
-            self.redis.xadd(
-                f"agent:{agent_id}:inbox",
-                {"prompt": ("FROM:watchdog|Où en es-tu ? Si tu es bloqué, "
-                            "émets BLOCKED|task|raison|question."),
-                 "from_agent": "watchdog",
-                 "timestamp": int(time.time())},
-                maxlen=IO_STREAM_MAXLEN, approximate=True)
+            self._send_status_required(
+                agent_id,
+                {
+                    "task_id": data.get("task_id", ""),
+                    "cycle": data.get("cycle", ""),
+                    "correlation_id": data.get("correlation_id", ""),
+                    "requester": "watchdog",
+                    "owner": agent_id,
+                },
+                "Où en es-tu ? Si tu es bloqué, émets BLOCKED avec les "
+                "métadonnées corrélées de la tâche.")
             wal.emit(self.redis, None, "nudge", agent_id)
             self._nudged[agent_id] = "nudged"
             return "stalled"
@@ -409,9 +501,10 @@ class AgentWatchdog:
     def run_cycle(self):
         """Exécute un cycle watchdog complet (EF-002)."""
         agents = self.discover_agents()
-        results = {}
+        results = self._check_obligations()
         for agent_id in agents:
-            results[agent_id] = self.process_agent(agent_id)
+            health_result = self.process_agent(agent_id)
+            results.setdefault(agent_id, health_result)
         return results
 
     def run(self):

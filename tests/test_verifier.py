@@ -452,7 +452,8 @@ class TestWalEmissions:
         _run_gate(a, {'prompt': 'go', 'from_agent': 'cli', 'msg_id': 'm1',
                       'verify_cmd': 'exit 0', 'task_id': 't9'},
                   lambda: len(_outbox(a)) >= 1)
-        assert self._wal_events(a) == ["task_assigned", "verify_green"]
+        assert self._wal_events(a) == [
+            "task_assigned", "verify_green", "response_published"]
 
     def test_red_then_green_emits_full_trace(self, tmp_path, monkeypatch):
         seen = []
@@ -468,7 +469,7 @@ class TestWalEmissions:
                   lambda: len(_outbox(a)) >= 1)
         assert self._wal_events(a) == [
             "task_assigned", "verify_red", "verify_retry",
-            "task_assigned", "verify_green"]
+            "task_assigned", "verify_green", "response_published"]
 
     def test_v2_task_emits_only_task_assigned(self, tmp_path, monkeypatch):
         monkeypatch.setattr(verifier, "run",
@@ -476,7 +477,8 @@ class TestWalEmissions:
         a = _make_bridge_agent(tmp_path)
         _run_gate(a, {'prompt': 'tâche v2', 'from_agent': 'cli', 'msg_id': 'm1'},
                   lambda: len(_outbox(a)) >= 1)
-        assert self._wal_events(a) == ["task_assigned"]
+        assert self._wal_events(a) == [
+            "task_assigned", "response_published"]
 
     def test_wal_indisponible_ne_tue_pas_le_bridge(self, tmp_path, monkeypatch):
         """Panne Redis sur le WAL uniquement : la tâche aboutit quand même."""

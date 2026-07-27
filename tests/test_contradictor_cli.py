@@ -161,6 +161,42 @@ def test_analysis_view_separates_user_requests_from_agent_exchanges():
     assert view["execution_assessment"]["prompt_executed"] == "TO_ASSESS"
 
 
+def test_analysis_view_uses_structured_arbitrage_and_expected_event():
+    inbox = [
+        {"id": "1-0", "fields": {
+            "stream_agent": "345-145",
+            "from_agent": "345-945",
+            "event": "ARBITRAGE",
+            "task_id": "task-1",
+            "cycle": "r1",
+            "correlation_id": "corr-1",
+            "expected_event": "ARBITRAGE",
+            "prompt": "texte sans marqueur legacy",
+        }}
+    ]
+    wal = [
+        {"id": "2-0", "fields": {
+            "event": "task_assigned",
+            "agent_id": "345-945",
+            "from_agent": "345-145",
+            "task_id": "task-1",
+            "cycle": "r1",
+            "correlation_id": "corr-1",
+            "expected_event": "ARBITRAGE",
+        }}
+    ]
+    streams = {
+        "inbox": {"available": True, "error": "", "entries": inbox},
+        "outbox": {"available": True, "error": "", "entries": []},
+        "wal": {"available": True, "error": "", "entries": wal},
+    }
+    view = MODULE.analysis_view(
+        "345-145", ["345-145", "345-945"], [], "", streams)
+    assert view["terminal_events"][0]["event"] == "ARBITRAGE"
+    assert view["terminal_events"][0]["correlation_id"] == "corr-1"
+    assert view["dispatch_expectations"][0]["expected_event"] == "ARBITRAGE"
+
+
 def test_send_archives_message_queued_for_offline_target(tmp_path, monkeypatch):
     make_triangle(tmp_path)
     monkeypatch.setattr(MODULE, "BASE", tmp_path)

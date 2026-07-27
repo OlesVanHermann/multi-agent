@@ -17,7 +17,23 @@ AGENT = "300"
 
 
 def _watchdog(redis_client):
-    return healthcheck.AgentWatchdog(redis_client, stall_threshold=100)
+    watchdog = healthcheck.AgentWatchdog(redis_client, stall_threshold=100)
+
+    def fake_send(agent_id, data, message):
+        redis_client.xadd(
+            f"agent:{agent_id}:inbox",
+            {
+                "prompt": message,
+                "from_agent": "watchdog",
+                "event": "STATUS_REQUIRED",
+                "task_id": data.get("task_id", ""),
+                "cycle": data.get("cycle", ""),
+                "correlation_id": data.get("correlation_id", ""),
+            })
+        return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    watchdog._send_status_required = fake_send
+    return watchdog
 
 
 def _set_status(redis_client, status):
@@ -80,7 +96,8 @@ class TestCheckStall:
         inbox = redis_client.xrange(f"agent:{AGENT}:inbox")
         assert len(inbox) == 1
         assert inbox[0][1]["from_agent"] == "watchdog"
-        assert inbox[0][1]["prompt"].startswith("FROM:watchdog|")
+        assert inbox[0][1]["event"] == "STATUS_REQUIRED"
+        assert not inbox[0][1]["prompt"].startswith("FROM:")
         # le nudge est journalisé dans le WAL (réarme le compteur)
         last = wal.last_event(redis_client, None, AGENT)
         assert last[1]["event"] == "nudge"

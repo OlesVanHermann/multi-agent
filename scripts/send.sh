@@ -67,6 +67,7 @@ MESSAGE_EVENT="${MESSAGE_EVENT:-MESSAGE}"
 REQUESTER_ID="${REQUESTER_ID:-$FROM_AGENT}"
 OWNER_ID="${OWNER_ID:-$FROM_AGENT}"
 EXPECTED_EVENT="${EXPECTED_EVENT:-}"
+RESCUE_MODE=false
 
 # Une commande opérateur peut rester libre. Entre agents, l'enveloppe est
 # obligatoire et le texte ne sert jamais à inventer une métadonnée.
@@ -74,8 +75,23 @@ if [ "$FROM_AGENT" != "cli" ]; then
     if [ -z "$TASK_ID" ] || [ "$TASK_ID" = "unknown" ] \
        || [ -z "$CYCLE" ] || [ "$CYCLE" = "unknown" ] \
        || [ -z "$PROVIDED_CORRELATION_ID" ]; then
-        echo "invalid: inter-agent message requires TASK_ID, CYCLE and CORRELATION_ID" >&2
-        exit 2
+        case "$MESSAGE_EVENT" in
+            INFO_REQUIRED|PROTOCOL_ERROR|STATUS_REQUIRED)
+                RESCUE_MODE=true
+                if [ -z "$TASK_ID" ] || [ "$TASK_ID" = "unknown" ]; then
+                    TASK_ID="unattributed"
+                fi
+                if [ -z "$CYCLE" ] || [ "$CYCLE" = "unknown" ]; then
+                    CYCLE="unattributed"
+                fi
+                echo "rescue: incomplete metadata, sending $MESSAGE_EVENT" >&2
+                ;;
+            *)
+                echo "invalid: inter-agent message requires TASK_ID, CYCLE and CORRELATION_ID" >&2
+                echo "hint: use MESSAGE_EVENT=INFO_REQUIRED to report the missing metadata" >&2
+                exit 2
+                ;;
+        esac
     fi
     if [ "$MESSAGE_EVENT" = "DISPATCH" ] && [ -z "$EXPECTED_EVENT" ]; then
         echo "invalid: DISPATCH requires EXPECTED_EVENT" >&2
@@ -83,9 +99,16 @@ if [ "$FROM_AGENT" != "cli" ]; then
     fi
 fi
 
-# Seul l'opérateur peut obtenir automatiquement une nouvelle corrélation.
-# Un agent doit créer ou hériter explicitement de la sienne avant l'appel.
-CORRELATION_ID="${PROVIDED_CORRELATION_ID:-$(cat /proc/sys/kernel/random/uuid)}"
+# Seuls l'opérateur et un événement de secours explicitement autorisé peuvent
+# obtenir automatiquement une nouvelle corrélation. Une corrélation de secours
+# signale un défaut de protocole ; elle ne devient jamais une corrélation métier.
+if [ -n "$PROVIDED_CORRELATION_ID" ]; then
+    CORRELATION_ID="$PROVIDED_CORRELATION_ID"
+elif [ "$RESCUE_MODE" = true ]; then
+    CORRELATION_ID="rescue-$(cat /proc/sys/kernel/random/uuid)"
+else
+    CORRELATION_ID=$(cat /proc/sys/kernel/random/uuid)
+fi
 
 # ── Triangle auto-resolve (règle partagée : resolve_triangle_target, lib.sh) ──
 TO_AGENT=$(resolve_triangle_target "$FROM_AGENT" "$TO_AGENT" "send.sh")

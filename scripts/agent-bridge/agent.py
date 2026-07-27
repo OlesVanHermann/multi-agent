@@ -46,6 +46,8 @@ from ids import AGENT_ID_PATTERN, is_valid_agent_id
 import verifier
 # V3/C2 : write-ahead log d'orchestration (audit, stall detection, bench)
 import wal
+# Obligation durable créée par chaque DISPATCH corrélé.
+import obligations
 
 try:
     import yaml
@@ -1099,20 +1101,36 @@ class TmuxAgent:
                 rf'|compaction_reload|compaction_resume|verify|watchdog'
                 rf'|response_{AGENT_ID_PATTERN}',
                 str(raw_from)) else 'unknown'
-            self.prompt_queue.put({
+            task = {
                 'prompt': data.get('prompt', ''),
                 'from_agent': safe_from,
                 'msg_id': msg_id,
                 'ack_id': msg_id,
                 'correlation_id': data.get('correlation_id', ''),
                 'cycle': data.get('cycle', ''),
+                'event': data.get('event', ''),
+                'expected_event': data.get('expected_event', ''),
+                'requester': data.get('requester', ''),
+                'owner': data.get('owner', ''),
                 # V3 — absents = comportement v2 inchangé
                 'verify_cmd': data.get('verify_cmd', ''),
                 'task_id': data.get('task_id', ''),
                 'project_dir': data.get('project_dir', ''),
                 'deadline': data.get('deadline', ''),
                 'source': 'redis'
-            })
+            }
+            try:
+                created = obligations.create(BASE_DIR, self.agent_id, task, msg_id)
+                if created:
+                    self._log(f"Obligation ouverte: {created}")
+            except Exception as exc:
+                # Ne pas exécuter un DISPATCH dont l'obligation durable n'a pas
+                # pu être créée : sans elle, un silence redeviendrait invisible.
+                with self._inflight_lock:
+                    self._inflight_ids.discard(msg_id)
+                self._log(f"Obligation create failed for {msg_id}: {exc}")
+                return
+            self.prompt_queue.put(task)
             self._log(f"<- Queued from {safe_from}: {data.get('prompt', '')[:50]}...")
         elif msg_type == 'reload_prompt':
             self._log("Received reload_prompt — reloading agent personality")
@@ -1573,6 +1591,14 @@ class TmuxAgent:
             if task.get('correlation_id'):
                 msg_data['correlation_id'] = task['correlation_id']
             self.redis.xadd(self.outbox, msg_data, maxlen=IO_STREAM_MAXLEN, approximate=True)
+            self._wal(
+                "response_published",
+                task.get('task_id'),
+                correlation_id=task.get('correlation_id', ''),
+                cycle=task.get('cycle', ''),
+                from_agent=task.get('from_agent', ''),
+                chars=len(response),
+            )
 
             # A4: ack only after the response is published to the outbox
             if task.get('ack_id'):

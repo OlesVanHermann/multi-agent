@@ -21,6 +21,8 @@ BRIDGE_SCRIPT="$BASE_DIR/scripts/agent-bridge/agent.py"
 LOG_DIR="$BASE_DIR/logs/000"
 WEB_DIR="$BASE_DIR/web"
 PROFILES_DIR="$BASE_DIR/login"
+WATCHDOG_PID_FILE="$BASE_DIR/logs/watchdog.pid"
+WATCHDOG_LOG="$BASE_DIR/logs/watchdog.log"
 
 # C2 : version Keycloak épinglée (tag complet + digest) — garder identique
 # à web/docker-compose.yml et setup/install_keycloak.sh.
@@ -46,6 +48,36 @@ redis_cli() {
         REDISCLI_AUTH="${REDIS_PASSWORD:-}" redis-cli -p "$port" "$@"
     else
         ${DOCKER:-docker} exec -e REDISCLI_AUTH="${REDIS_PASSWORD:-}" ma-redis redis-cli -p 6379 "$@"
+    fi
+}
+
+start_watchdog() {
+    local existing=""
+    [ -f "$WATCHDOG_PID_FILE" ] && existing=$(cat "$WATCHDOG_PID_FILE" 2>/dev/null || true)
+    if [ -n "$existing" ] && kill -0 "$existing" 2>/dev/null; then
+        log_ok "Watchdog already running (PID: $existing)"
+        return
+    fi
+    mkdir -p "$BASE_DIR/logs"
+    nohup env \
+        REDIS_HOST="${REDIS_HOST:-localhost}" \
+        REDIS_PORT="${REDIS_PORT:-6379}" \
+        REDIS_PASSWORD="${REDIS_PASSWORD:-}" \
+        python3 "$BASE_DIR/scripts/agent-bridge/healthcheck.py" --watchdog \
+        >>"$WATCHDOG_LOG" 2>&1 &
+    local watchdog_pid=$!
+    printf '%s\n' "$watchdog_pid" >"$WATCHDOG_PID_FILE"
+    log_ok "Watchdog started (PID: $watchdog_pid)"
+}
+
+stop_watchdog() {
+    local watchdog_pid=""
+    [ -f "$WATCHDOG_PID_FILE" ] && watchdog_pid=$(cat "$WATCHDOG_PID_FILE" 2>/dev/null || true)
+    if [ -n "$watchdog_pid" ] && kill -0 "$watchdog_pid" 2>/dev/null; then
+        kill "$watchdog_pid"
+        log_ok "Watchdog stopped (PID: $watchdog_pid)"
+    else
+        log_warn "Watchdog not running"
     fi
 }
 
@@ -192,6 +224,7 @@ do_start() {
 
     # Web Dashboard
     "$SCRIPT_DIR/web.sh" start
+    start_watchdog
 
     # Agent 000
     log_info "Starting agent-000..."
@@ -278,6 +311,9 @@ do_start() {
 # ── Stop ──
 
 do_stop() {
+    # Le watchdog doit cesser avant les agents et avant toute purge Redis.
+    stop_watchdog
+
     # Stop all worker agents first
     "$SCRIPT_DIR/agent.sh" stop all
 

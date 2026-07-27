@@ -207,6 +207,11 @@ def classify_messages(target, triangle_agents, streams):
 
 def analysis_view(target, triangle_agents, task_list, memory_text, streams,
                   target_history=None):
+    terminal_events = {
+        "DONE", "SCORE", "INFO_REQUIRED", "ERROR", "BLOCKED",
+        "ARTIFACT_READY", "PROTOCOL_ERROR", "ARBITRAGE", "CONCLUSION",
+        "PROMPT_RELOADED",
+    }
     active = task_list[0] if len(task_list) == 1 else None
     task_ids = {task["id"] for task in task_list}
     wal = streams["wal"]["entries"]
@@ -217,8 +222,8 @@ def analysis_view(target, triangle_agents, task_list, memory_text, streams,
         event = fields.get("event", "")
         if event == "task_assigned" and fields.get("from_agent") == target:
             dispatches.append(entry)
-        if event.lower() in {"done", "score", "error", "blocked", "artifact_ready",
-                            "verify_green", "verify_red"} or "terminal" in event.lower():
+        if event.upper() in terminal_events or event.lower() in {
+                "verify_green", "verify_red"} or "terminal" in event.lower():
             terminals.append(entry)
     groups = {}
     for entry in dispatches:
@@ -239,14 +244,22 @@ def analysis_view(target, triangle_agents, task_list, memory_text, streams,
     for entry in reversed(streams["inbox"]["entries"]):
         fields = entry["fields"]
         prompt = fields.get("prompt", "")
-        match = re.search(r"(?:EVENT:|\|)(DONE|SCORE|ERROR|BLOCKED|ARTIFACT_READY|INFO_REQUIRED)\b",
-                          prompt)
-        if match:
-            inbox_terminals.append({"id": entry["id"], "event": match.group(1),
+        structured_event = fields.get("event", "").upper()
+        event = structured_event if structured_event in terminal_events else ""
+        if not event:
+            match = re.search(
+                r"(?:EVENT:|\|)(DONE|SCORE|INFO_REQUIRED|ERROR|BLOCKED|"
+                r"ARTIFACT_READY|PROTOCOL_ERROR|ARBITRAGE|CONCLUSION|"
+                r"PROMPT_RELOADED)\b",
+                prompt)
+            event = match.group(1) if match else ""
+        if event:
+            inbox_terminals.append({"id": entry["id"], "event": event,
                                     "from_agent": fields.get("from_agent", ""),
                                     "task_id": fields.get("task_id", ""),
                                     "cycle": fields.get("cycle", ""),
                                     "correlation_id": fields.get("correlation_id", ""),
+                                    "expected_event": fields.get("expected_event", ""),
                                     "prompt": prompt})
     terminals.extend(inbox_terminals)
     correlations = sorted({entry["fields"].get("correlation_id", "")
@@ -307,6 +320,16 @@ def analysis_view(target, triangle_agents, task_list, memory_text, streams,
             "active_task_candidates": task_list,
             "memory_active_task_declaration": memory_line,
             "memory_conflicts": conflicts, "dispatches": dispatches,
+            "dispatch_expectations": [
+                {
+                    "agent_id": entry["fields"].get("agent_id", ""),
+                    "task_id": entry["fields"].get("task_id", ""),
+                    "cycle": entry["fields"].get("cycle", ""),
+                    "correlation_id": entry["fields"].get("correlation_id", ""),
+                    "expected_event": entry["fields"].get("expected_event", ""),
+                }
+                for entry in dispatches
+            ],
             "duplicate_dispatches": duplicates, "terminal_events": terminals,
             "correlation_ids": correlations}
 
