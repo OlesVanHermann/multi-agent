@@ -214,6 +214,12 @@ def communication_contract(path, text):
   durables (`ARTIFACT`, `HASH`, tests). Un score seul n'est jamais terminal.
 - Conserve l'état transactionnel sous `pool-requests/state/`, pas seulement en
   mémoire. Archive le paquet de preuves accepté avant de clôturer.
+- Dans un triangle `NNN`, tout agent `NNN-YZZ` autre que `NNN-1ZZ` exécute
+  `$BASE/scripts/report-master.sh` avant de terminer chaque tour, y compris
+  après un prompt direct de l'utilisateur. Si un autre demandeur existe,
+  livre d'abord sa réponse corrélée puis publie séparément le `MASTER_REPORT`.
+  Une réponse dans le TUI n'est pas un envoi. Le script calcule la cible :
+  n'inscris aucun identifiant d'exemple en dur.
 """
     if "master" in sample or re.search(r"-1\d\d-system\.md$", path.name):
         body += """

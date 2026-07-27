@@ -9,7 +9,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/ubuntu/multi-agent/scripts/claude-stop-guard.py",
+            "command": "\"${CLAUDE_PROJECT_DIR:-$PWD}/scripts/claude-stop-guard.py\"",
             "timeout": 10
           }
         ]

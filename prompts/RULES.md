@@ -120,6 +120,15 @@ FROM:300|DONE
 ```
 (ancien terminal textuel, non corrélé et sans preuve)
 
+### Triangle : aucun arrêt silencieux
+
+Dans un triangle `NNN`, chaque agent `NNN-YZZ`, sauf le coordinateur
+`NNN-1ZZ`, exécute `scripts/report-master.sh` avant la fin de chaque tour,
+y compris après un prompt utilisateur direct sans enveloppe Redis. Le rapport
+est obligatoire pour `SUCCESS`, `PARTIAL`, `FAILED`, `BLOCKED` et
+`INFO_REQUIRED`. Il ne remplace jamais le terminal corrélé dû au demandeur
+initial et ne constitue jamais un `DONE` ou un `SCORE` supplémentaire.
+
 ## 3. GESTION DES ERREURS
 
 1. **Erreur temporaire** (timeout, rate limit): Retry 3x avec backoff

@@ -354,6 +354,10 @@ DENY_MERGE="$TEMP_DIR/patch/merge-deny-rules.py"
 if [ -f "$DENY_REF" ] && [ -f "$DENY_MERGE" ] && compgen -G "./login/claude*/settings.json" > /dev/null; then
     $PYTHON_CMD "$DENY_MERGE" --check "$DENY_REF" ./login/claude*/settings.json | sed 's/^/  /'
 fi
+COMM_HOOK_MERGE="$TEMP_DIR/patch/merge-communication-hooks.py"
+if [ -f "$COMM_HOOK_MERGE" ] && compgen -G "./login/claude*/settings.json" > /dev/null; then
+    $PYTHON_CMD "$COMM_HOOK_MERGE" --check ./login/claude*/settings.json | sed 's/^/  /'
+fi
 
 echo ""
 echo "─── Préservés (pas touchés) ───"
@@ -362,7 +366,7 @@ for dir in pool-requests project sessions logs; do
     [ -d "./$dir" ] && printf "  ✓ %s/\n" "$dir"
 done
 [ -d "./prompts" ] && printf "  ✓ prompts projet personnalisés (hors créateurs 150/160/170) : contenu conservé puis migration sémantique/topologique\n"
-[ -d "./login" ] && printf "  ✓ login/ (credentials — seules les règles deny sont fusionnées)\n"
+[ -d "./login" ] && printf "  ✓ login/ (credentials préservés — règles deny et hook Stop fusionnés)\n"
 [ -d "./bench/results" ] && printf "  ✓ bench/results/ + bench/heldout.txt (données de site)\n"
 [ -f "./project-config.md" ] && printf "  ✓ project-config.md\n"
 echo ""
@@ -518,6 +522,10 @@ if [ -f "$DENY_REF" ] && [ -f "$DENY_MERGE" ] && compgen -G "./login/claude*/set
         cp "$s" "$d/"
     done
     $PYTHON_CMD "$DENY_MERGE" "$DENY_REF" ./login/claude*/settings.json
+fi
+COMM_HOOK_MERGE="$TEMP_DIR/patch/merge-communication-hooks.py"
+if [ -f "$COMM_HOOK_MERGE" ] && compgen -G "./login/claude*/settings.json" > /dev/null; then
+    $PYTHON_CMD "$COMM_HOOK_MERGE" ./login/claude*/settings.json
 fi
 
 # 6d. Topologies existantes : ajoute 2XX aux x45/z21 et transforme les anciens

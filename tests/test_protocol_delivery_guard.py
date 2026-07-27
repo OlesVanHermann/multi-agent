@@ -81,14 +81,29 @@ def _load_stop_guard():
     return module
 
 
-def test_stop_hook_allows_conversation_without_correlation(monkeypatch):
+def test_stop_hook_blocks_direct_turn_without_master_report(monkeypatch):
     guard = _load_stop_guard()
     client = MagicMock()
     client.hgetall.return_value = {}
     monkeypatch.setattr(guard, "hook_input", lambda: {})
     monkeypatch.setattr(guard, "current_agent_id", lambda: "334-334")
     monkeypatch.setattr(guard, "redis_client", lambda: client)
+    assert guard.main() == 2
+
+
+def test_stop_hook_allows_direct_turn_after_new_master_report(monkeypatch):
+    guard = _load_stop_guard()
+    client = MagicMock()
+    client.hgetall.return_value = {
+        "last_master_report_id": "turn-new",
+        "last_stop_master_report_id": "turn-old",
+    }
+    monkeypatch.setattr(guard, "hook_input", lambda: {})
+    monkeypatch.setattr(guard, "current_agent_id", lambda: "334-334")
+    monkeypatch.setattr(guard, "redis_client", lambda: client)
     assert guard.main() == 0
+    client.hset.assert_called_with(
+        "agent:334-334", "last_stop_master_report_id", "turn-new")
 
 
 def test_stop_hook_blocks_correlated_turn_without_event(monkeypatch, capsys):
@@ -99,6 +114,7 @@ def test_stop_hook_blocks_correlated_turn_without_event(monkeypatch, capsys):
         "current_requester": "334-134",
         "current_task_id": "task-128",
         "current_cycle": "8",
+        "current_task_started_at": "1",
     }
     client.xrevrange.return_value = []
     monkeypatch.setattr(guard, "hook_input", lambda: {})

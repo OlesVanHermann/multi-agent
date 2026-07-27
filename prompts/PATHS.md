@@ -230,6 +230,9 @@ FROM_AGENT="$ID" TASK_ID="$TASK" CYCLE="$CYCLE" \
 CORRELATION_ID="$CORR" MESSAGE_EVENT=DISPATCH EXPECTED_EVENT=DONE \
   $BASE/scripts/send.sh "$TO" "instruction"
 
+# Rapport de fin de tour au coordinateur NNN-1ZZ calculé automatiquement
+$BASE/scripts/report-master.sh SUCCESS "résultat factuel"
+
 # Terminal
 FROM_AGENT="$ID" TASK_ID="$TASK" CYCLE="$CYCLE" \
 CORRELATION_ID="$CORR" \

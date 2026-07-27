@@ -94,11 +94,30 @@ Une réponse narrative enregistrée dans l'outbox est une transcription, pas une
 livraison métier. Tout tour inter-agent corrélé doit donc exécuter `send.sh` ou
 `done.sh` avant de redevenir idle.
 
+Indépendamment de cette livraison, chaque tour d'un agent de triangle
+`NNN-YZZ`, sauf le coordinateur `NNN-1ZZ`, porte une obligation de supervision.
+Avant de redevenir idle, l'agent exécute `report-master.sh`. Le script calcule
+le coordinateur, publie un `MASTER_REPORT` court et mémorise un identifiant de
+tour distinct de la corrélation métier. Cette règle couvre aussi un prompt
+utilisateur saisi directement dans le TUI.
+
+| Origine du tour | Livraison au demandeur | Livraison au coordinateur |
+|---|---|---|
+| `NNN-1ZZ` | terminal corrélé | `MASTER_REPORT` |
+| autre agent | terminal corrélé à cet agent | `MASTER_REPORT` |
+| utilisateur direct | réponse dans le TUI | `MASTER_REPORT` |
+| aucune enveloppe exploitable | signal de secours si nécessaire | `MASTER_REPORT` |
+
+Le rapport de supervision ne clôt aucune transaction métier et ne peut jamais
+être transformé en `DONE`, `SCORE` ou preuve de réussite. Le contrôle repose
+sur Redis, les états du bridge et les hooks moteur : il ne démarre aucun modèle
+supplémentaire et ne consomme donc aucun token de supervision.
+
 Le dispositif possède trois filets complémentaires :
 
-1. le hook Stop Claude refuse une première fin de tour corrélée sans événement ;
-   il est inactif pour `FROM=cli`, les tours non corrélés et sa propre seconde
-   invocation afin d'éviter toute boucle ;
+1. le hook Stop Claude refuse une première fin de tour sans livraison corrélée
+   due ou sans nouveau `MASTER_REPORT`; sa propre seconde invocation reste
+   inactive afin d'éviter toute boucle ;
 2. quand un tour se termine sans événement, le bridge réinjecte une seule
    consigne courte ; un second échec produit `PROTOCOL_ERROR` vers le demandeur,
    jamais `DONE` ou `SCORE` ;

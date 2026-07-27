@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SEND = ROOT / "scripts" / "send.sh"
 DONE = ROOT / "scripts" / "done.sh"
+REPORT_MASTER = ROOT / "scripts" / "report-master.sh"
 
 
 def prompt_documents():
@@ -40,6 +41,8 @@ def test_common_contract_is_present():
     assert "STATUS=WORKING" in agent
     assert "STATUS_REQUIRED" in agent
     assert "pool-requests/state/" in agent
+    assert "Rapport obligatoire au coordinateur du triangle" in agent
+    assert "report-master.sh" in agent
 
 
 def run_script(path, *args, env_extra=None):
@@ -102,3 +105,11 @@ def test_prompt_migration_is_idempotent():
         capture_output=True, text=True, timeout=60)
     assert result.returncode == 0
     assert result.stdout.strip().endswith("updated=0")
+
+
+def test_master_report_is_supervision_not_business_completion():
+    source = REPORT_MASTER.read_text()
+    assert 'MESSAGE_EVENT="MASTER_REPORT"' in source
+    assert 'CORRELATION_ID="turn-$TURN_ID"' in source
+    assert "done.sh" not in source
+    assert "triangle_master_id" in source

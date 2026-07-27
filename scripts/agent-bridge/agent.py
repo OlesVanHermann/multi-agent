@@ -23,6 +23,7 @@ import argparse
 import json
 import http.server
 import threading
+import uuid
 from datetime import datetime
 from threading import Thread, Lock
 from queue import Queue, Empty
@@ -1308,10 +1309,12 @@ class TmuxAgent:
         if not correlation_id or not requester:
             return False
         try:
+            started_at = int(task.get("_turn_started_at", 0) or 0)
             for _, fields in self.redis.xrevrange("completion", count=200):
                 if (
                     fields.get("correlation_id") == correlation_id
                     and fields.get("from") == self.agent_id
+                    and int(fields.get("timestamp", 0) or 0) >= started_at
                 ):
                     return True
             for _, fields in self.redis.xrevrange(
@@ -1320,6 +1323,7 @@ class TmuxAgent:
                     fields.get("correlation_id") == correlation_id
                     and fields.get("from_agent") == self.agent_id
                     and fields.get("event") not in ("", "DISPATCH")
+                    and int(fields.get("timestamp", 0) or 0) >= started_at
                 ):
                     return True
         except Exception as exc:
@@ -1327,6 +1331,63 @@ class TmuxAgent:
             # respecté. La relance restera pending et sera rejouée.
             self._log(f"PROTOCOL EVENT CHECK ERROR: {exc}")
         return False
+
+    def _triangle_master_id(self):
+        """Return NNN-1ZZ for NNN-YZZ, excluding the Master itself."""
+        if not is_valid_agent_id(self.agent_id) or "-" not in self.agent_id:
+            return ""
+        triangle, member = self.agent_id.split("-", 1)
+        if len(member) != 3:
+            return ""
+        master = f"{triangle}-1{member[1:]}"
+        return "" if master == self.agent_id else master
+
+    def _has_master_report(self, task):
+        master = self._triangle_master_id()
+        turn_id = str(task.get("_turn_id", ""))
+        if not master or not turn_id:
+            return True
+        try:
+            for _, fields in self.redis.xrevrange(
+                    f"agent:{master}:inbox", count=200):
+                if (
+                    fields.get("from_agent") == self.agent_id
+                    and fields.get("event") == "MASTER_REPORT"
+                    and fields.get("correlation_id") == f"turn-{turn_id}"
+                ):
+                    return True
+        except Exception as exc:
+            self._log(f"MASTER REPORT CHECK ERROR: {exc}")
+        return False
+
+    def _publish_master_report_error(self, task):
+        master = self._triangle_master_id()
+        turn_id = str(task.get("_turn_id", ""))
+        if not master or not turn_id:
+            return False
+        key = f"master_report_error:{self.agent_id}:{turn_id}"
+        try:
+            if not self.redis.set(key, int(time.time()), nx=True, ex=604800):
+                return True
+            details = (
+                f"Agent {self.agent_id}: fin de tour sans MASTER_REPORT "
+                f"après une relance bornée; turn={turn_id}")
+            self.redis.xadd(
+                f"agent:{master}:inbox", {
+                    "prompt": f"EVENT:PROTOCOL_ERROR|DETAIL:{details}",
+                    "from_agent": "watchdog",
+                    "event": "PROTOCOL_ERROR",
+                    "owner": self.agent_id,
+                    "turn_id": turn_id,
+                    "timestamp": int(time.time()),
+                }, maxlen=IO_STREAM_MAXLEN, approximate=True)
+            self._wal(
+                "master_report_error", task.get("task_id"),
+                turn_id=turn_id, master=master)
+            return True
+        except Exception as exc:
+            self._log(f"MASTER REPORT ERROR publish failed: {exc}")
+            return False
 
     def _publish_protocol_error(self, task):
         """Publish a correlated failure without fabricating DONE or SCORE."""
@@ -1423,13 +1484,17 @@ class TmuxAgent:
             self._set_redis_status()
             src = f"[{task.get('from_agent', 'local')}]"
             self._log(f"-> Executing {src}: {task['prompt'][:80]}...")
+            task.setdefault("_turn_id", str(uuid.uuid4()))
+            task.setdefault("_turn_started_at", int(time.time()))
             try:
                 self.redis.hset(f"agent:{self.agent_id}", mapping={
                     "current_correlation": task.get("correlation_id", ""),
                     "current_task_id": task.get("task_id", ""),
                     "current_cycle": task.get("cycle", ""),
                     "current_requester": task.get("from_agent", ""),
-                    "current_task_started_at": int(time.time()),
+                    "current_task_started_at": task["_turn_started_at"],
+                    "current_turn_id": task["_turn_id"],
+                    "current_turn_origin": task.get("source", "unknown"),
                 })
             except Exception:
                 pass
@@ -1713,18 +1778,20 @@ class TmuxAgent:
             # Pour toute enveloppe inter-agent, exiger un événement explicite
             # send.sh/done.sh. Une seule relance courte est autorisée ; si elle
             # échoue, publier un PROTOCOL_ERROR corrélé vers le demandeur.
-            if self._requires_correlated_event(task):
-                if not self._has_correlated_business_event(task):
+            missing_correlated = (
+                self._requires_correlated_event(task)
+                and not self._has_correlated_business_event(task))
+            missing_master_report = not self._has_master_report(task)
+            if missing_correlated or missing_master_report:
                     protocol_retry = int(task.get("_protocol_retry", 0) or 0)
                     if protocol_retry < 1:
                         retry_task = dict(task)
                         retry_task["_protocol_retry"] = 1
                         retry_task["prompt"] = (
-                            "PROTOCOLE DE FIN DE TOUR : aucun événement corrélé "
-                            "n'a été livré au demandeur. Exécute maintenant, comme "
-                            "unique action, send.sh pour un état intermédiaire ou "
-                            "done.sh pour un terminal avec les valeurs de "
-                            "l'enveloppe. Ne réponds pas seulement dans le TUI."
+                            "PROTOCOLE DE FIN DE TOUR : une livraison obligatoire "
+                            "manque. Livre la réponse corrélée au demandeur si elle "
+                            "est due, puis exécute report-master.sh avec le résultat "
+                            "réel. Ne réponds pas seulement dans le TUI."
                         )
                         self.prompt_queue.put(retry_task)
                         self._log(
@@ -1739,7 +1806,10 @@ class TmuxAgent:
                             self.state = State.IDLE
                         self._set_redis_status()
                         continue
-                    self._publish_protocol_error(task)
+                    if missing_correlated:
+                        self._publish_protocol_error(task)
+                    if missing_master_report:
+                        self._publish_master_report_error(task)
 
             # A4: ack only after the response is published to the outbox
             if task.get('ack_id'):
@@ -1773,7 +1843,8 @@ class TmuxAgent:
                 self.redis.hdel(
                     f"agent:{self.agent_id}",
                     "current_correlation", "current_task_id", "current_cycle",
-                    "current_requester", "current_task_started_at")
+                    "current_requester", "current_task_started_at",
+                    "current_turn_id", "current_turn_origin")
             except Exception:
                 pass
             self._set_redis_status()

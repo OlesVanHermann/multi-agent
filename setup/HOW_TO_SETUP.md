@@ -68,6 +68,13 @@ Avant de créer ou démarrer les agents, lire
 Ne recopier aucun ancien exemple contenant `FROM:` dans le texte ou un appel
 direct à Redis.
 
+Tout agent de triangle autre que son `1XX` doit aussi exécuter
+`scripts/report-master.sh` avant la fin de chaque tour, même lorsque le tour a
+été déclenché directement par l'utilisateur. Vérifier avant le premier
+démarrage que le loader canonique et les agents créés contiennent « Rapport
+obligatoire au coordinateur du triangle ». Cette supervision utilise l'état
+Redis et les hooks existants ; elle ne démarre aucun agent supplémentaire.
+
 Pour chaque topologie mono/x45/z21, vérifier aussi le Contradictor `NNN-2XX`
 selon `docs/CONTRADICTOR.md`. Son prompt doit contenir
 `Audit de l'exécution de la demande utilisateur — v3.2.7` et sa méthodologie

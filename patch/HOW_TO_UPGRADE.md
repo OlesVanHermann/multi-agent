@@ -61,6 +61,18 @@ enveloppe autoritaire, corrélation héritée, terminal unique, états
 `DELIVERED`/`ORPHANED`, preuves durables et hard gates. Les originaux modifiés
 sont sauvegardés sous `removed/rebalance-prompts/<horodatage>/`.
 
+La migration ajoute également l'obligation universelle de fin de tour aux
+agents de triangle existants : réponse corrélée au demandeur lorsqu'elle est
+due, puis `MASTER_REPORT` vers le `NNN-1ZZ` calculé. Cette obligation couvre
+les prompts utilisateur directs, sans créer de fausse corrélation métier.
+Les créateurs `150/160/170`, loaders et templates sont synchronisés avant la
+migration.
+
+`merge-communication-hooks.py` fusionne aussi le hook Stop dans chaque
+`login/claude*/settings.json` sans remplacer les autres hooks, paramètres ou
+credentials. Les profils Codex restent inchangés ; leur garde est assuré par
+le bridge.
+
 Après l'upgrade :
 
 ```bash
@@ -70,6 +82,14 @@ python3 patch/rebalance-agent-prompts.py --check
 Le résultat attendu est `updated=0`. Inspecter et corriger manuellement les
 instructions locales qui utilisent encore `FROM:` dans le texte, Redis
 directement ou un score comme gate de livraison.
+
+Vérifier aussi :
+
+```bash
+rg -l "Rapport obligatoire au coordinateur du triangle" prompts/AGENT.md \
+  templates/x45/prompts/AGENT.md
+rg -l "report-master.sh" prompts/*/*-system.md
+```
 
 **Ne pas exécuter automatiquement** `./scripts/infra.sh start` ni
 `./scripts/agent.sh start all`. L'opérateur choisit quand relancer, après avoir

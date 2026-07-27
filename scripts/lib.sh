@@ -21,6 +21,21 @@ agent_status_key()   { printf 'agent:%s\n' "$1"; }
 agent_inbox_key()    { printf 'agent:%s:inbox\n' "$1"; }
 agent_outbox_key()   { printf 'agent:%s:outbox\n' "$1"; }
 
+# Coordinateur d'un triangle NNN-YZZ : NNN-1ZZ.
+# Retourne 1 pour un ID global ou pour le coordinateur lui-même.
+triangle_master_id() {
+    local agent_id="$1" triangle member suffix master
+    if [[ ! "$agent_id" =~ ^([0-9]{3})-([0-9]{3})$ ]]; then
+        return 1
+    fi
+    triangle="${BASH_REMATCH[1]}"
+    member="${BASH_REMATCH[2]}"
+    suffix="${member:1:2}"
+    master="${triangle}-1${suffix}"
+    [ "$agent_id" != "$master" ] || return 1
+    printf '%s\n' "$master"
+}
+
 # Triangle auto-resolve — règle partagée send.sh / done.sh.
 # Depuis un émetteur en triangle (NNN-XXX), une cible nue YYY est résolue en
 # NNN-YYY (même triangle), avec priorité par vivacité tmux :

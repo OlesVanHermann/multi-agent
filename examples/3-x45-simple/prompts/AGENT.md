@@ -85,6 +85,9 @@ Le nom du symlink (`YYY`) est ton identifiant. Tes 3 fichiers sont dans le même
 - Canal Redis : `agent:{ID}:inbox` pour recevoir des messages
 - Canal Redis : `agent:{ID}:outbox` pour publier tes résultats
 - Format : JSON `{"from": "{ID}", "type": "status|done|error", "payload": "..."}`
+- Avant chaque fin de tour, tout satellite autre que `NNN-1ZZ` exécute
+  `$BASE/scripts/report-master.sh` avec son état réel, même après un prompt
+  utilisateur direct. Si un autre demandeur existe, sa livraison reste due.
 
 ## Interdictions
 - Ne lis PAS les fichiers des autres agents

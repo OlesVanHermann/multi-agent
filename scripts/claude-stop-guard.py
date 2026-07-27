@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Claude Stop hook: refuse un idle inter-agent sans événement corrélé.
-
-Le hook est volontairement fail-open pour les tours conversationnels, les
-commandes CLI, une corrélation absente et une indisponibilité Redis. Le bridge
-reste le second filet et publie PROTOCOL_ERROR après une relance bornée.
-"""
+"""Claude Stop hook: refuse un idle sans retour dû et rapport au Master."""
 
 import json
 import os
@@ -62,16 +57,20 @@ def redis_client():
     )
 
 
-def event_exists(client, agent_id, requester, correlation_id):
-    for _, fields in client.xrevrange("completion", count=200):
+def event_exists(client, agent_id, requester, correlation_id, started_at):
+    for msg_id, fields in client.xrevrange("completion", count=200):
+        event_at = int(fields.get("timestamp", "0") or 0)
         if (fields.get("correlation_id") == correlation_id
-                and fields.get("from") == agent_id):
+                and fields.get("from") == agent_id
+                and event_at >= started_at):
             return True
-    for _, fields in client.xrevrange(
+    for msg_id, fields in client.xrevrange(
             f"agent:{requester}:inbox", count=200):
+        event_at = int(fields.get("timestamp", "0") or 0)
         if (fields.get("correlation_id") == correlation_id
                 and fields.get("from_agent") == agent_id
-                and fields.get("event") not in ("", "DISPATCH")):
+                and fields.get("event") not in ("", "DISPATCH")
+                and event_at >= started_at):
             return True
     return False
 
@@ -92,18 +91,37 @@ def main():
         requester = state.get("current_requester", "")
         task_id = state.get("current_task_id", "")
         cycle = state.get("current_cycle", "")
-        if (not correlation_id or not is_valid_agent_id(requester)
-                or requester == agent_id):
-            return 0
-        if event_exists(client, agent_id, requester, correlation_id):
+        started_at = int(state.get("current_task_started_at", "0") or 0)
+        report_id = state.get("last_master_report_id", "")
+        consumed_report_id = state.get("last_stop_master_report_id", "")
+        parts = agent_id.split("-")
+        master_id = ""
+        if len(parts) == 2 and len(parts[1]) == 3:
+            master_id = f"{parts[0]}-1{parts[1][1:]}"
+
+        missing = []
+        if (correlation_id and is_valid_agent_id(requester)
+                and requester != agent_id
+                and not event_exists(
+                    client, agent_id, requester, correlation_id, started_at)):
+            missing.append(
+                f"livraison corrélée vers {requester} "
+                f"(TASK_ID={task_id}, CYCLE={cycle}, "
+                f"CORRELATION_ID={correlation_id})")
+        if master_id and master_id != agent_id and (
+                not report_id or report_id == consumed_report_id):
+            missing.append(f"MASTER_REPORT vers {master_id}")
+        if not missing:
+            if report_id:
+                client.hset(
+                    f"agent:{agent_id}", "last_stop_master_report_id", report_id)
             return 0
     except (redis.RedisError, OSError, ValueError):
         return 0
     print(
-        "Fin de tour refusée : aucune livraison métier corrélée. "
-        f"Exécute send.sh ou done.sh vers {requester} avec "
-        f"TASK_ID={task_id}, CYCLE={cycle}, "
-        f"CORRELATION_ID={correlation_id}.",
+        "Fin de tour refusée : " + " et ".join(missing) + " manquant(s). "
+        "Livre d'abord la réponse corrélée si elle est due, puis exécute "
+        "./scripts/report-master.sh <STATUS> '<résumé factuel>'.",
         file=sys.stderr,
     )
     return 2

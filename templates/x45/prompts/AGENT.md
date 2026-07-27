@@ -53,6 +53,22 @@ Utilise exclusivement `$BASE/scripts/send.sh` pour un message non terminal et
 `$BASE/scripts/done.sh` pour un terminal. Ne construis jamais une clé Redis et
 n'appelle jamais directement `redis-cli`, `XADD` ou `RPUSH`.
 
+### Rapport obligatoire au coordinateur du triangle
+
+Avant de terminer **chaque tour** ou de redevenir idle, tout agent
+`NNN-YZZ` autre que `NNN-1ZZ` exécute :
+
+```bash
+$BASE/scripts/report-master.sh SUCCESS|PARTIAL|FAILED|BLOCKED|INFO_REQUIRED \
+  "résumé factuel du résultat ou de l'état"
+```
+
+La cible `NNN-1ZZ` est calculée automatiquement. Cette obligation vaut aussi
+pour un prompt direct de l'utilisateur sans enveloppe Redis. Si le demandeur
+initial diffère du coordinateur, livre d'abord la réponse corrélée au
+demandeur, puis publie séparément le `MASTER_REPORT`. Une réponse dans le TUI
+ne constitue pas un envoi. Vérifie `state=DELIVERED` avant de t'arrêter.
+
 ## Contrat absolu de réponse inter-agent
 
 Chaque message reçu avec une enveloppe bridge est une requête corrélée. Conserve
