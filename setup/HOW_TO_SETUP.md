@@ -69,8 +69,10 @@ Ne recopier aucun ancien exemple contenant `FROM:` dans le texte ou un appel
 direct à Redis.
 
 Tout agent de triangle autre que son `1XX` doit aussi exécuter
-`scripts/report-master.sh` avant la fin de chaque tour, même lorsque le tour a
-été déclenché directement par l'utilisateur. Vérifier avant le premier
+`scripts/report-master.sh` après chaque travail réel, même lorsque le tour a
+été déclenché directement par l'utilisateur. Les rapports, terminaux reçus,
+doublons et contrôles sont stockés sans réveil modèle et n'exigent aucun
+rapport en retour. Vérifier avant le premier
 démarrage que le loader canonique et les agents créés contiennent « Rapport
 obligatoire au coordinateur du triangle ». Cette supervision utilise l'état
 Redis et les hooks existants ; elle ne démarre aucun agent supplémentaire.

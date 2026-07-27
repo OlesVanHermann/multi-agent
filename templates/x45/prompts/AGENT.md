@@ -55,7 +55,8 @@ n'appelle jamais directement `redis-cli`, `XADD` ou `RPUSH`.
 
 ### Rapport obligatoire au coordinateur du triangle
 
-Avant de terminer **chaque tour** ou de redevenir idle, tout agent
+Avant de terminer **chaque tour de travail réel** ou une commande utilisateur
+directe, tout agent
 `NNN-YZZ` autre que `NNN-1ZZ` exécute :
 
 ```bash
@@ -64,10 +65,12 @@ $BASE/scripts/report-master.sh SUCCESS|PARTIAL|FAILED|BLOCKED|INFO_REQUIRED \
 ```
 
 La cible `NNN-1ZZ` est calculée automatiquement. Cette obligation vaut aussi
-pour un prompt direct de l'utilisateur sans enveloppe Redis. Si le demandeur
+pour un prompt direct de l'utilisateur sans enveloppe Redis. Un événement de
+contrôle, terminal reçu, doublon ou rapport de supervision ne constitue pas un
+travail et n'exige aucun rapport en retour. Si le demandeur
 initial diffère du coordinateur, livre d'abord la réponse corrélée au
 demandeur, puis publie séparément le `MASTER_REPORT`. Une réponse dans le TUI
-ne constitue pas un envoi. Vérifie `state=DELIVERED` avant de t'arrêter.
+ne constitue pas un envoi. Vérifie `state=STORED` avant de t'arrêter.
 
 ## Contrat absolu de réponse inter-agent
 

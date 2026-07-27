@@ -15,7 +15,8 @@ LEGACY_CONTRADICTOR_SCOPE_MARKER = "## Scope triangle et relance du développeme
 CONTRADICTOR_SCOPE_MARKER = "## Audit de l'exécution de la demande utilisateur — v3.2.7"
 CONTRADICTOR_METHOD_MARKER = "## Méthode d'audit utilisateur — v3.2.7"
 CONTRADICTOR_FALLBACK_MARKER = "### Demande utilisateur non attribuée"
-COMMUNICATION_MARKER = "## Contrat de communication déterministe"
+LEGACY_COMMUNICATION_MARKER = "## Contrat de communication déterministe"
+COMMUNICATION_MARKER = "## Contrat de communication utile — v3.2.12"
 
 
 def is_creator(path):
@@ -215,8 +216,10 @@ def communication_contract(path, text):
 - Conserve l'état transactionnel sous `pool-requests/state/`, pas seulement en
   mémoire. Archive le paquet de preuves accepté avant de clôturer.
 - Dans un triangle `NNN`, tout agent `NNN-YZZ` autre que `NNN-1ZZ` exécute
-  `$BASE/scripts/report-master.sh` avant de terminer chaque tour, y compris
-  après un prompt direct de l'utilisateur. Si un autre demandeur existe,
+  `$BASE/scripts/report-master.sh` après chaque travail réel et après un prompt
+  direct de l'utilisateur. Un contrôle, terminal reçu, doublon ou rapport de
+  supervision n'ouvre aucune obligation et ne reçoit aucun rapport. Si un
+  autre demandeur existe,
   livre d'abord sa réponse corrélée puis publie séparément le `MASTER_REPORT`.
   Une réponse dans le TUI n'est pas un envoi. Le script calcule la cible :
   n'inscris aucun identifiant d'exemple en dur.
@@ -377,6 +380,8 @@ def migrate(base, backup=True, refresh_existing=False, check=False):
                     desired, LEGACY_CONTRADICTOR_SCOPE_MARKER)
                 desired = insert(desired, contradictor_scope_contract(path, text))
             if needs_communication_contract and COMMUNICATION_MARKER not in desired:
+                desired = remove_sections(
+                    desired, LEGACY_COMMUNICATION_MARKER)
                 desired = insert(desired, communication_contract(path, text))
         else:
             desired = insert(text, block(path, text))

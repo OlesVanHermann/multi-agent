@@ -1,7 +1,7 @@
 # Agent
 
 
-## Contrat de communication déterministe
+## Contrat de communication utile — v3.2.12
 
 - Utilise exclusivement `$BASE/scripts/send.sh` pour un événement non terminal
   et `$BASE/scripts/done.sh` pour un terminal. N'utilise jamais directement
@@ -26,7 +26,14 @@
   durables (`ARTIFACT`, `HASH`, tests). Un score seul n'est jamais terminal.
 - Conserve l'état transactionnel sous `pool-requests/state/`, pas seulement en
   mémoire. Archive le paquet de preuves accepté avant de clôturer.
-
+- Dans un triangle `NNN`, tout agent `NNN-YZZ` autre que `NNN-1ZZ` exécute
+  `$BASE/scripts/report-master.sh` après chaque travail réel et après un prompt
+  direct de l'utilisateur. Un contrôle, terminal reçu, doublon ou rapport de
+  supervision n'ouvre aucune obligation et ne reçoit aucun rapport. Si un
+  autre demandeur existe,
+  livre d'abord sa réponse corrélée puis publie séparément le `MASTER_REPORT`.
+  Une réponse dans le TUI n'est pas un envoi. Le script calcule la cible :
+  n'inscris aucun identifiant d'exemple en dur.
 
 ## Priorité au résultat
 
@@ -85,9 +92,9 @@ Le nom du symlink (`YYY`) est ton identifiant. Tes 3 fichiers sont dans le même
 - Canal Redis : `agent:{ID}:inbox` pour recevoir des messages
 - Canal Redis : `agent:{ID}:outbox` pour publier tes résultats
 - Format : JSON `{"from": "{ID}", "type": "status|done|error", "payload": "..."}`
-- Avant chaque fin de tour, tout satellite autre que `NNN-1ZZ` exécute
-  `$BASE/scripts/report-master.sh` avec son état réel, même après un prompt
-  utilisateur direct. Si un autre demandeur existe, sa livraison reste due.
+- Après chaque travail réel, tout satellite autre que `NNN-1ZZ` exécute
+  `$BASE/scripts/report-master.sh`, même après un prompt utilisateur direct.
+  Un contrôle, terminal reçu, doublon ou rapport n'exige aucune réponse.
 
 ## Interdictions
 - Ne lis PAS les fichiers des autres agents

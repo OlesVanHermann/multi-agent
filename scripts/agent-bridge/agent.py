@@ -49,6 +49,7 @@ import verifier
 import wal
 # Obligation durable créée par chaque DISPATCH corrélé.
 import obligations
+import event_router
 
 try:
     import yaml
@@ -1070,6 +1071,36 @@ class TmuxAgent:
         with self._inflight_lock:
             self._inflight_ids.discard(msg_id)
 
+    def _attach_pending_reports(self, task):
+        """Ajoute un résumé borné au prochain vrai tour du Master."""
+        if event_router.triangle_master(self.agent_id) != self.agent_id:
+            return task
+        stream = f"agent:{self.agent_id}:reports"
+        cursor_key = f"agent:{self.agent_id}"
+        try:
+            cursor = self.redis.hget(cursor_key, "reports_cursor") or "-"
+            minimum = f"({cursor}" if cursor != "-" else "-"
+            entries = self.redis.xrange(stream, min=minimum, max="+", count=20)
+        except Exception as exc:
+            self._log(f"REPORT BATCH READ ERROR: {exc}")
+            return task
+        if not entries:
+            return task
+        lines = []
+        for report_id, fields in entries:
+            lines.append(
+                f"- {fields.get('from_agent', '?')} "
+                f"{fields.get('status', fields.get('event', 'STATUS'))}: "
+                f"{fields.get('summary', fields.get('detail', ''))[:300]}")
+        self.redis.hset(cursor_key, "reports_cursor", entries[-1][0])
+        enriched = dict(task)
+        enriched["prompt"] = (
+            task.get("prompt", "")
+            + "\n\nRAPPORTS DE SUPERVISION NOUVEAUX (information, ne pas "
+              "les acquitter individuellement) :\n"
+            + "\n".join(lines))
+        return enriched
+
     def _handle_inbox_message(self, msg_id, data):
         """Handle one inbox stream message.
 
@@ -1086,6 +1117,63 @@ class TmuxAgent:
             self.metrics.record_message(self.agent_id, "inbound")
 
         msg_type = data.get('type', 'prompt')
+        event_class = event_router.classify(data)
+
+        # Classer avant toute injection. Un rapport, un contrôle, un doublon ou
+        # une enveloppe invalide ne doit jamais consommer un tour modèle.
+        if event_class in ("supervision", "control", "quarantine"):
+            stream = f"agent:{self.agent_id}:{event_class}"
+            stored = dict(data)
+            stored.update({
+                "original_msg_id": str(msg_id),
+                "classification": event_class,
+                "classified_at": int(time.time()),
+            })
+            self.redis.xadd(
+                stream, stored, maxlen=IO_STREAM_MAXLEN, approximate=True)
+            self._wal(
+                "event_suppressed", data.get("task_id"),
+                event=data.get("event", ""), classification=event_class,
+                correlation_id=data.get("correlation_id", ""))
+            self._log(
+                f"<- {event_class.upper()} {data.get('event', '')} stored; "
+                "not injected into TUI")
+            self._ack_inbox(msg_id)
+            return
+
+        if event_class == "terminal":
+            fingerprint = event_router.event_fingerprint(data)
+            dedup_key = f"inbound_terminal:{self.agent_id}:{fingerprint}"
+            if not self.redis.set(
+                    dedup_key, int(time.time()), nx=True, ex=604800):
+                self._wal(
+                    "event_suppressed", data.get("task_id"),
+                    event=data.get("event", ""), classification="duplicate",
+                    correlation_id=data.get("correlation_id", ""))
+                self._ack_inbox(msg_id)
+                return
+            stored = dict(data)
+            stored.update({
+                "original_msg_id": str(msg_id),
+                "classification": "terminal",
+                "classified_at": int(time.time()),
+            })
+            self.redis.xadd(
+                f"agent:{self.agent_id}:terminals", stored,
+                maxlen=IO_STREAM_MAXLEN, approximate=True)
+            if not event_router.should_wake_for_terminal(self.agent_id, data):
+                self._ack_inbox(msg_id)
+                return
+            # Un terminal neuf destiné au Master devient une décision
+            # actionnable unique. Il ne crée aucune obligation de réponse vers
+            # son émetteur et ne demande aucun MASTER_REPORT au Master.
+            data = dict(data)
+            data["event"] = "DECISION_REQUIRED"
+            data["type"] = "prompt"
+            data["prompt"] = (
+                "NOUVEAU TERMINAL À APPLIQUER (ne pas l'acquitter par un "
+                "terminal) : " + data.get("prompt", ""))
+            msg_type = "prompt"
 
         if msg_type == 'prompt' or 'prompt' in data:
             # A5 : dedup en vol — le drain pending (ou toute re-livraison)
@@ -1120,6 +1208,7 @@ class TmuxAgent:
                 'deadline': data.get('deadline', ''),
                 'source': 'redis'
             }
+            task = self._attach_pending_reports(task)
             try:
                 created = obligations.create(BASE_DIR, self.agent_id, task, msg_id)
                 if created:
@@ -1289,10 +1378,12 @@ class TmuxAgent:
         self._log("WARNING: legacy_listener thread exiting")
 
     def _requires_correlated_event(self, task):
-        """Return whether a bridge turn must publish a business event."""
+        """Seul un vrai travail ouvre une obligation de réponse."""
         requester = str(task.get("from_agent", ""))
         return (
             task.get("source") == "redis"
+            and str(task.get("event", "") or "").upper()
+            in ("", "MESSAGE", "DISPATCH", "INFO_REQUIRED")
             and bool(task.get("correlation_id"))
             and bool(task.get("task_id"))
             and bool(task.get("cycle"))
@@ -1300,6 +1391,17 @@ class TmuxAgent:
                 "", "cli", "manual", "legacy", "unknown", "auto_init",
                 "compaction_reload", "compaction_resume", "verify", "watchdog")
             and is_valid_agent_id(requester)
+        )
+
+    def _requires_master_report(self, task):
+        """Un rapport est dû après un travail, jamais après du contrôle."""
+        if not self._triangle_master_id():
+            return False
+        event = str(task.get("event", "") or "").upper()
+        return (
+            task.get("source") == "redis"
+            and event in ("", "MESSAGE", "DISPATCH", "INFO_REQUIRED")
+            and str(task.get("from_agent", "")) != "watchdog"
         )
 
     def _has_correlated_business_event(self, task):
@@ -1349,7 +1451,7 @@ class TmuxAgent:
             return True
         try:
             for _, fields in self.redis.xrevrange(
-                    f"agent:{master}:inbox", count=200):
+                    f"agent:{master}:reports", count=200):
                 if (
                     fields.get("from_agent") == self.agent_id
                     and fields.get("event") == "MASTER_REPORT"
@@ -1373,10 +1475,11 @@ class TmuxAgent:
                 f"Agent {self.agent_id}: fin de tour sans MASTER_REPORT "
                 f"après une relance bornée; turn={turn_id}")
             self.redis.xadd(
-                f"agent:{master}:inbox", {
-                    "prompt": f"EVENT:PROTOCOL_ERROR|DETAIL:{details}",
+                f"agent:{master}:control", {
                     "from_agent": "watchdog",
                     "event": "PROTOCOL_ERROR",
+                    "classification": "control",
+                    "detail": details,
                     "owner": self.agent_id,
                     "turn_id": turn_id,
                     "timestamp": int(time.time()),
@@ -1422,11 +1525,10 @@ class TmuxAgent:
             self.redis.xadd(
                 "completion", common, maxlen=STREAM_MAXLEN, approximate=True)
             inbox_event = {
-                "prompt": (
-                    f"EVENT:PROTOCOL_ERROR|TASK:{task_id}|CYCLE:{cycle}|"
-                    f"CORR:{correlation_id}|DETAIL:{details}"),
                 "from_agent": "watchdog",
                 "event": "PROTOCOL_ERROR",
+                "classification": "control",
+                "detail": details,
                 "correlation_id": correlation_id,
                 "task_id": task_id,
                 "cycle": cycle,
@@ -1435,7 +1537,7 @@ class TmuxAgent:
                 "timestamp": int(time.time()),
             }
             self.redis.xadd(
-                f"agent:{requester}:inbox", inbox_event,
+                f"agent:{requester}:control", inbox_event,
                 maxlen=IO_STREAM_MAXLEN, approximate=True)
             self._log(
                 f"PROTOCOL_ERROR delivered to {requester}; corr={correlation_id}")
@@ -1781,7 +1883,9 @@ class TmuxAgent:
             missing_correlated = (
                 self._requires_correlated_event(task)
                 and not self._has_correlated_business_event(task))
-            missing_master_report = not self._has_master_report(task)
+            missing_master_report = (
+                self._requires_master_report(task)
+                and not self._has_master_report(task))
             if missing_correlated or missing_master_report:
                     protocol_retry = int(task.get("_protocol_retry", 0) or 0)
                     if protocol_retry < 1:

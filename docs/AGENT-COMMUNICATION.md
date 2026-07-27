@@ -94,12 +94,12 @@ Une réponse narrative enregistrée dans l'outbox est une transcription, pas une
 livraison métier. Tout tour inter-agent corrélé doit donc exécuter `send.sh` ou
 `done.sh` avant de redevenir idle.
 
-Indépendamment de cette livraison, chaque tour d'un agent de triangle
-`NNN-YZZ`, sauf le coordinateur `NNN-1ZZ`, porte une obligation de supervision.
-Avant de redevenir idle, l'agent exécute `report-master.sh`. Le script calcule
-le coordinateur, publie un `MASTER_REPORT` court et mémorise un identifiant de
-tour distinct de la corrélation métier. Cette règle couvre aussi un prompt
-utilisateur saisi directement dans le TUI.
+Indépendamment de cette livraison, chaque tour de travail réel d'un agent de
+triangle `NNN-YZZ`, sauf le coordinateur `NNN-1ZZ`, porte une obligation de
+supervision. Avant de redevenir idle, l'agent exécute `report-master.sh`. Le
+script calcule le coordinateur, publie un `MASTER_REPORT` court et mémorise un
+identifiant de tour distinct de la corrélation métier. Cette règle couvre aussi
+un prompt utilisateur saisi directement dans le TUI.
 
 | Origine du tour | Livraison au demandeur | Livraison au coordinateur |
 |---|---|---|
@@ -108,6 +108,11 @@ utilisateur saisi directement dans le TUI.
 | utilisateur direct | réponse dans le TUI | `MASTER_REPORT` |
 | aucune enveloppe exploitable | signal de secours si nécessaire | `MASTER_REPORT` |
 
+Le rapport est écrit dans `agent:<master>:reports`, sans champ `prompt` et sans
+réveil modèle. Le Master reçoit une synthèse bornée au prochain vrai tour.
+Les contrôles vivent dans `agent:<id>:control` et les terminaux dans
+`agent:<id>:terminals`.
+
 Le rapport de supervision ne clôt aucune transaction métier et ne peut jamais
 être transformé en `DONE`, `SCORE` ou preuve de réussite. Le contrôle repose
 sur Redis, les états du bridge et les hooks moteur : il ne démarre aucun modèle
@@ -115,15 +120,14 @@ supplémentaire et ne consomme donc aucun token de supervision.
 
 Le dispositif possède trois filets complémentaires :
 
-1. le hook Stop Claude refuse une première fin de tour sans livraison corrélée
-   due ou sans nouveau `MASTER_REPORT`; sa propre seconde invocation reste
+1. le hook Stop Claude refuse une première fin de tour de travail sans
+   livraison corrélée due ou sans nouveau `MASTER_REPORT`; sa seconde invocation reste
    inactive afin d'éviter toute boucle ;
 2. quand un tour se termine sans événement, le bridge réinjecte une seule
    consigne courte ; un second échec produit `PROTOCOL_ERROR` vers le demandeur,
    jamais `DONE` ou `SCORE` ;
-3. si le tour ne se termine pas, le watchdog publie `STALL` au demandeur et
-   relance l'agent une seule fois. Après une nouvelle fenêtre silencieuse, il
-   publie `PROTOCOL_ERROR`.
+3. si le tour ne se termine pas, le watchdog stocke un contrôle `STALL`, puis
+   une escalade `PROTOCOL_ERROR`, sans injection dans un TUI.
 
 À réception de `STALL`, le demandeur peut réagir par une seule relance corrélée
 et bornée. Il ne sonde jamais sur minuteur. Toute instruction opérateur vers un

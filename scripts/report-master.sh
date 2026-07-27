@@ -51,21 +51,31 @@ NEXT="${NEXT:-NONE}"
 DURATION="${DURATION:-NON_MESURÉ}"
 DETAIL="STATUS=$STATUS|SUMMARY=$SUMMARY|ARTIFACT=$ARTIFACT|TESTS=$TESTS|NEXT=$NEXT|DURATION=$DURATION|TURN_ID=$TURN_ID|ORIGIN=$ORIGIN|SOURCE_CORR=$SOURCE_CORR"
 
-SEND_OUTPUT=$(FROM_AGENT="$FROM_AGENT" \
-TASK_ID="turn-$TURN_ID" \
-CYCLE="turn" \
-CORRELATION_ID="turn-$TURN_ID" \
-MESSAGE_EVENT="MASTER_REPORT" \
-REQUESTER_ID="$MASTER_ID" \
-OWNER_ID="$FROM_AGENT" \
-"$SCRIPT_DIR/send.sh" "$MASTER_ID" "$DETAIL")
-send_status=$?
-printf '%s\n' "$SEND_OUTPUT"
-case "$send_status" in
-    0) DELIVERY_STATE="DELIVERED" ;;
-    2) DELIVERY_STATE="ORPHANED" ;;
-    *) exit "$send_status" ;;
-esac
+# Canal de supervision dédié : aucun champ prompt, donc aucun réveil modèle.
+# Le Master consultera ces rapports lors de son prochain vrai tour.
+REPORT_ID=$($REDIS_CLI XADD "agent:${MASTER_ID}:reports" \
+    MAXLEN '~' "${IO_STREAM_MAXLEN:-10000}" '*' \
+    from_agent "$FROM_AGENT" \
+    to_agent "$MASTER_ID" \
+    event "MASTER_REPORT" \
+    classification "supervision" \
+    correlation_id "turn-$TURN_ID" \
+    turn_id "$TURN_ID" \
+    status "$STATUS" \
+    summary "$SUMMARY" \
+    artifact "$ARTIFACT" \
+    tests "$TESTS" \
+    next "$NEXT" \
+    duration "$DURATION" \
+    origin "$ORIGIN" \
+    source_correlation "$SOURCE_CORR" \
+    detail "$DETAIL" \
+    timestamp "$(date +%s)" 2>/dev/null)
+[ -n "$REPORT_ID" ] || {
+    echo "ko: MASTER_REPORT persistence failed" >&2
+    exit 1
+}
+DELIVERY_STATE="STORED"
 
 NOW=$(date +%s)
 $REDIS_CLI HSET "$(agent_status_key "$FROM_AGENT")" \

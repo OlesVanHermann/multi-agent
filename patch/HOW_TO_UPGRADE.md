@@ -61,10 +61,11 @@ enveloppe autoritaire, corrélation héritée, terminal unique, états
 `DELIVERED`/`ORPHANED`, preuves durables et hard gates. Les originaux modifiés
 sont sauvegardés sous `removed/rebalance-prompts/<horodatage>/`.
 
-La migration ajoute également l'obligation universelle de fin de tour aux
-agents de triangle existants : réponse corrélée au demandeur lorsqu'elle est
-due, puis `MASTER_REPORT` vers le `NNN-1ZZ` calculé. Cette obligation couvre
-les prompts utilisateur directs, sans créer de fausse corrélation métier.
+La migration ajoute également l'obligation de rapport après tout travail réel
+aux agents de triangle existants : réponse corrélée au demandeur lorsqu'elle
+est due, puis `MASTER_REPORT` vers le `NNN-1ZZ` calculé. Cette obligation
+couvre les prompts utilisateur directs. Elle exclut explicitement contrôles,
+terminaux reçus, doublons et rapports de supervision.
 Les créateurs `150/160/170`, loaders et templates sont synchronisés avant la
 migration.
 
@@ -72,6 +73,11 @@ migration.
 `login/claude*/settings.json` sans remplacer les autres hooks, paramètres ou
 credentials. Les profils Codex restent inchangés ; leur garde est assuré par
 le bridge.
+
+Le runtime classe les événements avant toute injection : rapports dans
+`agent:<master>:reports`, contrôles dans `agent:<id>:control` et terminaux dans
+`agent:<id>:terminals`. Après upgrade, les bridges doivent être redémarrés
+manuellement pour charger ce routeur. L'upgrade ne les redémarre pas.
 
 Après l'upgrade :
 

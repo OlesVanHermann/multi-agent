@@ -114,10 +114,11 @@ class TestCheckStall:
         _inject(redis_client, "task_assigned", time.time() - 700)
 
         assert wd._check_stall(AGENT) == "stalled"
-        event = redis_client.xrevrange("agent:100:inbox", count=1)[0][1]
+        event = redis_client.xrevrange("agent:100:control", count=1)[0][1]
         assert event["event"] == "STALL"
         assert event["correlation_id"] == "corr-1"
         assert event["owner"] == AGENT
+        assert "prompt" not in event
 
     def test_after_nudge_window_not_elapsed_stays_silent(self, redis_client):
         """Le nudge vient d'être émis → age < seuil → aucune nouvelle

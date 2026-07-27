@@ -182,20 +182,23 @@ class AgentWatchdog:
         self._nudged = {}            # V3/C2 : agent_id → 'nudged'|'escalated'
 
     def _send_status_required(self, agent_id, data, message):
-        """Rappel corrélé via send.sh, jamais par XADD direct."""
-        env = dict(os.environ)
-        env.update({
-            "FROM_AGENT": "watchdog",
-            "TASK_ID": data.get("task_id", "") or "unknown",
-            "CYCLE": data.get("cycle", "") or "unknown",
-            "CORRELATION_ID": data.get("correlation_id", ""),
-            "MESSAGE_EVENT": "STATUS_REQUIRED",
-            "REQUESTER_ID": data.get("requester", "") or "watchdog",
-            "OWNER_ID": data.get("owner", "") or agent_id,
-        })
-        return subprocess.run(
-            [str(self.base_dir / "scripts" / "send.sh"), agent_id, message],
-            capture_output=True, text=True, timeout=15, env=env)
+        """Persiste un contrôle sans réveiller le modèle."""
+        self.redis.xadd(
+            f"agent:{agent_id}:control", {
+                "from_agent": "watchdog",
+                "event": "STATUS_REQUIRED",
+                "classification": "control",
+                "detail": message,
+                "task_id": data.get("task_id", ""),
+                "cycle": data.get("cycle", ""),
+                "correlation_id": data.get("correlation_id", ""),
+                "requester": data.get("requester", ""),
+                "owner": data.get("owner", "") or agent_id,
+                "timestamp": int(time.time()),
+            }, maxlen=IO_STREAM_MAXLEN, approximate=True)
+        return type(
+            "ControlStored", (), {
+                "returncode": 0, "stdout": "state=STORED", "stderr": ""})()
 
     def _check_obligations(self, now=None):
         """Réconcilie, rappelle puis escalade les obligations ouvertes."""
@@ -436,7 +439,9 @@ class AgentWatchdog:
                          motif="stall", age_seconds=int(age),
                          correlation_id=correlation_id)
                 if is_valid_agent_id(requester) and correlation_id:
-                    dedup = f"watchdog:protocol_error:{agent_id}:{correlation_id}"
+                    # Registre partagé avec agent.py : une seule escalade,
+                    # quel que soit le composant qui détecte le défaut.
+                    dedup = f"protocol_error:{agent_id}:{correlation_id}"
                     if self.redis.set(dedup, int(time.time()), nx=True, ex=604800):
                         details = (
                             f"Agent {agent_id} silencieux après relance bornée")
@@ -452,13 +457,11 @@ class AgentWatchdog:
                                 "timestamp": int(time.time()),
                             }, maxlen=STREAM_MAXLEN, approximate=True)
                         self.redis.xadd(
-                            f"agent:{requester}:inbox", {
-                                "prompt": (
-                                    f"EVENT:PROTOCOL_ERROR|TASK:{task_id}|"
-                                    f"CYCLE:{cycle}|CORR:{correlation_id}|"
-                                    f"DETAIL:{details}"),
+                            f"agent:{requester}:control", {
                                 "from_agent": "watchdog",
                                 "event": "PROTOCOL_ERROR",
+                                "classification": "control",
+                                "detail": details,
                                 "correlation_id": correlation_id,
                                 "task_id": task_id, "cycle": cycle,
                                 "requester": requester, "owner": agent_id,
@@ -485,13 +488,13 @@ class AgentWatchdog:
                 stall_key = f"watchdog:stall:{agent_id}:{correlation_id}"
                 if self.redis.set(stall_key, int(time.time()), nx=True, ex=604800):
                     self.redis.xadd(
-                        f"agent:{requester}:inbox", {
-                            "prompt": (
-                                f"EVENT:STALL|TASK:{task_id}|CYCLE:{cycle}|"
-                                f"CORR:{correlation_id}|DETAIL:Agent {agent_id} "
-                                "sans activité; relance unique envoyée"),
+                        f"agent:{requester}:control", {
                             "from_agent": "watchdog",
                             "event": "STALL",
+                            "classification": "control",
+                            "detail": (
+                                f"Agent {agent_id} sans activité; contrôle "
+                                "persisté sans réveil modèle"),
                             "correlation_id": correlation_id,
                             "task_id": task_id,
                             "cycle": cycle,

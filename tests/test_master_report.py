@@ -26,11 +26,13 @@ def test_triangle_master_rejects_self_and_global_ids():
     assert shell("source scripts/lib.sh; triangle_master_id 712").returncode
 
 
-def test_report_script_accepts_orphaned_persistence():
+def test_report_script_uses_non_interactive_supervision_stream():
     source = (ROOT / "scripts" / "report-master.sh").read_text()
-    assert '2) DELIVERY_STATE="ORPHANED"' in source
+    assert 'DELIVERY_STATE="STORED"' in source
+    assert 'agent:${MASTER_ID}:reports' in source
+    assert 'event "MASTER_REPORT"' in source
+    assert '\n    prompt ' not in source
     assert "last_master_report_id" in source
-    assert 'MESSAGE_EVENT="MASTER_REPORT"' in source
 
 
 def test_upgrade_merges_hook_without_replacing_existing_hooks(tmp_path):

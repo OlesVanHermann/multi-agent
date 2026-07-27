@@ -70,7 +70,8 @@ def test_protocol_error_is_correlated_and_never_done():
     assert completion["origin"] == "bridge"
     assert requester_event["event"] == "PROTOCOL_ERROR"
     assert requester_event["correlation_id"] == "corr-8"
-    assert "DONE" not in requester_event["prompt"]
+    assert "prompt" not in requester_event
+    assert requester_event["classification"] == "control"
 
 
 def _load_stop_guard():

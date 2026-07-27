@@ -123,11 +123,13 @@ FROM:300|DONE
 ### Triangle : aucun arrêt silencieux
 
 Dans un triangle `NNN`, chaque agent `NNN-YZZ`, sauf le coordinateur
-`NNN-1ZZ`, exécute `scripts/report-master.sh` avant la fin de chaque tour,
-y compris après un prompt utilisateur direct sans enveloppe Redis. Le rapport
-est obligatoire pour `SUCCESS`, `PARTIAL`, `FAILED`, `BLOCKED` et
-`INFO_REQUIRED`. Il ne remplace jamais le terminal corrélé dû au demandeur
-initial et ne constitue jamais un `DONE` ou un `SCORE` supplémentaire.
+`NNN-1ZZ`, exécute `scripts/report-master.sh` après chaque travail réel et
+après un prompt utilisateur direct. Le rapport est obligatoire pour
+`SUCCESS`, `PARTIAL`, `FAILED`, `BLOCKED` et `INFO_REQUIRED`. Il ne remplace
+jamais le terminal corrélé dû au demandeur initial et ne constitue jamais un
+`DONE` ou un `SCORE` supplémentaire. Un événement de contrôle, un terminal
+reçu, un doublon ou un rapport de supervision n'ouvre aucune nouvelle
+obligation et ne reçoit aucun rapport en retour.
 
 ## 3. GESTION DES ERREURS
 

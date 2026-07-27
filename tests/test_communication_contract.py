@@ -109,7 +109,9 @@ def test_prompt_migration_is_idempotent():
 
 def test_master_report_is_supervision_not_business_completion():
     source = REPORT_MASTER.read_text()
-    assert 'MESSAGE_EVENT="MASTER_REPORT"' in source
-    assert 'CORRELATION_ID="turn-$TURN_ID"' in source
+    assert 'event "MASTER_REPORT"' in source
+    assert 'agent:${MASTER_ID}:reports' in source
+    assert 'correlation_id "turn-$TURN_ID"' in source
     assert "done.sh" not in source
+    assert "send.sh" not in source
     assert "triangle_master_id" in source

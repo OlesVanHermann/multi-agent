@@ -17,8 +17,9 @@ rendre la main immédiatement après tout dispatch.
 ### Template Master ({ID}-1{XX}-system.md)
 
 Tous les satellites générés autres que le Master exécutent
-`$BASE/scripts/report-master.sh` avant chaque fin de tour, même après un prompt
-utilisateur direct. Une livraison corrélée à un autre demandeur reste distincte.
+`$BASE/scripts/report-master.sh` après chaque travail réel, même après un
+prompt utilisateur direct. Un contrôle, terminal reçu, doublon ou rapport
+n'exige aucune réponse. Une livraison corrélée reste distincte.
 
 ```markdown
 > **INTERDIT** : `sleep X && ...`, `sleep X &`, `(sleep X; ...)&`, `nohup sleep`. Jamais de sleep en background.

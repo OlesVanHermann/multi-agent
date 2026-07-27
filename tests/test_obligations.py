@@ -170,12 +170,14 @@ def test_watchdog_lifecycle_precedes_redis_flush():
     assert stop.index("stop_watchdog") < stop.index("FLUSHALL")
 
 
-def test_reminder_goes_through_send_sh_not_direct_xadd():
+def test_reminder_is_stored_as_control_without_model_prompt():
     source = (
         ROOT / "scripts" / "agent-bridge" / "healthcheck.py").read_text()
     method = source[
         source.index("def _send_status_required"):
         source.index("def _check_obligations")
     ]
-    assert '"scripts" / "send.sh"' in method
-    assert ".xadd(" not in method
+    assert 'f"agent:{agent_id}:control"' in method
+    assert '"classification": "control"' in method
+    assert '"prompt"' not in method
+    assert '"scripts" / "send.sh"' not in method

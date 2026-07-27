@@ -460,7 +460,7 @@ async def _refresh_cache_once():
                 prev_xlen = state._prev_inbox_xlens.get(agent_id, 0)
                 if xlen > prev_xlen and prev_xlen > 0:
                     for _ in range(xlen - prev_xlen):
-                        _log_event(agent_id, "prompt", f"xlen {prev_xlen}→{xlen}")
+                        _log_event(agent_id, "monitoring", f"xlen {prev_xlen}→{xlen}")
                 state._prev_inbox_xlens[agent_id] = xlen
         except Exception as e:
             print(f"[cache] inbox xlen error: {e}")
