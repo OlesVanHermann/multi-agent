@@ -91,6 +91,13 @@ FROM_AGENT="$ID" TASK_ID="$TASK" CYCLE="$CYCLE" CORRELATION_ID="$CORR" \
 de tes réponses. Écrire "DONE" dans ta réponse ne déclenche RIEN.
 Seule l'EXÉCUTION de `done.sh` émet un terminal inter-agent. `send.sh` est
 réservé aux dispatchs et informations non terminales.
+Tout tour reçu avec une enveloppe bridge doit exécuter l'un de ces deux scripts
+vers le demandeur avant de redevenir idle, y compris en cas de résultat
+partiel, question, blocage ou refus. Une narration dans le TUI ou l'outbox ne
+constitue jamais une livraison métier.
+À réception de `STALL`, le demandeur peut faire une seule relance corrélée et
+bornée ; il ne sonde jamais sur minuteur. Toute instruction vers un autre agent
+passe par `send.sh`, jamais par une saisie directe dans son pane tmux.
 Pour une commande directe `FROM=cli`, répondre dans le TUI et ne jamais tenter
 `send.sh cli`, `done.sh cli` ou un `XADD` de contournement.
 

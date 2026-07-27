@@ -1287,6 +1287,105 @@ class TmuxAgent:
             self._log(traceback.format_exc())
         self._log("WARNING: legacy_listener thread exiting")
 
+    def _requires_correlated_event(self, task):
+        """Return whether a bridge turn must publish a business event."""
+        requester = str(task.get("from_agent", ""))
+        return (
+            task.get("source") == "redis"
+            and bool(task.get("correlation_id"))
+            and bool(task.get("task_id"))
+            and bool(task.get("cycle"))
+            and requester not in (
+                "", "cli", "manual", "legacy", "unknown", "auto_init",
+                "compaction_reload", "compaction_resume", "verify", "watchdog")
+            and is_valid_agent_id(requester)
+        )
+
+    def _has_correlated_business_event(self, task):
+        """Check explicit send.sh/done.sh delivery for this correlation."""
+        correlation_id = str(task.get("correlation_id", ""))
+        requester = str(task.get("from_agent", ""))
+        if not correlation_id or not requester:
+            return False
+        try:
+            for _, fields in self.redis.xrevrange("completion", count=200):
+                if (
+                    fields.get("correlation_id") == correlation_id
+                    and fields.get("from") == self.agent_id
+                ):
+                    return True
+            for _, fields in self.redis.xrevrange(
+                    f"agent:{requester}:inbox", count=200):
+                if (
+                    fields.get("correlation_id") == correlation_id
+                    and fields.get("from_agent") == self.agent_id
+                    and fields.get("event") not in ("", "DISPATCH")
+                ):
+                    return True
+        except Exception as exc:
+            # Redis indisponible : ne pas conclure à tort que le protocole est
+            # respecté. La relance restera pending et sera rejouée.
+            self._log(f"PROTOCOL EVENT CHECK ERROR: {exc}")
+        return False
+
+    def _publish_protocol_error(self, task):
+        """Publish a correlated failure without fabricating DONE or SCORE."""
+        requester = str(task.get("from_agent", ""))
+        correlation_id = str(task.get("correlation_id", ""))
+        task_id = str(task.get("task_id", ""))
+        cycle = str(task.get("cycle", ""))
+        if not is_valid_agent_id(requester) or not correlation_id:
+            return False
+        dedup_key = f"protocol_error:{self.agent_id}:{correlation_id}"
+        try:
+            reserved = self.redis.set(
+                dedup_key, int(time.time()), nx=True, ex=604800)
+            if not reserved:
+                return True
+            details = (
+                f"Agent {self.agent_id}: fin de tour sans événement métier "
+                "après une relance bornée")
+            common = {
+                "from": "watchdog",
+                "to": requester,
+                "event": "PROTOCOL_ERROR",
+                "signal": f"PROTOCOL_ERROR {details}",
+                "origin": "bridge",
+                "correlation_id": correlation_id,
+                "task_id": task_id,
+                "cycle": cycle,
+                "requester": requester,
+                "owner": self.agent_id,
+                "timestamp": int(time.time()),
+            }
+            self.redis.xadd(
+                "completion", common, maxlen=STREAM_MAXLEN, approximate=True)
+            inbox_event = {
+                "prompt": (
+                    f"EVENT:PROTOCOL_ERROR|TASK:{task_id}|CYCLE:{cycle}|"
+                    f"CORR:{correlation_id}|DETAIL:{details}"),
+                "from_agent": "watchdog",
+                "event": "PROTOCOL_ERROR",
+                "correlation_id": correlation_id,
+                "task_id": task_id,
+                "cycle": cycle,
+                "requester": requester,
+                "owner": self.agent_id,
+                "timestamp": int(time.time()),
+            }
+            self.redis.xadd(
+                f"agent:{requester}:inbox", inbox_event,
+                maxlen=IO_STREAM_MAXLEN, approximate=True)
+            self._log(
+                f"PROTOCOL_ERROR delivered to {requester}; corr={correlation_id}")
+            self._wal(
+                "protocol_error", task_id, correlation_id=correlation_id,
+                requester=requester)
+            return True
+        except Exception as exc:
+            self._log(f"PROTOCOL_ERROR publish failed: {exc}")
+            return False
+
     def _process_queue(self):
         """Thread: process prompt queue"""
         try:
@@ -1324,6 +1423,16 @@ class TmuxAgent:
             self._set_redis_status()
             src = f"[{task.get('from_agent', 'local')}]"
             self._log(f"-> Executing {src}: {task['prompt'][:80]}...")
+            try:
+                self.redis.hset(f"agent:{self.agent_id}", mapping={
+                    "current_correlation": task.get("correlation_id", ""),
+                    "current_task_id": task.get("task_id", ""),
+                    "current_cycle": task.get("cycle", ""),
+                    "current_requester": task.get("from_agent", ""),
+                    "current_task_started_at": int(time.time()),
+                })
+            except Exception:
+                pass
 
             # R-INTEGRATE: record task start
             if self.metrics:
@@ -1600,6 +1709,38 @@ class TmuxAgent:
                 chars=len(response),
             )
 
+            # Une transcription dans l'outbox n'est pas une livraison métier.
+            # Pour toute enveloppe inter-agent, exiger un événement explicite
+            # send.sh/done.sh. Une seule relance courte est autorisée ; si elle
+            # échoue, publier un PROTOCOL_ERROR corrélé vers le demandeur.
+            if self._requires_correlated_event(task):
+                if not self._has_correlated_business_event(task):
+                    protocol_retry = int(task.get("_protocol_retry", 0) or 0)
+                    if protocol_retry < 1:
+                        retry_task = dict(task)
+                        retry_task["_protocol_retry"] = 1
+                        retry_task["prompt"] = (
+                            "PROTOCOLE DE FIN DE TOUR : aucun événement corrélé "
+                            "n'a été livré au demandeur. Exécute maintenant, comme "
+                            "unique action, send.sh pour un état intermédiaire ou "
+                            "done.sh pour un terminal avec les valeurs de "
+                            "l'enveloppe. Ne réponds pas seulement dans le TUI."
+                        )
+                        self.prompt_queue.put(retry_task)
+                        self._log(
+                            "PROTOCOL RETRY — no correlated business event; "
+                            f"corr={task.get('correlation_id')}")
+                        self._wal(
+                            "protocol_retry", task.get("task_id"),
+                            correlation_id=task.get("correlation_id", ""),
+                            requester=task.get("from_agent", ""))
+                        with self.state_lock:
+                            self.current_task = None
+                            self.state = State.IDLE
+                        self._set_redis_status()
+                        continue
+                    self._publish_protocol_error(task)
+
             # A4: ack only after the response is published to the outbox
             if task.get('ack_id'):
                 self._ack_inbox(task['ack_id'])
@@ -1628,6 +1769,13 @@ class TmuxAgent:
                 self.current_task = None
                 self.state = State.IDLE
 
+            try:
+                self.redis.hdel(
+                    f"agent:{self.agent_id}",
+                    "current_correlation", "current_task_id", "current_cycle",
+                    "current_requester", "current_task_started_at")
+            except Exception:
+                pass
             self._set_redis_status()
 
             # Check for background bashes after response

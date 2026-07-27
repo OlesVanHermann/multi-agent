@@ -126,6 +126,17 @@ réponds une fois avec `PROMPT_RELOADED`, sans rejouer un ancien dispatch.
 
 ### Requête inter-agent
 
+- **Condition mécanique de fin de tour :** tout tour déclenché par une
+  enveloppe bridge se termine par l'exécution de `done.sh` (terminal) ou de
+  `send.sh` (état intermédiaire) vers le demandeur. Un travail partiel, une
+  question ouverte, un blocage ou un refus se signalent aussi. Il n'existe
+  aucun cas où l'agent redevient idle sans avoir écrit un événement corrélé
+  dans le canal.
+- Un demandeur qui reçoit `STALL` peut émettre une seule relance corrélée et
+  bornée. Cette réaction à un événement entrant n'est pas du polling ; aucune
+  relance sur minuteur n'est autorisée.
+- Ne saisis jamais une instruction directement dans le pane d'un autre agent :
+  utilise `send.sh`, qui vérifie réellement la soumission dans le TUI.
 - Une action peut publier zéro ou plusieurs événements intermédiaires, puis
   **exactement un événement terminal** : `DONE`, `SCORE`, `INFO_REQUIRED`,
   `ERROR`, `ARTIFACT_READY`, `PROTOCOL_ERROR`, `ARBITRAGE`, `CONCLUSION` ou

@@ -88,3 +88,25 @@ tests.
   `PROMPT_RELOADED` avec la même enveloppe.
 
 Une relecture ne déclenche jamais automatiquement le workflow de démarrage.
+## Garantie de retour et détection du silence
+
+Une réponse narrative enregistrée dans l'outbox est une transcription, pas une
+livraison métier. Tout tour inter-agent corrélé doit donc exécuter `send.sh` ou
+`done.sh` avant de redevenir idle.
+
+Le dispositif possède trois filets complémentaires :
+
+1. le hook Stop Claude refuse une première fin de tour corrélée sans événement ;
+   il est inactif pour `FROM=cli`, les tours non corrélés et sa propre seconde
+   invocation afin d'éviter toute boucle ;
+2. quand un tour se termine sans événement, le bridge réinjecte une seule
+   consigne courte ; un second échec produit `PROTOCOL_ERROR` vers le demandeur,
+   jamais `DONE` ou `SCORE` ;
+3. si le tour ne se termine pas, le watchdog publie `STALL` au demandeur et
+   relance l'agent une seule fois. Après une nouvelle fenêtre silencieuse, il
+   publie `PROTOCOL_ERROR`.
+
+À réception de `STALL`, le demandeur peut réagir par une seule relance corrélée
+et bornée. Il ne sonde jamais sur minuteur. Toute instruction opérateur vers un
+agent passe par `send.sh` ; une saisie directe dans un pane tmux ne possède pas
+la vérification de soumission du bridge.

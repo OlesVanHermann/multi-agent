@@ -102,6 +102,23 @@ class TestCheckStall:
         last = wal.last_event(redis_client, None, AGENT)
         assert last[1]["event"] == "nudge"
 
+    def test_first_stall_notifies_correlated_requester(self, redis_client):
+        wd = _watchdog(redis_client)
+        redis_client.hset(f"agent:{AGENT}", mapping={
+            "status": "busy",
+            "current_correlation": "corr-1",
+            "current_task_id": "task-1",
+            "current_cycle": "3",
+            "current_requester": "100",
+        })
+        _inject(redis_client, "task_assigned", time.time() - 700)
+
+        assert wd._check_stall(AGENT) == "stalled"
+        event = redis_client.xrevrange("agent:100:inbox", count=1)[0][1]
+        assert event["event"] == "STALL"
+        assert event["correlation_id"] == "corr-1"
+        assert event["owner"] == AGENT
+
     def test_after_nudge_window_not_elapsed_stays_silent(self, redis_client):
         """Le nudge vient d'être émis → age < seuil → aucune nouvelle
         alerte, mais l'état 'nudged' est CONSERVÉ (pas réarmé par le

@@ -399,10 +399,15 @@ class AgentWatchdog:
         le bridge.
         """
         try:
-            status = self.redis.hget(f"agent:{agent_id}", "status")
+            agent_state = self.redis.hgetall(f"agent:{agent_id}")
+            status = agent_state.get("status")
             if status != "busy":
                 self._nudged.pop(agent_id, None)
                 return None
+            correlation_id = agent_state.get("current_correlation", "")
+            task_id = agent_state.get("current_task_id", "")
+            cycle = agent_state.get("current_cycle", "")
+            requester = agent_state.get("current_requester", "")
             last = wal.last_event(self.redis, None, agent_id)
             if not last:
                 return None  # bridge sans WAL (v2) : pas de faux positif
@@ -419,9 +424,40 @@ class AgentWatchdog:
                 self._publish_alert(
                     "critical", agent_id,
                     f"Agent {agent_id} toujours silencieux {int(age)}s après nudge",
-                    {"age_seconds": int(age), "motif": "stall"})
+                    {"age_seconds": int(age), "motif": "stall",
+                     "correlation_id": correlation_id})
                 wal.emit(self.redis, None, "escalation", agent_id,
-                         motif="stall", age_seconds=int(age))
+                         motif="stall", age_seconds=int(age),
+                         correlation_id=correlation_id)
+                if is_valid_agent_id(requester) and correlation_id:
+                    dedup = f"watchdog:protocol_error:{agent_id}:{correlation_id}"
+                    if self.redis.set(dedup, int(time.time()), nx=True, ex=604800):
+                        details = (
+                            f"Agent {agent_id} silencieux après relance bornée")
+                        self.redis.xadd(
+                            "completion", {
+                                "from": "watchdog", "to": requester,
+                                "event": "PROTOCOL_ERROR",
+                                "signal": f"PROTOCOL_ERROR {details}",
+                                "origin": "watchdog",
+                                "correlation_id": correlation_id,
+                                "task_id": task_id, "cycle": cycle,
+                                "requester": requester, "owner": agent_id,
+                                "timestamp": int(time.time()),
+                            }, maxlen=STREAM_MAXLEN, approximate=True)
+                        self.redis.xadd(
+                            f"agent:{requester}:inbox", {
+                                "prompt": (
+                                    f"EVENT:PROTOCOL_ERROR|TASK:{task_id}|"
+                                    f"CYCLE:{cycle}|CORR:{correlation_id}|"
+                                    f"DETAIL:{details}"),
+                                "from_agent": "watchdog",
+                                "event": "PROTOCOL_ERROR",
+                                "correlation_id": correlation_id,
+                                "task_id": task_id, "cycle": cycle,
+                                "requester": requester, "owner": agent_id,
+                                "timestamp": int(time.time()),
+                            }, maxlen=IO_STREAM_MAXLEN, approximate=True)
                 self._nudged[agent_id] = "escalated"
                 return "stalled"
             self._publish_alert(
@@ -439,7 +475,26 @@ class AgentWatchdog:
                 },
                 "Où en es-tu ? Si tu es bloqué, émets BLOCKED avec les "
                 "métadonnées corrélées de la tâche.")
-            wal.emit(self.redis, None, "nudge", agent_id)
+            if is_valid_agent_id(requester) and correlation_id:
+                stall_key = f"watchdog:stall:{agent_id}:{correlation_id}"
+                if self.redis.set(stall_key, int(time.time()), nx=True, ex=604800):
+                    self.redis.xadd(
+                        f"agent:{requester}:inbox", {
+                            "prompt": (
+                                f"EVENT:STALL|TASK:{task_id}|CYCLE:{cycle}|"
+                                f"CORR:{correlation_id}|DETAIL:Agent {agent_id} "
+                                "sans activité; relance unique envoyée"),
+                            "from_agent": "watchdog",
+                            "event": "STALL",
+                            "correlation_id": correlation_id,
+                            "task_id": task_id,
+                            "cycle": cycle,
+                            "requester": requester,
+                            "owner": agent_id,
+                            "timestamp": int(time.time()),
+                        }, maxlen=IO_STREAM_MAXLEN, approximate=True)
+            wal.emit(self.redis, None, "nudge", agent_id,
+                     correlation_id=correlation_id, requester=requester)
             self._nudged[agent_id] = "nudged"
             return "stalled"
         except Exception as exc:
