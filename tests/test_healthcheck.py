@@ -223,9 +223,26 @@ class TestWatchdogHealthCheck:
             mock_url.side_effect = OSError("connection refused")  # R-REGTEST C3: use caught exception type
             result = wd.check_health("345-500")
             # Verify the URL used port 9100+345=9445
-            call_url = mock_url.call_args[0][0]
-            assert "9445" in call_url
+            request = mock_url.call_args[0][0]
+            assert "9445" in request.full_url
             assert result is None  # Health check failed → None
+
+    @patch('healthcheck.HEALTH_TOKEN', 'health-secret')
+    @patch('healthcheck.urlopen')
+    def test_health_check_sends_bearer_token(self, mock_urlopen):
+        """Le watchdog s'authentifie auprès du endpoint protégé."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "status": "healthy", "agent_id": "300"
+        }).encode()
+        mock_urlopen.return_value = mock_resp
+
+        wd = AgentWatchdog(MagicMock())
+        result = wd.check_health("300")
+
+        request = mock_urlopen.call_args.args[0]
+        assert request.get_header("Authorization") == "Bearer health-secret"
+        assert result["status"] == "healthy"
 
 
 class TestWatchdogRestart:
@@ -233,7 +250,7 @@ class TestWatchdogRestart:
 
     @patch('healthcheck.subprocess.run')
     def test_restart_agent_success(self, mock_run):
-        """EF-002, CA-002 : Restart réussi via tmux."""
+        """EF-002, CA-002 : Restart via le gestionnaire canonique."""
         mock_run.return_value = MagicMock(returncode=0)
         redis_mock = MagicMock()
         wd = AgentWatchdog(redis_mock)
@@ -241,7 +258,14 @@ class TestWatchdogRestart:
         result = wd.restart_agent("300")
 
         assert result is True
-        assert mock_run.call_count == 3  # C-c + python3 agent.py (send-keys -l) + Enter
+        assert mock_run.call_count == 1
+        command = mock_run.call_args.args[0]
+        assert command[-2:] == ["restart", "300"]
+        assert command[0].endswith("/scripts/agent.sh")
+        assert "tmux" not in command
+        assert "send-keys" not in command
+        assert "C-c" not in command
+        assert "agent.py" not in command
 
     @patch('healthcheck.subprocess.run')
     def test_restart_agent_failure(self, mock_run):

@@ -22,7 +22,7 @@ import subprocess
 import json
 import logging
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 from urllib.error import URLError
 
 # A6 : source unique du format d'ID agent
@@ -36,6 +36,7 @@ REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
 HEALTH_PORT_BASE = int(os.environ.get("AGENT_HEALTH_PORT_BASE", 9100))
+HEALTH_TOKEN = os.environ.get("HEALTH_TOKEN", "")
 
 # EF-002: Watchdog configuration
 WATCHDOG_POLL_INTERVAL = int(os.environ.get("WATCHDOG_POLL_INTERVAL", 5))
@@ -307,30 +308,35 @@ class AgentWatchdog:
         port = self.health_port_base + numeric_id
         url = f"http://localhost:{port}/health"
         try:
-            resp = urlopen(url, timeout=self.health_timeout)
+            headers = (
+                {"Authorization": f"Bearer {HEALTH_TOKEN}"}
+                if HEALTH_TOKEN else {}
+            )
+            request = Request(url, headers=headers)
+            resp = urlopen(request, timeout=self.health_timeout)
             data = json.loads(resp.read().decode())
             return data
         except (URLError, OSError, json.JSONDecodeError, ValueError):
             return None
 
     def restart_agent(self, agent_id):
-        """Redémarre un agent via tmux — EF-002, CA-002."""
+        """Redémarre un agent avec le gestionnaire canonique — EF-002, CA-002.
+
+        Le watchdog ne doit jamais injecter de touches dans le pane moteur.
+        Si le CLI est encore actif, ``C-c`` le tue ; s'il est déjà sorti, le
+        texte de relance est exécuté par le shell du pane. ``agent.sh`` est la
+        source de vérité pour reconstruire ensemble session, moteur, profil et
+        bridge.
+        """
         if not is_valid_agent_id(agent_id):
             logger.warning("restart_agent: invalid agent_id format: %s", agent_id)
             return False
-        session_name = f"agent-{agent_id}"
+        agent_script = Path(__file__).resolve().parents[1] / "agent.sh"
         try:
             result = subprocess.run(
-                ["tmux", "send-keys", "-t", session_name, "C-c", ""],
-                capture_output=True, text=True, timeout=5)
-            time.sleep(1)
-            subprocess.run(
-                ["tmux", "send-keys", "-t", session_name, "-l",
-                 f"python3 agent.py {agent_id}"],
-                capture_output=True, text=True, timeout=5)
-            subprocess.run(
-                ["tmux", "send-keys", "-t", session_name, "Enter"],
-                capture_output=True, text=True, timeout=5)
+                [str(agent_script), "restart", agent_id],
+                capture_output=True, text=True, timeout=30,
+                cwd=str(agent_script.parent.parent))
             return result.returncode == 0
         except (subprocess.TimeoutExpired, FileNotFoundError):
             return False
