@@ -150,10 +150,14 @@ FROM_AGENT="$ID" TASK_ID="$TASK" CYCLE="$CYCLE" CORRELATION_ID="$CORR" \
 de tes réponses. Écrire "DONE" dans ta réponse ne déclenche RIEN.
 Seule l'EXÉCUTION de `done.sh` émet un terminal inter-agent. `send.sh` est
 réservé aux dispatchs et informations non terminales.
-Tout tour reçu avec une enveloppe bridge doit exécuter l'un de ces deux scripts
-vers le demandeur avant de redevenir idle, y compris en cas de résultat
-partiel, question, blocage ou refus. Une narration dans le TUI ou l'outbox ne
-constitue jamais une livraison métier.
+Tout tour reçu avec une enveloppe bridge `TASK`/`DISPATCH` actionnable doit
+exécuter l'un de ces deux scripts vers le demandeur avant de redevenir idle, y
+compris en cas de résultat partiel, question, blocage ou refus. Une narration
+dans le TUI ou l'outbox ne constitue jamais une livraison métier. `AUTO_INIT`,
+`HISTORY_HINT`, contrôle, supervision, terminal reçu, doublon, événement tardif
+et réconciliation `NO_NEW_WORK` sont non actionnables : aucun terminal ni
+`MASTER_REPORT` ne leur répond. Cette règle prime sur l'obligation générale de
+rapport.
 À réception de `STALL`, le demandeur peut faire une seule relance corrélée et
 bornée ; il ne sonde jamais sur minuteur. Toute instruction vers un autre agent
 passe par `send.sh`, jamais par une saisie directe dans son pane tmux.
@@ -189,6 +193,9 @@ jamais le terminal corrélé dû au demandeur initial et ne constitue jamais un
 `DONE` ou un `SCORE` supplémentaire. Un événement de contrôle, un terminal
 reçu, un doublon ou un rapport de supervision n'ouvre aucune nouvelle
 obligation et ne reçoit aucun rapport en retour.
+Un rapport contient uniquement le delta métier depuis le précédent. Si aucun
+résultat, erreur, changement d'état ou décision requise n'est nouveau, aucun
+rapport n'est émis.
 
 ## 3. GESTION DES ERREURS
 
@@ -201,6 +208,9 @@ message jusqu'à consommation. Un seuil de stagnation technique peut produire un
 diagnostic, mais jamais acquitter, abandonner, redéclencher ou faire croire que
 la tâche est terminée. Masters et Workers ne stoppent ni ne redémarrent leurs
 pairs ; ils signalent le blocage à l'opérateur ou à 000.
+Trois répétitions de la même erreur de consommation, ou un Worker `DELIVERED`
+non reflété par le Master, constituent un `FRAMEWORK_BLOCKER`. Suspendre les
+nouveaux dispatchs dépendants du canal et préserver les résultats déjà livrés.
 
 ## 4. FORMAT DES MESSAGES INTER-AGENTS
 

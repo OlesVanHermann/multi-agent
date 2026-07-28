@@ -30,7 +30,7 @@ Quatre threads démons + un serveur health HTTP :
 | `legacy_listener` | Lit l'inbox legacy (List `inject:{id}`, BLPOP) — best-effort, sans ack |
 | `queue_processor` | Dépile la queue, envoie à Claude (tmux), publie la réponse, XACK |
 | `heartbeat` | Publie toutes les 10 s sur `agent:{id}:heartbeat` + `pane_state` (B6) |
-| `health_server` | HTTP `GET /health` sur `127.0.0.1:{AGENT_HEALTH_PORT_BASE + id}` (token `HEALTH_TOKEN` requis) |
+| `health_server` | HTTP `GET /health` sur un port libre publié dans `agent:<id>.health_port` (token `HEALTH_TOKEN` requis) |
 
 Le thread principal (`run()`) lit stdin : lignes normales = prompts locaux,
 lignes `/commande` = commandes interactives. **EOF sur stdin arrête le bridge.**
@@ -211,7 +211,7 @@ Toute autre ligne stdin est traitée comme un prompt local (`from_agent=manual`)
 | `STABLE_PLAN_SECS` | `15` | Stabilité requise en mode plan |
 | `RETRY_BACKOFF_SECS` | `10` | Backoff entre retries après erreur API |
 | `IO_STREAM_MAXLEN` | `10000` | Borne des streams inbox/outbox (A3) |
-| `AGENT_HEALTH_PORT_BASE` | `9100` | Port health = base + id numérique |
+| `AGENT_HEALTH_PORT_BASE` | `9100` | Compatibilité historique ; les nouveaux bridges publient leur port dynamique dans Redis |
 
 Le timeout peut être réglé par agent avec `prompts/<agent>.timeout` (ou dans
 son répertoire mono/x45/z21), puis `prompts/default.timeout` en fallback.

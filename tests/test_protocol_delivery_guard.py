@@ -126,6 +126,8 @@ def _load_stop_guard():
 
 
 def test_stop_hook_blocks_direct_turn_without_master_report(monkeypatch):
+    """Fallback fail-closed : hash sans champs d'obligation (bridge non
+    redémarré) = sémantique v3.2.12, la garde n'est jamais inerte."""
     guard = _load_stop_guard()
     client = MagicMock()
     client.hgetall.return_value = {}
@@ -133,6 +135,21 @@ def test_stop_hook_blocks_direct_turn_without_master_report(monkeypatch):
     monkeypatch.setattr(guard, "current_agent_id", lambda: "334-334")
     monkeypatch.setattr(guard, "redis_client", lambda: client)
     assert guard.main() == 2
+
+
+def test_stop_hook_allows_turn_with_explicit_zero_obligations(monkeypatch):
+    """Un bridge neuf qui déclare explicitement zéro obligation pour le
+    tour (contrôle, doublon, consommation) libère la fin de tour."""
+    guard = _load_stop_guard()
+    client = MagicMock()
+    client.hgetall.return_value = {
+        "current_delivery_obligation": "0",
+        "current_master_report_obligation": "0",
+    }
+    monkeypatch.setattr(guard, "hook_input", lambda: {})
+    monkeypatch.setattr(guard, "current_agent_id", lambda: "334-334")
+    monkeypatch.setattr(guard, "redis_client", lambda: client)
+    assert guard.main() == 0
 
 
 def test_stop_hook_allows_direct_turn_after_new_master_report(monkeypatch):
@@ -159,6 +176,8 @@ def test_stop_hook_blocks_correlated_turn_without_event(monkeypatch, capsys):
         "current_task_id": "task-128",
         "current_cycle": "8",
         "current_task_started_at": "1",
+        "current_delivery_obligation": "1",
+        "current_master_report_obligation": "1",
     }
     client.xrevrange.return_value = []
     monkeypatch.setattr(guard, "hook_input", lambda: {})

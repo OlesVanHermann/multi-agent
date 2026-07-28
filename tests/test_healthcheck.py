@@ -185,6 +185,7 @@ class TestWatchdogHealthCheck:
         mock_urlopen.return_value = mock_resp
 
         redis_mock = MagicMock()
+        redis_mock.hget.return_value = "19400"
         wd = AgentWatchdog(redis_mock)
 
         result = wd.check_health("300")
@@ -199,6 +200,7 @@ class TestWatchdogHealthCheck:
         mock_urlopen.side_effect = URLError("Connection refused")
 
         redis_mock = MagicMock()
+        redis_mock.hget.return_value = "19400"
         wd = AgentWatchdog(redis_mock)
 
         result = wd.check_health("300")
@@ -215,17 +217,28 @@ class TestWatchdogHealthCheck:
         assert result is None
 
     def test_compound_agent_id_port(self):
-        """EF-002 : Agent composé 345-500 → port calculé depuis 345."""
+        """EF-002 : le port publié distingue les identifiants composés."""
         redis_mock = MagicMock()
+        redis_mock.hget.return_value = "19445"
         wd = AgentWatchdog(redis_mock, health_port_base=9100)
 
         with patch('healthcheck.urlopen') as mock_url:
             mock_url.side_effect = OSError("connection refused")  # R-REGTEST C3: use caught exception type
             result = wd.check_health("345-500")
-            # Verify the URL used port 9100+345=9445
             request = mock_url.call_args[0][0]
-            assert "9445" in request.full_url
+            assert "19445" in request.full_url
+            redis_mock.hget.assert_called_once_with(
+                "agent:345-500", "health_port")
             assert result is None  # Health check failed → None
+
+    def test_missing_published_port_does_not_probe_legacy_collision(self):
+        redis_mock = MagicMock()
+        redis_mock.hget.return_value = None
+        wd = AgentWatchdog(redis_mock, health_port_base=9100)
+
+        with patch('healthcheck.urlopen') as mock_url:
+            assert wd.check_health("334-134") is None
+            mock_url.assert_not_called()
 
     @patch('healthcheck.HEALTH_TOKEN', 'health-secret')
     @patch('healthcheck.urlopen')
@@ -237,7 +250,9 @@ class TestWatchdogHealthCheck:
         }).encode()
         mock_urlopen.return_value = mock_resp
 
-        wd = AgentWatchdog(MagicMock())
+        redis_mock = MagicMock()
+        redis_mock.hget.return_value = "19400"
+        wd = AgentWatchdog(redis_mock)
         result = wd.check_health("300")
 
         request = mock_urlopen.call_args.args[0]

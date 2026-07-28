@@ -306,13 +306,16 @@ class AgentWatchdog:
         """Interroge /health d'un agent — EF-002, CA-002 (timeout 2s)."""
         if not is_valid_agent_id(agent_id):
             return None
+        published_port = self.redis.hget(
+            f"agent:{agent_id}", "health_port")
+        if isinstance(published_port, bytes):
+            published_port = published_port.decode(errors="replace")
         try:
-            numeric_id = int(agent_id.split('-')[0])
-        except (ValueError, IndexError):
+            port = int(published_port)
+        except (TypeError, ValueError):
+            port = 0
+        if not (1 <= port <= 65535):
             return None
-        if not (0 <= numeric_id <= 999):
-            return None
-        port = self.health_port_base + numeric_id
         url = f"http://localhost:{port}/health"
         try:
             headers = (

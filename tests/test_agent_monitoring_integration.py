@@ -281,17 +281,17 @@ class TestAgentPsutil:
 class TestHealthServerSetup:
     """EF-001 — Démarrage du serveur health."""
 
-    def test_health_port_calculation(self):
-        """EF-001 : port = HEALTH_PORT_BASE + agent_id numérique."""
-        base = _mod.HEALTH_PORT_BASE
-        port = base + int("300".split('-')[0])
-        assert port == base + 300
+    def test_health_server_binds_dynamic_port(self):
+        """EF-001 : le noyau choisit un port libre, sans dérivation de l'ID."""
+        source = open(_AGENT_PATH, encoding="utf-8").read()
+        assert "HTTPServer(('127.0.0.1', 0)" in source
+        assert "server.server_address[1]" in source
 
-    def test_compound_agent_id_port(self):
-        """EF-001 : agent composé 345-500 → port base + 345."""
-        base = _mod.HEALTH_PORT_BASE
-        port = base + int("345-500".split('-')[0])
-        assert port == base + 345
+    def test_health_status_publishes_port_and_process_identity(self):
+        source = open(_AGENT_PATH, encoding="utf-8").read()
+        assert '"health_port": getattr(self, "health_port", 0)' in source
+        assert '"health_pid": os.getpid()' in source
+        assert '"health_started_at": int(getattr(self, "_start_time", 0))' in source
 
 
 class TestAgentShutdown:

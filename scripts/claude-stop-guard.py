@@ -94,13 +94,28 @@ def main():
         started_at = int(state.get("current_task_started_at", "0") or 0)
         report_id = state.get("last_master_report_id", "")
         consumed_report_id = state.get("last_stop_master_report_id", "")
+        # Fail-closed : un bridge non redémarré (champs d'obligation absents
+        # du hash) garde la sémantique v3.2.12 au lieu de désactiver la
+        # garde. Les champs explicites ("0"/"1") d'un bridge neuf font foi.
+        has_obligation_fields = (
+            "current_delivery_obligation" in state
+            or "current_master_report_obligation" in state)
+        if has_obligation_fields:
+            delivery_obligation = (
+                state.get("current_delivery_obligation", "") == "1")
+            master_report_obligation = (
+                state.get("current_master_report_obligation", "") == "1")
+        else:
+            delivery_obligation = True
+            master_report_obligation = True
         parts = agent_id.split("-")
         master_id = ""
         if len(parts) == 2 and len(parts[1]) == 3:
             master_id = f"{parts[0]}-1{parts[1][1:]}"
 
         missing = []
-        if (correlation_id and is_valid_agent_id(requester)
+        if (delivery_obligation
+                and correlation_id and is_valid_agent_id(requester)
                 and requester != agent_id
                 and not event_exists(
                     client, agent_id, requester, correlation_id, started_at)):
@@ -108,8 +123,9 @@ def main():
                 f"livraison corrélée vers {requester} "
                 f"(TASK_ID={task_id}, CYCLE={cycle}, "
                 f"CORRELATION_ID={correlation_id})")
-        if master_id and master_id != agent_id and (
-                not report_id or report_id == consumed_report_id):
+        if (master_report_obligation
+                and master_id and master_id != agent_id and (
+                    not report_id or report_id == consumed_report_id)):
             missing.append(f"MASTER_REPORT vers {master_id}")
         if not missing:
             if report_id:

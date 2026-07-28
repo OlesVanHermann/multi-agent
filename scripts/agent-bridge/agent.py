@@ -541,6 +541,7 @@ class TmuxAgent:
 
         # EF-001: Start health endpoint HTTP server
         self._health_server = None
+        self.health_port = 0
         self._start_health_server()
 
         self._set_redis_status()
@@ -562,14 +563,14 @@ class TmuxAgent:
         except Exception as e:
             self._log(f"event log error: {e}")
 
-    def _wal(self, event, task_id=None, **fields):
+    def _wal(self, wal_event, task_id=None, **fields):
         """V3/C2 : émission WAL best-effort — une panne Redis sur le WAL
         ne doit JAMAIS tuer le thread queue_processor."""
         try:
-            wal.emit(self.redis, None, event, self.agent_id,
+            wal.emit(self.redis, None, wal_event, self.agent_id,
                      task_id, **fields)
         except Exception as e:
-            self._log(f"WAL emit error ({event}): {e}")
+            self._log(f"WAL emit error ({wal_event}): {e}")
 
     def _listener_health_snapshot(self):
         """Return a copy of listener health without depending on Redis."""
@@ -972,7 +973,10 @@ class TmuxAgent:
                 "queue_size": self.prompt_queue.qsize(),
                 "tasks_completed": self.tasks_completed,
                 "messages_since_reload": self.messages_since_reload,
-                "mode": "tmux-interactive"
+                "mode": "tmux-interactive",
+                "health_port": getattr(self, "health_port", 0),
+                "health_pid": os.getpid(),
+                "health_started_at": int(getattr(self, "_start_time", 0)),
             })
         except redis.ConnectionError:
             pass
@@ -980,25 +984,24 @@ class TmuxAgent:
     def _start_health_server(self):
         """Démarre le serveur HTTP health endpoint — EF-001, CT-001.
 
-        Port = HEALTH_PORT_BASE + agent_id numérique (CA-001: configurable).
+        Le noyau attribue un port libre. Le port réellement lié est publié
+        dans le hash Redis de l'agent pour éviter toute collision entre un
+        agent global (334) et un agent de triangle (334-134).
         """
-        try:
-            numeric_id = int(self.agent_id.split('-')[0])
-        except (ValueError, IndexError):
-            numeric_id = 0
-        port = HEALTH_PORT_BASE + numeric_id
-
         health_token = os.environ.get('HEALTH_TOKEN', '')
         handler_class = type('Handler', (_HealthHandler,), {'agent_ref': self, 'health_token': health_token})
         try:
-            server = http.server.HTTPServer(('127.0.0.1', port), handler_class)
+            server = http.server.HTTPServer(('127.0.0.1', 0), handler_class)
             server.timeout = 1
             self._health_server = server
+            self.health_port = int(server.server_address[1])
             t = Thread(target=self._health_serve_loop, daemon=True, name="health_server")
             t.start()
-            self._log(f"Health endpoint started on port {port} (EF-001)")
+            self._log(
+                f"Health endpoint started on port {self.health_port} (EF-001)")
         except OSError as e:
-            self._log(f"WARNING: Health server port {port} unavailable: {e}")
+            self.health_port = 0
+            self._log(f"WARNING: Health server unavailable: {e}")
 
     def _health_serve_loop(self):
         """Boucle du serveur health — EF-001."""
@@ -1765,6 +1768,22 @@ class TmuxAgent:
             self._log(f"-> Executing {src}: {task['prompt'][:80]}...")
             task.setdefault("_turn_id", str(uuid.uuid4()))
             task.setdefault("_turn_started_at", int(time.time()))
+            delivery_obligation = self._requires_correlated_event(task)
+            master_report_obligation = self._requires_master_report(task)
+            event_name = str(task.get("event", "") or "").upper()
+            source_name = str(task.get("source", "unknown") or "unknown")
+            if source_name == "auto_init":
+                turn_kind = "AUTO_INIT"
+            elif event_name in (
+                    "CONTROL", "PROTOCOL_ERROR", "STATUS_REQUIRED",
+                    "MASTER_REPORT", "DECISION_REQUIRED"):
+                turn_kind = "CONTROL"
+            elif str(task.get("from_agent", "")) in ("cli", "manual"):
+                turn_kind = "CLI"
+            elif source_name == "redis":
+                turn_kind = "TASK"
+            else:
+                turn_kind = source_name.upper()
             try:
                 self.redis.hset(f"agent:{self.agent_id}", mapping={
                     "current_correlation": task.get("correlation_id", ""),
@@ -1774,6 +1793,10 @@ class TmuxAgent:
                     "current_task_started_at": task["_turn_started_at"],
                     "current_turn_id": task["_turn_id"],
                     "current_turn_origin": task.get("source", "unknown"),
+                    "current_turn_kind": turn_kind,
+                    "current_delivery_obligation": int(delivery_obligation),
+                    "current_master_report_obligation": int(
+                        master_report_obligation),
                 })
             except Exception:
                 pass
@@ -2098,7 +2121,9 @@ class TmuxAgent:
                     f"agent:{self.agent_id}",
                     "current_correlation", "current_task_id", "current_cycle",
                     "current_requester", "current_task_started_at",
-                    "current_turn_id", "current_turn_origin")
+                    "current_turn_id", "current_turn_origin",
+                    "current_turn_kind", "current_delivery_obligation",
+                    "current_master_report_obligation")
             except Exception:
                 pass
             self._set_redis_status()
