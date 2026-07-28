@@ -210,11 +210,16 @@ api_error_immediate_patterns:
 # [Source: tui/src/onboarding/auth.rs:444,460 — « Sign in with ChatGPT »,
 #          « Sign in with Device Code », « Provide your own API key »]
 # [Source: tui/src/status/card.rs:731 — « run codex login to use ChatGPT »]
+# [Relevé: pane réel codex-cli 0.144.x, incident d'authentification mx23
+#          2026-07-27 — « refresh token was revoked »,
+#          « access token could not be refreshed »]
 login_expired_markers:
   - 'sign in with chatgpt'
   - 'sign in with device code'
   - 'provide your own api key'
   - 'run codex login'
+  - 'refresh token was revoked'
+  - 'access token could not be refreshed'
 
 # ── [NA] Sondage de session ─────────────────────────────────────────────────
 # Claude Code affiche périodiquement « How is Claude doing » ; le bridge

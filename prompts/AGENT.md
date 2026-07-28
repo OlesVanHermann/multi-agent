@@ -92,7 +92,8 @@ exactement `FROM`, `TASK`, `CYCLE` et `CORR` pendant tout son traitement.
 `send.sh` et `done.sh` rendent un état explicite. Ne conclus jamais depuis le
 seul code de retour :
 
-- `state=DELIVERED` — livré, tu peux redevenir idle ;
+- `state=DELIVERED` — persisté dans le transport (`STORED`) ; cela ne prouve
+  pas encore la consommation par la cible ;
 - `state=ALREADY_DELIVERED` — rejeu vrai du même contenu, rien à refaire ;
 - `state=NOT_DELIVERED` — refusé, ton travail n'est pas parti : ouvre un
   nouveau `CYCLE`/`CORR` puis réémets ;
@@ -103,6 +104,22 @@ seul code de retour :
 
 Tant qu'aucun de ces états n'a été lu, la tâche n'est pas terminée. Un travail
 réalisé sans terminal livré est un incident, jamais un état normal.
+
+Avant d'inscrire une attente, lis au maximum une fois la santé publiée par le
+framework. Enregistre durablement `TARGET`, `CORR`, `EXPECTED_EVENT`,
+`EXIT_CRITERION` et le dernier état technique connu. Si la cible est
+`CONSUMER_DOWN`, `CONSUMER_DEGRADED` fatal ou `AUTH_BLOCKED`, ne prétends pas
+qu'elle a commencé : publie une seule fois `BLOCKED_INFRA`/`INFO_REQUIRED` et
+applique `BYPASS_ROLE`, `SUBSTITUTE` ou `OPERATOR_ACTION`. Ne sonde jamais
+Redis ou tmux en boucle.
+
+La disponibilité réelle vient du listener et du TUI actif. Un PID, une session
+tmux ou un `login status` statique ne suffisent pas face à une erreur active de
+rafraîchissement de credentials.
+
+`MASTER_REPORT` ne réveille pas le coordinateur. Un blocage, une décision ou
+une intervention opérateur ne doit jamais y être enfoui : émets aussi
+`INFO_REQUIRED` ou `BLOCKED` avec la corrélation métier.
 
 ## Statistiques de durée obligatoires
 
@@ -171,6 +188,8 @@ réponds une fois avec `PROMPT_RELOADED`, sans rejouer un ancien dispatch.
   **exactement un événement terminal** : `DONE`, `SCORE`, `INFO_REQUIRED`,
   `ERROR`, `ARTIFACT_READY`, `PROTOCOL_ERROR`, `ARBITRAGE`, `CONCLUSION` ou
   `PROMPT_RELOADED`.
+- Une mise à jour d'arbitrage utilise `ARBITRAGE` avec `SUPERSEDES`. Les noms
+  d'événements inventés, notamment `ARBITRAGE_UPDATE`, sont interdits.
 - Pour une requête inter-agent uniquement, une réponse affichée dans le TUI
   n'est pas livrée. Exécute `done.sh` vers le demandeur avant de redevenir idle.
 - Pour préserver la corrélation, exécute le script avec les valeurs reçues :
@@ -203,6 +222,9 @@ Les commandes `artifact-required`, `status-required`, `resume` et
   `QUEUED/ORPHANED` n'est pas une prise en charge. Un agent déclaré indisponible
   est retiré de l'attente puis traité par `BYPASS_ROLE`, `SUBSTITUTE` ou
   `OPERATOR_ACTION`. Le Master n'émet jamais un score au nom de l'Observer.
+  Il conserve un registre des critères de la dernière demande avec, pour
+  chacun, preuve attendue, preuve obtenue et version testée. Il distingue
+  `CODE_DONE`, `TESTS_DONE`, `DEPLOYED` et `USER_OUTCOME_VERIFIED`.
 - **Developer `*-3XX`** : `DONE` référence `CHANGES.md`, son SHA-256 et les tests
   exécutés ou `NOT_RUN`. Une décision manquante produit `INFO_REQUIRED`, jamais `DONE`.
 - **Observer `*-5XX`** : écrit le bilan sous le dossier de la tâche et publie
@@ -226,6 +248,12 @@ Avant de commencer un travail dispatché, chaque agent — pas seulement le
 Après une compaction ou un redémarrage, cet état permet de retrouver le
 terminal dû sans inventer de métadonnée. Le passage à `STATUS=DELIVERED`
 n'intervient qu'après lecture d'un état de livraison confirmé.
+
+Avant `DONE` et avant tout déplacement dans `plan-DONE`, le Master vérifie
+qu'aucun cycle plus récent n'est ouvert et qu'aucun état autoritaire ne porte
+`WAITING`, `IN_PROGRESS` ou `BLOCKED`. Toute contradiction produit
+`STATE_CONFLICT` et maintient le plan ouvert. Une preuve obtenue sur une
+ancienne construction ne valide jamais automatiquement la version finale.
 
 `pipeline/NNN-output/` est un espace de transit. Avant son nettoyage, le Master
 archive le paquet accepté sous

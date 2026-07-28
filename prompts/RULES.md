@@ -1,5 +1,64 @@
 # RÈGLES OBLIGATOIRES POUR TOUS LES AGENTS
 
+## SÉMANTIQUE DE TRANSPORT ET DE FIN
+
+Les états suivants ne sont jamais interchangeables :
+
+- `STORED` / ancien `DELIVERED` : écrit durablement dans le transport ;
+- `CONSUMED` : lu par le consommateur du destinataire ;
+- `ACCEPTED` : obligation enregistrée par l'agent ;
+- `TERMINAL_PUBLISHED` : événement métier terminal émis ;
+- `TERMINAL_CONSUMED` : terminal lu par son destinataire.
+
+Un message `STORED` peut rester non consommé si le listener du destinataire est
+dégradé. Ne prétends jamais qu'une cible travaille sur la seule preuve de
+persistance Redis, d'une session tmux ou d'un PID vivant.
+
+La progression métier utilise quatre niveaux :
+
+1. `CODE_DONE` — implémentation produite ;
+2. `TESTS_DONE` — vérifications exigées réussies ;
+3. `DEPLOYED` — version effectivement installée dans la destination ;
+4. `USER_OUTCOME_VERIFIED` — résultat demandé observé sur cette version.
+
+`DONE` exige le dernier niveau demandé par l'utilisateur. Un build vert, un
+score ou un déploiement ne prouvent pas à eux seuls le résultat utilisateur.
+Avant `DONE` ou un déplacement dans `plan-DONE`, vérifie qu'aucun cycle plus
+récent n'est `WAITING`, `IN_PROGRESS` ou `BLOCKED`. Sinon publie
+`STATE_CONFLICT` et conserve le plan ouvert.
+
+## SANTÉ DE COMMUNICATION
+
+Avant une attente inter-agent, consulte au maximum une fois l'état de santé
+publié par le framework. Aucun polling direct, `sleep` ou lecture Redis répétée
+n'est autorisé.
+
+Les états suivants rendent la cible indisponible jusqu'à changement externe :
+
+- `CONSUMER_DOWN` ou listener mort ;
+- Redis `MISCONF`, AOF non inscriptible ou disque plein ;
+- `AUTH_BLOCKED`, refresh token révoqué ou login requis ;
+- endpoint de santé fatalement indisponible.
+
+Dans ce cas, n'annonce pas un démarrage et n'entre pas en attente silencieuse :
+écris un unique `BLOCKED_INFRA` ou `INFO_REQUIRED` corrélé, puis applique le
+mécanisme de rôle prévu (`BYPASS_ROLE`, `SUBSTITUTE` ou `OPERATOR_ACTION`).
+Une erreur d'infrastructure ne se corrige jamais par une boucle de messages.
+
+`MASTER_REPORT` est un rapport passif et ne réveille pas le Master. Toute
+décision ou action humaine requise doit également être publiée sous la forme
+d'un `INFO_REQUIRED` ou `BLOCKED` corrélé.
+
+La stabilité du pane, la visibilité du composer et le temps écoulé ne prouvent
+jamais la fin d'un travail. Seul un événement métier explicite, une annulation,
+une substitution ou un blocage durable ferme une obligation. Un
+`TERMINAL_PENDING` est un constat technique non terminal ; il ne justifie ni
+retry minuté ni `PROTOCOL_ERROR`.
+
+Utilise uniquement les événements canoniques. Une nouvelle décision
+d'arbitrage réutilise `ARBITRAGE` avec `SUPERSEDES` ; n'invente jamais
+`ARBITRAGE_UPDATE` ou une variante équivalente.
+
 ## PONDÉRATION DE LA MISSION
 
 - **70 % résultat métier** : livrable demandé, comportement utile et intention

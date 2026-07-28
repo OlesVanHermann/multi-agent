@@ -45,6 +45,7 @@ def test_event_taxonomy():
     assert event_router.classify(envelope("DONE")) == "terminal"
     assert event_router.classify(envelope("MASTER_REPORT")) == "supervision"
     assert event_router.classify(envelope("PROTOCOL_ERROR")) == "control"
+    assert event_router.classify(envelope("TERMINAL_PENDING")) == "control"
     assert event_router.classify(envelope("UNATTRIBUTED")) == "quarantine"
 
 
@@ -144,14 +145,14 @@ def test_duplicate_terminal_never_creates_second_turn():
     assert agent.prompt_queue.qsize() == 1
 
 
-def test_bridge_and_watchdog_share_protocol_error_dedup_namespace():
+def test_watchdog_observes_silence_without_fabricating_protocol_error():
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
     bridge_source = (
         root / "scripts" / "agent-bridge" / "agent.py").read_text()
     watchdog_source = (
         root / "scripts" / "agent-bridge" / "healthcheck.py").read_text()
-    marker = 'f"protocol_error:{'
-    assert marker in bridge_source
-    assert marker in watchdog_source
+    assert 'f"protocol_error:{' in bridge_source
+    assert 'f"protocol_error:{' not in watchdog_source
+    assert '"TERMINAL_PENDING"' in watchdog_source
     assert "watchdog:protocol_error:" not in watchdog_source

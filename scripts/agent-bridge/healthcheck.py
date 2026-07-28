@@ -180,6 +180,10 @@ class AgentWatchdog:
         self._restart_history = {}   # agent_id → [timestamps]
         self._circuit_open = {}      # agent_id → bool
         self._nudged = {}            # V3/C2 : agent_id → 'nudged'|'escalated'
+        # Dédup en mémoire des alertes d'état durable (auth_blocked,
+        # consumer_down) : une alerte par transition d'état, pas une par
+        # cycle de 5 s. En mémoire car sous Redis MISCONF les SET échouent.
+        self._alert_states = {}      # agent_id → dernier état alerté
 
     def _send_status_required(self, agent_id, data, message):
         """Persiste un contrôle sans réveiller le modèle."""
@@ -377,11 +381,20 @@ class AgentWatchdog:
             "payload": json.dumps(details or {})
         }
         stream = "monitoring:restart"
-        self.redis.xadd(stream, event, maxlen=STREAM_MAXLEN, approximate=True)
+        try:
+            self.redis.xadd(
+                stream, event, maxlen=STREAM_MAXLEN, approximate=True)
+        except Exception as exc:
+            logger.warning("event publish failed for %s: %s", agent_id, exc)
         return event
 
     def _publish_alert(self, level, agent_id, message, details=None):
-        """Publie une alerte critique — EF-004 intégration, CT-009."""
+        """Publie une alerte critique — EF-004 intégration, CT-009.
+
+        Best-effort : sous Redis MISCONF (écritures refusées), l'incident
+        que l'alerte décrit ferait crasher le watchdog lui-même. Une panne
+        de publication ne tue jamais la boucle de surveillance.
+        """
         alert = {
             "from": "watchdog",
             "type": f"alert:{level}",
@@ -391,7 +404,11 @@ class AgentWatchdog:
             "payload": json.dumps(details or {})
         }
         stream = "monitoring:alerts"
-        self.redis.xadd(stream, alert, maxlen=STREAM_MAXLEN, approximate=True)
+        try:
+            self.redis.xadd(
+                stream, alert, maxlen=STREAM_MAXLEN, approximate=True)
+        except Exception as exc:
+            logger.warning("alert publish failed for %s: %s", agent_id, exc)
         return alert
 
     def _check_stall(self, agent_id):
@@ -423,88 +440,58 @@ class AgentWatchdog:
             data = last[1]
             age = time.time() - int(data.get("ts", 0))
             if age < self.stall_threshold:
-                if data.get("event") not in ("nudge", "escalation"):
+                if data.get("event") not in (
+                        "nudge", "escalation", "terminal_pending"):
                     self._nudged.pop(agent_id, None)  # activité réelle
                 return None
-            state = self._nudged.get(agent_id)
-            if state == "escalated":
-                return "stalled"
-            if state == "nudged":
+            # Le silence et le temps écoulé sont des observations, jamais une
+            # preuve d'échec métier. Le watchdog rend l'écart visible une fois
+            # sans réveiller le modèle, sans redispatch et sans fabriquer de
+            # PROTOCOL_ERROR.
+            if self._nudged.get(agent_id) != "observed":
+                details = {
+                    "age_seconds": int(age),
+                    "motif": "terminal_pending",
+                    "correlation_id": correlation_id,
+                    "task_id": task_id,
+                    "cycle": cycle,
+                }
                 self._publish_alert(
-                    "critical", agent_id,
-                    f"Agent {agent_id} toujours silencieux {int(age)}s après nudge",
-                    {"age_seconds": int(age), "motif": "stall",
-                     "correlation_id": correlation_id})
-                wal.emit(self.redis, None, "escalation", agent_id,
-                         motif="stall", age_seconds=int(age),
-                         correlation_id=correlation_id)
-                if is_valid_agent_id(requester) and correlation_id:
-                    # Registre partagé avec agent.py : une seule escalade,
-                    # quel que soit le composant qui détecte le défaut.
-                    dedup = f"protocol_error:{agent_id}:{correlation_id}"
-                    if self.redis.set(dedup, int(time.time()), nx=True, ex=604800):
-                        details = (
-                            f"Agent {agent_id} silencieux après relance bornée")
-                        self.redis.xadd(
-                            "completion", {
-                                "from": "watchdog", "to": requester,
-                                "event": "PROTOCOL_ERROR",
-                                "signal": f"PROTOCOL_ERROR {details}",
-                                "origin": "watchdog",
-                                "correlation_id": correlation_id,
-                                "task_id": task_id, "cycle": cycle,
-                                "requester": requester, "owner": agent_id,
-                                "timestamp": int(time.time()),
-                            }, maxlen=STREAM_MAXLEN, approximate=True)
-                        self.redis.xadd(
-                            f"agent:{requester}:control", {
-                                "from_agent": "watchdog",
-                                "event": "PROTOCOL_ERROR",
-                                "classification": "control",
-                                "detail": details,
-                                "correlation_id": correlation_id,
-                                "task_id": task_id, "cycle": cycle,
-                                "requester": requester, "owner": agent_id,
-                                "timestamp": int(time.time()),
-                            }, maxlen=IO_STREAM_MAXLEN, approximate=True)
-                self._nudged[agent_id] = "escalated"
-                return "stalled"
-            self._publish_alert(
-                "warning", agent_id,
-                f"Agent {agent_id} busy sans activité WAL depuis {int(age)}s — nudge",
-                {"age_seconds": int(age)})
-            self._send_status_required(
-                agent_id,
-                {
-                    "task_id": data.get("task_id", ""),
-                    "cycle": data.get("cycle", ""),
-                    "correlation_id": data.get("correlation_id", ""),
-                    "requester": "watchdog",
+                    "warning", agent_id,
+                    f"Agent {agent_id} busy sans activité WAL depuis "
+                    f"{int(age)}s — observation seulement",
+                    details)
+                pending_event = {
+                    "from_agent": "watchdog",
+                    "event": "TERMINAL_PENDING",
+                    "classification": "control",
+                    "detail": (
+                        "Silence observé; aucun timeout métier ni "
+                        "redispatch automatique"),
+                    "correlation_id": correlation_id,
+                    "task_id": task_id,
+                    "cycle": cycle,
+                    "requester": requester,
                     "owner": agent_id,
-                },
-                "Où en es-tu ? Si tu es bloqué, émets BLOCKED avec les "
-                "métadonnées corrélées de la tâche.")
-            if is_valid_agent_id(requester) and correlation_id:
-                stall_key = f"watchdog:stall:{agent_id}:{correlation_id}"
-                if self.redis.set(stall_key, int(time.time()), nx=True, ex=604800):
+                    "timestamp": int(time.time()),
+                }
+                self.redis.xadd(
+                    f"agent:{agent_id}:control", pending_event,
+                    maxlen=IO_STREAM_MAXLEN, approximate=True)
+                # Le demandeur en WAITING doit pouvoir constater le silence
+                # de sa cible : même constat sur SON stream control, drainé
+                # sans réveil au prochain vrai tour (aucun rapport dû).
+                if (requester and requester != agent_id
+                        and is_valid_agent_id(requester)):
                     self.redis.xadd(
-                        f"agent:{requester}:control", {
-                            "from_agent": "watchdog",
-                            "event": "STALL",
-                            "classification": "control",
-                            "detail": (
-                                f"Agent {agent_id} sans activité; contrôle "
-                                "persisté sans réveil modèle"),
-                            "correlation_id": correlation_id,
-                            "task_id": task_id,
-                            "cycle": cycle,
-                            "requester": requester,
-                            "owner": agent_id,
-                            "timestamp": int(time.time()),
-                        }, maxlen=IO_STREAM_MAXLEN, approximate=True)
-            wal.emit(self.redis, None, "nudge", agent_id,
-                     correlation_id=correlation_id, requester=requester)
-            self._nudged[agent_id] = "nudged"
+                        f"agent:{requester}:control", pending_event,
+                        maxlen=IO_STREAM_MAXLEN, approximate=True)
+                wal.emit(
+                    self.redis, None, "terminal_pending", agent_id,
+                    task_id=task_id, cycle=cycle,
+                    correlation_id=correlation_id,
+                    age_seconds=int(age))
+                self._nudged[agent_id] = "observed"
             return "stalled"
         except Exception as exc:
             # la détection de stall ne doit jamais casser le watchdog restart
@@ -520,7 +507,36 @@ class AgentWatchdog:
         health = self.check_health(agent_id)
 
         if health and health.get("status") in ("healthy", "degraded"):
-            # Agent OK — reset fail count
+            if health.get("auth_blocked"):
+                # Une alerte par transition d'état, pas une par cycle :
+                # l'état est durable (opérateur requis).
+                if self._alert_states.get(agent_id) != "auth_blocked":
+                    self._alert_states[agent_id] = "auth_blocked"
+                    self._publish_alert(
+                        "critical", agent_id,
+                        f"Agent {agent_id}: session moteur AUTH_BLOCKED",
+                        {"auth_blocked": True})
+                return "auth_blocked"
+            listeners = health.get("listeners") or {}
+            consumer_states = {
+                listeners.get(name, {}).get("state")
+                for name in ("redis_listener", "legacy_listener")
+                if name in listeners
+            }
+            # 'starting' (démarrage) et 'stopped' (arrêt en cours) sont des
+            # transitions normales, pas un consommateur dégradé.
+            degraded_states = consumer_states - {"up", "starting", "stopped"}
+            if degraded_states:
+                if self._alert_states.get(agent_id) != "consumer_down":
+                    self._alert_states[agent_id] = "consumer_down"
+                    self._publish_alert(
+                        "critical", agent_id,
+                        f"Agent {agent_id}: processus vivant mais "
+                        "consommateur dégradé",
+                        {"listeners": listeners})
+                return "consumer_down"
+            # Agent OK — reset fail count et dédup d'alerte
+            self._alert_states.pop(agent_id, None)
             if self._fail_counts.get(agent_id, 0) > 0:
                 self._publish_event("agent_recovered", agent_id)
             self._fail_counts[agent_id] = 0

@@ -161,6 +161,55 @@ class TestPendingDrain:
         assert task['prompt'] == "pending msg"
         assert task['ack_id'] == "9-0"
 
+    def test_redis_error_and_metrics_error_do_not_kill_listener(
+            self, monkeypatch):
+        """A Redis/AOF failure remains recoverable even if metrics use Redis."""
+        import agent as agent_module
+
+        agent = _make_agent()
+        agent._listener_health = {}
+        agent._listener_health_lock = __import__("threading").Lock()
+        agent.metrics = MagicMock()
+        agent.metrics.record_error.side_effect = RuntimeError(
+            "metrics redis unavailable")
+        calls = 0
+
+        def mock_xreadgroup(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise _RedisResponseError(
+                    "MISCONF Errors writing to the AOF file")
+            agent.running = False
+            return []
+
+        agent.redis.xreadgroup.side_effect = mock_xreadgroup
+        monkeypatch.setattr(agent_module.time, "sleep", lambda _: None)
+
+        agent._listen_redis()
+
+        assert calls >= 2
+        assert agent.metrics.record_error.call_count == 1
+        assert any(
+            "Metrics error ignored" in call.args[0]
+            for call in agent._log.call_args_list)
+
+
+class TestListenerHealth:
+    def test_consumer_health_distinguishes_process_from_listeners(self):
+        agent = _make_agent()
+        agent._listener_health = {}
+        agent._listener_health_lock = __import__("threading").Lock()
+
+        agent._set_listener_health("redis_listener", "up")
+        agent._set_listener_health("legacy_listener", "degraded", "MISCONF")
+
+        assert not agent._consumers_healthy()
+        snapshot = agent._listener_health_snapshot()
+        assert snapshot["redis_listener"]["state"] == "up"
+        assert snapshot["legacy_listener"]["state"] == "degraded"
+        assert snapshot["legacy_listener"]["last_error"] == "MISCONF"
+
 
 # === G2 — Reprise après crash sur VRAI Redis (sémantique du protocole) ===
 

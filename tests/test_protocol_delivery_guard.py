@@ -104,6 +104,19 @@ def test_c4_api_retry_preserves_business_dispatch_envelope():
     assert agent._requires_correlated_event(retry)
 
 
+def test_terminal_pending_is_observable_but_not_a_completion():
+    agent = _agent()
+    assert agent._publish_terminal_pending(
+        _task(), missing_correlated=True, missing_master_report=False)
+    stream, fields = agent.redis.xadd.call_args.args[:2]
+    assert stream == "agent:334-334:control"
+    assert fields["event"] == "TERMINAL_PENDING"
+    assert fields["correlation_id"] == "corr-8"
+    assert fields["missing_correlated"] == "1"
+    assert "completion" not in stream
+    agent.redis.hset.assert_called_once()
+
+
 def _load_stop_guard():
     path = os.path.join(ROOT, "scripts", "claude-stop-guard.py")
     spec = importlib.util.spec_from_file_location("claude_stop_guard", path)

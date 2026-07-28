@@ -397,13 +397,20 @@ class _HealthHandler(http.server.BaseHTTPRequestHandler):
                 redis_ok = agent._redis_ping()
             except Exception:
                 redis_ok = False
+            listeners = agent._listener_health_snapshot()
+            if not isinstance(listeners, dict):
+                listeners = {}
             data = {
-                "status": "healthy" if redis_ok else "degraded",
+                "status": "healthy" if (
+                    redis_ok and agent._consumers_healthy()) else "degraded",
                 "agent_id": agent.agent_id,
                 "uptime_seconds": int(time.time() - agent._start_time),
                 "last_heartbeat_ts": getattr(agent, '_last_heartbeat_ts', 0),
                 "redis_connected": redis_ok,
-                "pty_active": agent._tmux_session_exists()
+                "pty_active": agent._tmux_session_exists(),
+                "auth_blocked": bool(
+                    getattr(agent, "_auth_blocked", False)),
+                "listeners": listeners,
             }
             body = json.dumps(data).encode()
             self.send_response(200)
@@ -435,6 +442,7 @@ class TmuxAgent:
         # argument ouvre un picker interactif et bloquerait le TUI.
         self._observed_model = ""
         self._observed_effort = ""
+        self._auth_blocked = False
 
         # EF-001: start time for uptime
         self._start_time = time.time()
@@ -522,6 +530,16 @@ class TmuxAgent:
 
         # Threads
         self.running = True
+        self._listener_health_lock = Lock()
+        self._listener_health = {
+            name: {
+                "state": "starting",
+                "last_ok_ts": 0,
+                "last_error_ts": 0,
+                "last_error": "",
+            }
+            for name in ("redis_listener", "legacy_listener", "heartbeat")
+        }
         self.threads = [
             Thread(target=self._listen_redis, daemon=True, name="redis_listener"),
             Thread(target=self._listen_legacy, daemon=True, name="legacy_listener"),
@@ -562,6 +580,69 @@ class TmuxAgent:
                      task_id, **fields)
         except Exception as e:
             self._log(f"WAL emit error ({event}): {e}")
+
+    def _listener_health_snapshot(self):
+        """Return a copy of listener health without depending on Redis."""
+        lock = getattr(self, "_listener_health_lock", None)
+        health = getattr(self, "_listener_health", {})
+        if lock is None:
+            return dict(health)
+        with lock:
+            return {
+                name: dict(values)
+                for name, values in health.items()
+            }
+
+    def _set_listener_health(self, name, state, error=""):
+        """Track listener liveness locally; Redis publication is best effort."""
+        now = int(time.time())
+        lock = getattr(self, "_listener_health_lock", None)
+        health = getattr(self, "_listener_health", None)
+        if health is None:
+            health = {}
+            self._listener_health = health
+        values = dict(health.get(name, {}))
+        values["state"] = state
+        if state == "up":
+            values["last_ok_ts"] = now
+            values["last_error"] = ""
+        elif error:
+            values["last_error_ts"] = now
+            values["last_error"] = str(error)[:500]
+        if lock is None:
+            health[name] = values
+        else:
+            with lock:
+                health[name] = values
+        try:
+            self.redis.hset(
+                f"agent:{self.agent_id}",
+                mapping={
+                    "listener_health": json.dumps(
+                        self._listener_health_snapshot(), sort_keys=True),
+                    "consumer_state": (
+                        "up" if self._consumers_healthy() else "degraded"),
+                })
+        except Exception:
+            # Redis can be the failing component. Local state and the HTTP
+            # health endpoint must remain usable in that case.
+            pass
+
+    def _consumers_healthy(self):
+        health = self._listener_health_snapshot()
+        return bool(health) and all(
+            health.get(name, {}).get("state") == "up"
+            for name in ("redis_listener", "legacy_listener"))
+
+    def _record_metrics_error(self, exc):
+        """Metrics are observability only and must never kill a listener."""
+        if not getattr(self, "metrics", None):
+            return
+        try:
+            self.metrics.record_error(
+                self.agent_id, type(exc).__name__, str(exc))
+        except Exception as metrics_exc:
+            self._log(f"Metrics error ignored: {metrics_exc}")
 
     def _redis_ping(self):
         """Test connexion Redis — utilisé par health endpoint (EF-001)."""
@@ -998,6 +1079,7 @@ class TmuxAgent:
                 messages_processed, last_message_ts.
         B6: publie aussi pane_state (JSON) + pane_state_ts dans le hash agent.
         """
+        self._set_listener_health("heartbeat", "up")
         try:
          while self.running:
             try:
@@ -1031,25 +1113,36 @@ class TmuxAgent:
                 # B6: publish pane-derived state so the dashboard skips tmux scans
                 pane_state = self._derive_pane_state()
                 if pane_state is not None:
+                    self._auth_blocked = bool(
+                        pane_state.get("login_required"))
                     self.redis.hset(f"agent:{self.agent_id}", mapping={
                         "pane_state": json.dumps(pane_state),
                         "pane_state_ts": int(time.time()),
+                        "auth_state": (
+                            "blocked" if self._auth_blocked else "ready"),
                     })
 
                 # Enregistrer dans métriques (R-INTEGRATE)
                 if self.metrics:
                     self.metrics.record_heartbeat(self.agent_id, data)
+                self._set_listener_health("heartbeat", "up")
 
-            except redis.ConnectionError:
+            except redis.ConnectionError as e:
+                self._set_listener_health("heartbeat", "degraded", e)
                 self._log("Heartbeat: Redis connection lost")
             except Exception as e:
+                self._set_listener_health("heartbeat", "degraded", e)
+                self._record_metrics_error(e)
                 self._log(f"Heartbeat error: {e}")
 
             time.sleep(HEARTBEAT_INTERVAL)
         except Exception as e:
             import traceback
+            self._set_listener_health("heartbeat", "down", e)
             self._log(f"FATAL: heartbeat crashed: {e}")
             self._log(traceback.format_exc())
+        else:
+            self._set_listener_health("heartbeat", "stopped")
         self._log("WARNING: heartbeat thread exiting")
 
     def _ensure_group(self):
@@ -1072,33 +1165,47 @@ class TmuxAgent:
             self._inflight_ids.discard(msg_id)
 
     def _attach_pending_reports(self, task):
-        """Ajoute un résumé borné au prochain vrai tour du Master."""
+        """Ajoute un résumé borné au prochain vrai tour du Master.
+
+        Couvre les rapports de supervision ET les contrôles (dont
+        TERMINAL_PENDING) : un demandeur en WAITING constate ainsi le
+        silence de sa cible sans réveil dédié et sans polling.
+        """
         if event_router.triangle_master(self.agent_id) != self.agent_id:
             return task
-        stream = f"agent:{self.agent_id}:reports"
         cursor_key = f"agent:{self.agent_id}"
-        try:
-            cursor = self.redis.hget(cursor_key, "reports_cursor") or "-"
-            minimum = f"({cursor}" if cursor != "-" else "-"
-            entries = self.redis.xrange(stream, min=minimum, max="+", count=20)
-        except Exception as exc:
-            self._log(f"REPORT BATCH READ ERROR: {exc}")
+        sections = []
+        for stream_name, cursor_field, header in (
+            (f"agent:{self.agent_id}:reports", "reports_cursor",
+             "RAPPORTS DE SUPERVISION NOUVEAUX (information, ne pas "
+             "les acquitter individuellement) :"),
+            (f"agent:{self.agent_id}:control", "control_cursor",
+             "CONTRÔLES NOUVEAUX (observation — aucun rapport en retour, "
+             "au plus une relance corrélée par TERMINAL_PENDING) :"),
+        ):
+            try:
+                cursor = self.redis.hget(cursor_key, cursor_field) or "-"
+                minimum = f"({cursor}" if cursor != "-" else "-"
+                entries = self.redis.xrange(
+                    stream_name, min=minimum, max="+", count=20)
+            except Exception as exc:
+                self._log(f"REPORT BATCH READ ERROR: {exc}")
+                continue
+            if not entries:
+                continue
+            lines = []
+            for report_id, fields in entries:
+                lines.append(
+                    f"- {fields.get('from_agent', '?')} "
+                    f"{fields.get('status', fields.get('event', 'STATUS'))}: "
+                    f"{fields.get('summary', fields.get('detail', ''))[:300]}")
+            self.redis.hset(cursor_key, cursor_field, entries[-1][0])
+            sections.append(header + "\n" + "\n".join(lines))
+        if not sections:
             return task
-        if not entries:
-            return task
-        lines = []
-        for report_id, fields in entries:
-            lines.append(
-                f"- {fields.get('from_agent', '?')} "
-                f"{fields.get('status', fields.get('event', 'STATUS'))}: "
-                f"{fields.get('summary', fields.get('detail', ''))[:300]}")
-        self.redis.hset(cursor_key, "reports_cursor", entries[-1][0])
         enriched = dict(task)
         enriched["prompt"] = (
-            task.get("prompt", "")
-            + "\n\nRAPPORTS DE SUPERVISION NOUVEAUX (information, ne pas "
-              "les acquitter individuellement) :\n"
-            + "\n".join(lines))
+            task.get("prompt", "") + "\n\n" + "\n\n".join(sections))
         return enriched
 
     def _handle_inbox_message(self, msg_id, data):
@@ -1265,6 +1372,7 @@ class TmuxAgent:
         _gate = getattr(self, "_auto_init_queued", None)
         if _gate is not None and not _gate.wait(timeout=30):
             self._log("WARNING: auto-init non signalé après 30s — drain pending quand même")
+        self._set_listener_health("redis_listener", "up")
         try:
          while self.running:
             try:
@@ -1314,19 +1422,27 @@ class TmuxAgent:
                     stream, messages = result[0]
                     for msg_id, data in messages:
                         self._handle_inbox_message(msg_id, data)
-            except redis.ConnectionError:
+                self._set_listener_health("redis_listener", "up")
+            except redis.ConnectionError as e:
+                group_ready = False
+                self._set_listener_health("redis_listener", "degraded", e)
                 self._log("Redis connection lost, reconnecting...")
                 time.sleep(2)
             except Exception as e:
+                # ResponseError includes MISCONF/AOF failures. Keep the
+                # listener supervised and retry after resetting group state.
+                group_ready = False
+                self._set_listener_health("redis_listener", "degraded", e)
                 self._log(f"Redis error: {e}")
-                # R-INTEGRATE: record error
-                if self.metrics:
-                    self.metrics.record_error(self.agent_id, type(e).__name__, str(e))
+                self._record_metrics_error(e)
                 time.sleep(1)
         except Exception as e:
             import traceback
+            self._set_listener_health("redis_listener", "down", e)
             self._log(f"FATAL: redis_listener crashed: {e}")
             self._log(traceback.format_exc())
+        else:
+            self._set_listener_health("redis_listener", "stopped")
         self._log("WARNING: redis_listener thread exiting")
 
     def _listen_legacy(self):
@@ -1338,6 +1454,7 @@ class TmuxAgent:
         A4: legacy Lists stay best-effort (BLPOP pops destructively, no ack) —
         a crash between BLPOP and processing loses the message. Use Streams.
         """
+        self._set_listener_health("legacy_listener", "up")
         try:
          while self.running:
             try:
@@ -1366,17 +1483,22 @@ class TmuxAgent:
                         'source': 'legacy'
                     })
                     self._log(f"<- Queued from {from_agent}: {prompt[:50]}...")
-            except redis.ConnectionError:
+                self._set_listener_health("legacy_listener", "up")
+            except redis.ConnectionError as e:
+                self._set_listener_health("legacy_listener", "degraded", e)
                 time.sleep(2)
             except Exception as e:
+                self._set_listener_health("legacy_listener", "degraded", e)
                 self._log(f"Legacy Redis error: {e}")
-                if self.metrics:
-                    self.metrics.record_error(self.agent_id, type(e).__name__, str(e))
+                self._record_metrics_error(e)
                 time.sleep(1)
         except Exception as e:
             import traceback
+            self._set_listener_health("legacy_listener", "down", e)
             self._log(f"FATAL: legacy_listener crashed: {e}")
             self._log(traceback.format_exc())
+        else:
+            self._set_listener_health("legacy_listener", "stopped")
         self._log("WARNING: legacy_listener thread exiting")
 
     def _requires_correlated_event(self, task):
@@ -1564,6 +1686,54 @@ class TmuxAgent:
             return True
         except Exception as exc:
             self._log(f"PROTOCOL_ERROR publish failed: {exc}")
+            return False
+
+    def _publish_terminal_pending(self, task, missing_correlated,
+                                  missing_master_report):
+        """Expose a missing end-of-turn signal without inventing a failure.
+
+        A model turn returning to a stable composer is not proof that the
+        business task failed. This status is local/control-plane only: it
+        creates no agent-to-agent acknowledgement loop and no completion.
+        """
+        correlation_id = str(task.get("correlation_id", ""))
+        task_id = str(task.get("task_id", ""))
+        details = {
+            "from_agent": "watchdog",
+            "event": "TERMINAL_PENDING",
+            "classification": "control",
+            "correlation_id": correlation_id,
+            "task_id": task_id,
+            "cycle": str(task.get("cycle", "")),
+            "requester": str(task.get("from_agent", "")),
+            "owner": self.agent_id,
+            "missing_correlated": "1" if missing_correlated else "0",
+            "missing_master_report": "1" if missing_master_report else "0",
+            "timestamp": int(time.time()),
+        }
+        try:
+            self.redis.xadd(
+                f"agent:{self.agent_id}:control", details,
+                maxlen=IO_STREAM_MAXLEN, approximate=True)
+            self.redis.hset(
+                f"agent:{self.agent_id}", mapping={
+                    "protocol_state": "terminal_pending",
+                    "protocol_correlation": correlation_id,
+                    "protocol_task": task_id,
+                    "protocol_state_ts": int(time.time()),
+                })
+            self._wal(
+                "terminal_pending", task_id,
+                correlation_id=correlation_id,
+                requester=task.get("from_agent", ""),
+                missing_correlated=missing_correlated,
+                missing_master_report=missing_master_report)
+            self._log(
+                "TERMINAL_PENDING — business completion not observed; "
+                f"corr={correlation_id}")
+            return True
+        except Exception as exc:
+            self._log(f"TERMINAL_PENDING publish failed: {exc}")
             return False
 
     def _process_queue(self):
@@ -1881,8 +2051,8 @@ class TmuxAgent:
 
             # Une transcription dans l'outbox n'est pas une livraison métier.
             # Pour toute enveloppe inter-agent, exiger un événement explicite
-            # send.sh/done.sh. Une seule relance courte est autorisée ; si elle
-            # échoue, publier un PROTOCOL_ERROR corrélé vers le demandeur.
+            # send.sh/done.sh. L'absence de terminal à la fin du rendu TUI est
+            # observable mais ne prouve ni un timeout ni un échec métier.
             missing_correlated = (
                 self._requires_correlated_event(task)
                 and not self._has_correlated_business_event(task))
@@ -1890,33 +2060,20 @@ class TmuxAgent:
                 self._requires_master_report(task)
                 and not self._has_master_report(task))
             if missing_correlated or missing_master_report:
-                    protocol_retry = int(task.get("_protocol_retry", 0) or 0)
-                    if protocol_retry < 1:
-                        retry_task = dict(task)
-                        retry_task["_protocol_retry"] = 1
-                        retry_task["prompt"] = (
-                            "PROTOCOLE DE FIN DE TOUR : une livraison obligatoire "
-                            "manque. Livre la réponse corrélée au demandeur si elle "
-                            "est due, puis exécute report-master.sh avec le résultat "
-                            "réel. Ne réponds pas seulement dans le TUI."
-                        )
-                        self.prompt_queue.put(retry_task)
-                        self._log(
-                            "PROTOCOL RETRY — no correlated business event; "
-                            f"corr={task.get('correlation_id')}")
-                        self._wal(
-                            "protocol_retry", task.get("task_id"),
-                            correlation_id=task.get("correlation_id", ""),
-                            requester=task.get("from_agent", ""))
-                        with self.state_lock:
-                            self.current_task = None
-                            self.state = State.IDLE
-                        self._set_redis_status()
-                        continue
-                    if missing_correlated:
-                        self._publish_protocol_error(task)
-                    if missing_master_report:
-                        self._publish_master_report_error(task)
+                self._publish_terminal_pending(
+                    task, missing_correlated, missing_master_report)
+            else:
+                try:
+                    self.redis.hset(
+                        f"agent:{self.agent_id}", mapping={
+                            "protocol_state": "complete",
+                            "protocol_correlation": task.get(
+                                "correlation_id", ""),
+                            "protocol_task": task.get("task_id", ""),
+                            "protocol_state_ts": int(time.time()),
+                        })
+                except Exception as exc:
+                    self._log(f"Protocol state publish failed: {exc}")
 
             # A4: ack only after the response is published to the outbox
             if task.get('ack_id'):

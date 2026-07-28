@@ -479,6 +479,13 @@ async def _refresh_cache_once():
         data = agent_redis_data.get(agent_id, {})
         redis_status = data.get("status", "active")
         status = redis_status
+        consumer_state = data.get("consumer_state", "")
+        auth_state = data.get("auth_state", "")
+        protocol_state = data.get("protocol_state", "")
+        if auth_state == "blocked":
+            status = "blocked"
+        elif consumer_state in ("degraded", "down"):
+            status = "error"
         override = status_overrides.get(agent_id)
         if override:
             # Redis "stopped" wins over cosmetic overrides (busy, has_bashes, etc.)
@@ -489,6 +496,11 @@ async def _refresh_cache_once():
                 status = "error"  # tmux dead but Redis still active/busy → crash
             else:
                 status = override
+        # La santé d'exécution domine les marqueurs cosmétiques du pane.
+        if auth_state == "blocked":
+            status = "blocked"
+        elif consumer_state in ("degraded", "down"):
+            status = "error"
 
         st = agent_states.get(agent_id, {})
         agents.append({
@@ -504,6 +516,9 @@ async def _refresh_cache_once():
             "last_seen": int(data.get("last_seen", 0)) or now,
             "queue_size": int(data.get("queue_size", 0)),
             "tasks_completed": int(data.get("tasks_completed", 0)),
+            "consumer_state": consumer_state,
+            "auth_state": auth_state,
+            "protocol_state": protocol_state,
             "mode": "tmux",
         })
 

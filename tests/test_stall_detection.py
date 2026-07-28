@@ -1,11 +1,4 @@
-"""
-V3/C2 — Détection de stall (healthcheck.AgentWatchdog._check_stall).
-
-Machine à états : busy + WAL silencieux > seuil → nudge (warning + message
-inbox, le nudge WAL réarme le compteur pour une fenêtre COMPLÈTE) →
-toujours silencieux → alerte critique + WAL escalation, puis silence
-(état 'escalated', pas de spam). Toute activité réelle réarme.
-"""
+"""Un silence long est observé sans réveil modèle ni faux timeout métier."""
 import time
 
 import pytest
@@ -54,7 +47,7 @@ def _alerts(redis_client):
 @pytest.fixture(autouse=True)
 def _env(redis_client, monkeypatch):
     keys = [wal.stream(), f"agent:{AGENT}",
-            f"agent:{AGENT}:inbox",
+            f"agent:{AGENT}:inbox", f"agent:{AGENT}:control",
             "monitoring:alerts"]
     redis_client.delete(*keys)
     yield
@@ -81,28 +74,29 @@ class TestCheckStall:
         _set_status(redis_client, "busy")
         assert wd._check_stall(AGENT) is None
 
-    def test_first_stall_nudges(self, redis_client):
+    def test_first_stall_is_observed_without_model_nudge(self, redis_client):
         wd = _watchdog(redis_client)
         _set_status(redis_client, "busy")
         _inject(redis_client, "task_assigned", time.time() - 700)
 
         assert wd._check_stall(AGENT) == "stalled"
-        assert wd._nudged[AGENT] == "nudged"
+        assert wd._nudged[AGENT] == "observed"
         # alerte warning publiée
         alerts = _alerts(redis_client)
         assert len(alerts) == 1
         assert alerts[0]["type"] == "alert:warning"
-        # message de nudge dans l'inbox
-        inbox = redis_client.xrange(f"agent:{AGENT}:inbox")
-        assert len(inbox) == 1
-        assert inbox[0][1]["from_agent"] == "watchdog"
-        assert inbox[0][1]["event"] == "STATUS_REQUIRED"
-        assert not inbox[0][1]["prompt"].startswith("FROM:")
-        # le nudge est journalisé dans le WAL (réarme le compteur)
+        assert redis_client.xrange(f"agent:{AGENT}:inbox") == []
+        control = redis_client.xrange(f"agent:{AGENT}:control")
+        assert len(control) == 1
+        assert control[0][1]["event"] == "TERMINAL_PENDING"
+        assert "prompt" not in control[0][1]
         last = wal.last_event(redis_client, None, AGENT)
-        assert last[1]["event"] == "nudge"
+        assert last[1]["event"] == "terminal_pending"
 
-    def test_first_stall_notifies_correlated_requester(self, redis_client):
+    def test_first_stall_informs_requester_without_model_wake(self, redis_client):
+        """Le demandeur en WAITING constate le silence de sa cible : même
+        TERMINAL_PENDING sur SON stream control (drainé au prochain vrai
+        tour), jamais dans son inbox — aucun réveil modèle."""
         wd = _watchdog(redis_client)
         redis_client.hset(f"agent:{AGENT}", mapping={
             "status": "busy",
@@ -114,8 +108,15 @@ class TestCheckStall:
         _inject(redis_client, "task_assigned", time.time() - 700)
 
         assert wd._check_stall(AGENT) == "stalled"
-        event = redis_client.xrevrange("agent:100:control", count=1)[0][1]
-        assert event["event"] == "STALL"
+        requester_control = redis_client.xrange("agent:100:control")
+        assert len(requester_control) == 1
+        assert requester_control[0][1]["event"] == "TERMINAL_PENDING"
+        assert requester_control[0][1]["owner"] == AGENT
+        assert "prompt" not in requester_control[0][1]
+        assert redis_client.xrange("agent:100:inbox") == []
+        event = redis_client.xrevrange(
+            f"agent:{AGENT}:control", count=1)[0][1]
+        assert event["event"] == "TERMINAL_PENDING"
         assert event["correlation_id"] == "corr-1"
         assert event["owner"] == AGENT
         assert "prompt" not in event
@@ -130,30 +131,24 @@ class TestCheckStall:
         wd._check_stall(AGENT)  # nudge
 
         assert wd._check_stall(AGENT) is None
-        assert wd._nudged[AGENT] == "nudged"
+        assert wd._nudged[AGENT] == "observed"
         assert len(_alerts(redis_client)) == 1  # pas de nouvelle alerte
 
-    def test_full_window_after_nudge_escalates(self, redis_client):
+    def test_repeated_old_observation_does_not_escalate(self, redis_client):
         wd = _watchdog(redis_client)
-        wd._nudged[AGENT] = "nudged"
+        wd._nudged[AGENT] = "observed"
         _set_status(redis_client, "busy")
-        _inject(redis_client, "nudge", time.time() - 700, task_id="-")
+        _inject(redis_client, "terminal_pending", time.time() - 700, task_id="-")
 
         assert wd._check_stall(AGENT) == "stalled"
-        assert wd._nudged[AGENT] == "escalated"
-        alerts = _alerts(redis_client)
-        assert len(alerts) == 1
-        assert alerts[0]["type"] == "alert:critical"
-        # escalade journalisée dans le WAL
-        last = wal.last_event(redis_client, None, AGENT,
-                              events=("escalation",))
-        assert last[1]["motif"] == "stall"
+        assert wd._nudged[AGENT] == "observed"
+        assert _alerts(redis_client) == []
 
-    def test_escalated_state_no_alert_spam(self, redis_client):
+    def test_observed_state_no_alert_spam(self, redis_client):
         wd = _watchdog(redis_client)
-        wd._nudged[AGENT] = "escalated"
+        wd._nudged[AGENT] = "observed"
         _set_status(redis_client, "busy")
-        _inject(redis_client, "escalation", time.time() - 700, task_id="-")
+        _inject(redis_client, "terminal_pending", time.time() - 700, task_id="-")
 
         assert wd._check_stall(AGENT) == "stalled"
         assert _alerts(redis_client) == []  # silence total
@@ -179,6 +174,33 @@ class TestCheckStall:
 
 
 class TestProcessAgentIntegration:
+    def test_runtime_auth_failure_makes_agent_unavailable(
+            self, redis_client, monkeypatch):
+        wd = _watchdog(redis_client)
+        monkeypatch.setattr(wd, "check_health", lambda a: {
+            "status": "degraded",
+            "auth_blocked": True,
+            "listeners": {
+                "redis_listener": {"state": "up"},
+                "legacy_listener": {"state": "up"},
+            },
+        })
+
+        assert wd.process_agent(AGENT) == "auth_blocked"
+
+    def test_live_process_with_dead_consumer_is_not_healthy(
+            self, redis_client, monkeypatch):
+        wd = _watchdog(redis_client)
+        monkeypatch.setattr(wd, "check_health", lambda a: {
+            "status": "degraded",
+            "listeners": {
+                "redis_listener": {"state": "down"},
+                "legacy_listener": {"state": "up"},
+            },
+        })
+
+        assert wd.process_agent(AGENT) == "consumer_down"
+
     def test_healthy_process_but_stalled_agent(self, redis_client, monkeypatch):
         """Le process répond au /health mais l'agent n'avance plus →
         process_agent remonte 'stalled' au lieu de 'healthy'."""
