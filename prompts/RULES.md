@@ -190,13 +190,26 @@ Le Master 100:
 ## 7. JAMAIS D'INTERRUPTION
 
 Si un agent doit faire une tâche longue (crawl, analyse):
-1. Lancer en background si possible
+1. L'exécuter au premier plan, dans le tour de travail courant
 2. Envoyer `PROGRESS` uniquement lors d'un événement métier réel, jamais sur
    minuteur et jamais via un wakeup
 3. Un délai métier interne peut être légitime (healthcheck après redémarrage,
    backoff réseau borné). Il ne doit jamais servir à surveiller un autre agent.
 4. Envoyer `DONE` quand terminé
 5. NE JAMAIS demander confirmation pour continuer
+
+### Interdiction des exécutions en arrière-plan non bornées
+
+- **INTERDIT** de lancer un processus en arrière-plan (`&`, `nohup`, `setsid`,
+  session ou pane tmux ad hoc, `run_in_background`), sauf exécution ponctuelle
+  dont la fin autonome et rapide est certaine — typiquement des tests unitaires
+  bornés.
+- **INTERDIT** de lancer un script à boucle infinie (`while true`, `watch`,
+  polling, daemon ad hoc), en avant-plan comme en arrière-plan. Les seuls
+  processus persistants autorisés sont ceux démarrés par les scripts canoniques
+  du framework (`infra.sh`, `agent.sh`, `web.sh`, `proxy.sh`).
+- Avant tout lancement en arrière-plan, l'agent doit savoir que l'exécution se
+  termine seule et rapidement ; dans le doute, exécuter au premier plan.
 
 ## 8. INTERDICTION DU /loop wakeup en mode IDLE
 
