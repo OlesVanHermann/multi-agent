@@ -34,6 +34,7 @@ from ..models import (
     PanelConfigUpdate,
 )
 from ..prompts import (
+    AmbiguousAgentConfig,
     _favoris_file,
     _find_agent_config,
     _read_panel_config,
@@ -211,8 +212,17 @@ async def get_logins_models():
     for aid in sorted(agent_ids, key=lambda x: tuple(int(p) for p in x.split("-"))):
         # For compound IDs (301-101), try x45 dir first, then prompts/, then parent (301)
         parent_id = aid.split("-")[0] if "-" in aid else None
-        login_file = _find_agent_config(prompts_dir, aid, "login")
-        model_file = _find_agent_config(prompts_dir, aid, "model")
+        # Un override ambigu (répertoires dupliqués hors API) dégrade la
+        # SEULE ligne concernée vers les défauts + config_error ; jamais
+        # de 500 global sur le panneau.
+        config_error = ""
+        try:
+            login_file = _find_agent_config(prompts_dir, aid, "login")
+            model_file = _find_agent_config(prompts_dir, aid, "model")
+            effort_override = _find_agent_config(prompts_dir, aid, "effort")
+        except AmbiguousAgentConfig as exc:
+            login_file = model_file = effort_override = None
+            config_error = str(exc)
 
         if login_file and login_file.is_symlink():
             agent_login = Path(os.readlink(login_file)).stem
@@ -238,7 +248,7 @@ async def get_logins_models():
         agent_cli = "codex" if model_id.startswith("gpt-") else "claude"
         cli_source = "model"
 
-        effort_file = _find_agent_config(prompts_dir, aid, "effort") or prompts_dir / f"{aid}.effort"
+        effort_file = effort_override or prompts_dir / f"{aid}.effort"
         if effort_file.exists():
             agent_effort = effort_file.read_text().strip()
             effort_source = "override"
@@ -249,7 +259,7 @@ async def get_logins_models():
             agent_effort = default_effort
             effort_source = "default"
 
-        agents.append({
+        entry = {
             "id": aid,
             "login": agent_login,
             "login_source": login_source,
@@ -259,7 +269,11 @@ async def get_logins_models():
             "cli_source": cli_source,
             "effort": agent_effort,
             "effort_source": effort_source,
-        })
+            "effort_levels": _effort_levels_for_model(model_id),
+        }
+        if config_error:
+            entry["config_error"] = config_error
+        agents.append(entry)
 
     # Detect group types from agent.type symlink (mono-pair compris).
     groups = []
@@ -291,6 +305,8 @@ async def get_logins_models():
         "default_model": default_model,
         "default_cli": default_cli,
         "default_effort": default_effort,
+        "default_effort_levels": _effort_levels_for_model(
+            model_ids.get(default_model, "")),
         "agents": agents,
         "groups": groups,
         "default_affected": {
@@ -349,6 +365,23 @@ def _guard_engine_model_compat(prompts_dir: Path, data: LoginModelUpdate) -> Non
 
 _profile_engine = engines.profile_engine
 PROFILE_RE = re.compile(engines.PROFILE_RE)
+# E1 : la capacité d'effort d'un modèle vit dans la couche moteur.
+_effort_levels_for_model = engines.effort_levels_for_model
+
+
+def _config_owner_dir(prompts_dir: Path, agent_id: str) -> Path | None:
+    """Directory already owning this agent's model/login/effort overrides."""
+    owners = set()
+    for ext in ("model", "login", "effort", "cli"):
+        path = _find_agent_config(prompts_dir, agent_id, ext)
+        if path is not None and path.parent != prompts_dir:
+            owners.add(path.parent)
+    if len(owners) > 1:
+        raise AmbiguousAgentConfig(
+            f"{agent_id}: config split across directories: "
+            + ", ".join(str(path) for path in sorted(owners))
+        )
+    return next(iter(owners), None)
 
 
 def _link_path_for(prompts_dir: Path, agent_id: str, ext: str):
@@ -359,6 +392,13 @@ def _link_path_for(prompts_dir: Path, agent_id: str, ext: str):
     160-create-x45/160.model → ../default.model) le masque à la lecture
     ET au démarrage (resolve_config d'agent.sh a le même ordre)."""
     if agent_id != "default":
+        existing = _find_agent_config(prompts_dir, agent_id, ext)
+        if existing is not None:
+            prefix = "" if existing.parent == prompts_dir else "../"
+            return existing, prefix
+        owner = _config_owner_dir(prompts_dir, agent_id)
+        if owner is not None:
+            return owner / f"{agent_id}.{ext}", "../"
         base_id = agent_id.split("-")[0]
         agent_dir = _resolve_prompts_dir(prompts_dir, base_id)
         if agent_dir:
@@ -585,8 +625,16 @@ async def update_effort(data: EffortUpdate):
                 p.unlink()
         return {"status": "removed", "agent_id": data.agent_id}
 
-    if data.level not in ("L", "M", "H"):
-        raise HTTPException(status_code=400, detail="level must be L, M, or H")
+    model_id = _effective_model_id(prompts_dir, data.agent_id)
+    allowed_levels = _effort_levels_for_model(model_id)
+    if data.level not in allowed_levels:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"level must be one of {', '.join(allowed_levels)} "
+                f"for model '{model_id or 'unknown'}'"
+            ),
+        )
 
     # Write to canonical location, and remove any ghost in the other to keep GET deterministic
     effort_path.parent.mkdir(parents=True, exist_ok=True)

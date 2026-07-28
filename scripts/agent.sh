@@ -119,14 +119,28 @@ get_triangle_ids() {
 # Usage: resolve_config "324-124" "login" → prints file content or empty
 resolve_config() {
     local agent_id="$1" ext="$2"
-    # 1. prompts/{dir_name}/{agent_id}.ext (x45 subdir — most specific)
+    # 1. prompts/{dir_name}/{agent_id}.ext (x45 subdir — most specific).
+    # Plusieurs répertoires portant le même préfixe peuvent coexister après
+    # migration (ex. 000-hub-master + 000-super-master). Ne jamais prendre
+    # aveuglément le premier : chercher celui qui porte réellement l'override.
     local base="${agent_id%%-*}"  # 324-124 → 324, 324 → 324
-    local dir
-    if dir=$(find_x45_dir "$base" 2>/dev/null); then
-        if [ -f "$dir/${agent_id}.${ext}" ]; then
-            cat "$dir/${agent_id}.${ext}" | tr -d '[:space:]'
-            return
+    local dir candidate found=""
+    for dir in "$PROMPTS_DIR/$base" "$PROMPTS_DIR"/${base}-*/; do
+        [ -d "$dir" ] || continue
+        candidate="${dir%/}/${agent_id}.${ext}"
+        if [ -f "$candidate" ] || [ -L "$candidate" ]; then
+            if [ -n "$found" ] && [ "$found" != "$candidate" ]; then
+                # stderr obligatoire : les appelants capturent stdout via
+                # $( ) — sans redirection le diagnostic serait englouti.
+                log_error "$agent_id: plusieurs overrides .$ext: $found et $candidate" >&2
+                return 1
+            fi
+            found="$candidate"
         fi
+    done
+    if [ -n "$found" ]; then
+        tr -d '[:space:]' < "$found"
+        return
     fi
     # 2. prompts/{agent_id}.ext (flat)
     if [ -f "$PROMPTS_DIR/${agent_id}.${ext}" ]; then

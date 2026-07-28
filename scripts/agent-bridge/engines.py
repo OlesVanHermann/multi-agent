@@ -48,6 +48,31 @@ ENGINE_BYPASS_FLAG = {
 }
 ENGINE_MODEL_PREFIX = {"claude": "claude-", "codex": "gpt-"}
 
+# E1 : la capacité d'effort d'un modèle est une connaissance moteur.
+# Niveaux étendus X (max) / U (ultracode|Ultra) relevés sur TUI réel :
+# - Claude Code : le picker /effort expose max et ultracode sur les
+#   modèles Claude 5 [Relevé: hub mx9, 2026-07-28] ;
+# - Codex : picker « Select Reasoning Level », 5=More reasoning… →
+#   « Advanced Reasoning » 1=Max 2=Ultra [Relevé: mx6, TUI 0.144.x,
+#   2026-07-28 — à contre-relever à chaque montée de version].
+EXTENDED_EFFORT_MODELS = {
+    "claude-fable-5",
+    "claude-opus-5",
+    "claude-sonnet-5",
+}
+
+EFFORT_LEVELS_BASE = ("L", "M", "H")
+EFFORT_LEVELS_EXTENDED = ("L", "M", "H", "X", "U")
+
+
+def effort_levels_for_model(model_id):
+    """Niveaux d'effort exposables pour un modèle donné."""
+    model_id = model_id or ""
+    if model_id in EXTENDED_EFFORT_MODELS or model_id.startswith(
+            ENGINE_MODEL_PREFIX["codex"]):
+        return list(EFFORT_LEVELS_EXTENDED)
+    return list(EFFORT_LEVELS_BASE)
+
 
 def engine_for_model(model_id):
     """Moteur déduit du modèle (gpt-* → codex, sinon claude).

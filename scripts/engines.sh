@@ -103,15 +103,21 @@ engine_effective_profile() {
 
 # ── Effort de raisonnement ──
 # L'effort se règle PAR LA COMMANDE DU CLI, pas par une option de lancement :
-# l'opérateur doit pouvoir le changer en cours d'exécution (boutons L/M/H du
-# dashboard). Mapping sémantique unique (décision opérateur — le niveau
+# l'opérateur doit pouvoir le changer en cours d'exécution (L/M/H/X/U dans
+# le dashboard). Mapping sémantique commun (décision opérateur — le niveau
 # « low »/« Low » n'est jamais utilisé pour des agents) :
-#     L → medium   |   M → high   |   H → xhigh (codex : « Extra high »)
+#     L → medium | M → high | H → xhigh | X → max | U → ultracode
+# La sémantique est identique, mais chaque moteur garde sa propre sélection :
+# Claude utilise /effort ; Codex utilise ses pickers.
+# [Relevé: Claude Code TUI réel (hub mx9, 2026-07-28) — le picker /effort
+#  expose max et ultracode sur les modèles Claude 5]
 engine_effort_level() {
     case "$2" in
         L) printf 'medium' ;;
         M) printf 'high' ;;
         H) printf 'xhigh' ;;
+        X) printf 'max' ;;
+        U) printf 'ultracode' ;;
     esac
 }
 
@@ -122,11 +128,13 @@ engine_codex_effort_digit() {
         L) printf '2' ;;
         M) printf '3' ;;
         H) printf '4' ;;
+        X) printf '5' ;;
+        U) printf '5' ;;
     esac
 }
 
 # ── Application modèle + effort via le TUI (démarrage ET en cours de session) ──
-# engine_apply_model_effort <session> <cli> <model_id> <effort(L|M|H)>
+# engine_apply_model_effort <session> <cli> <model_id> <effort(L|M|H|X|U)>
 #
 # claude : `/model <id>` (argument direct) puis `/effort <niveau>`.
 #          [Vérifié: TUI réel — /effort accepte l'argument, statut « ● high »]
@@ -210,6 +218,29 @@ engine_apply_model_effort() {
             local lvl_digit
             lvl_digit=$(engine_codex_effort_digit "$effort")
             tmux send-keys -t "$target" -l "${lvl_digit:-4}"
+            if [[ "$effort" =~ ^(X|U)$ ]]; then
+                # 5. More reasoning… ouvre Advanced Reasoning :
+                # 1=Max, 2=Ultra, puis Enter confirme le sous-choix.
+                # [Relevé: TUI codex-cli 0.144.x sur mx6, 2026-07-28 — à
+                #  contre-relever à chaque montée de version du picker]
+                for i in 1 2 3 4 5 6 7 8 9 10; do
+                    pane=$(tmux capture-pane -t "$target" -p 2>/dev/null)
+                    printf '%s' "$pane" | grep -q "Advanced Reasoning" && break
+                    sleep 0.5
+                done
+                if ! printf '%s' "$pane" | grep -q "Advanced Reasoning"; then
+                    tmux send-keys -t "$target" Escape
+                    echo "engine_apply_model_effort: écran Advanced Reasoning non atteint ($session)" >&2
+                    return 1
+                fi
+                if [ "$effort" = "X" ]; then
+                    tmux send-keys -t "$target" -l "1"
+                else
+                    tmux send-keys -t "$target" -l "2"
+                fi
+                sleep 0.3
+                tmux send-keys -t "$target" Enter
+            fi
             sleep 1
             ;;
     esac

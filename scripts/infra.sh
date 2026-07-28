@@ -40,6 +40,29 @@ log_ok() { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# Même cascade que le dashboard pour l'Architect : chercher l'override dans
+# tous les répertoires 000-* existants, puis à plat, puis le défaut global.
+resolve_000_config() {
+    local ext="$1" candidate found=""
+    for candidate in "$BASE_DIR"/prompts/000-*/000."$ext"; do
+        [ -f "$candidate" ] || [ -L "$candidate" ] || continue
+        if [ -n "$found" ]; then
+            # stderr obligatoire : l'appelant capture stdout via $( ) et
+            # set -e stoppe le script — sans redirection l'arrêt serait muet.
+            log_error "000: plusieurs overrides .$ext: $found et $candidate" >&2
+            return 1
+        fi
+        found="$candidate"
+    done
+    if [ -n "$found" ]; then
+        tr -d '[:space:]' < "$found"
+    elif [ -f "$BASE_DIR/prompts/000.$ext" ] || [ -L "$BASE_DIR/prompts/000.$ext" ]; then
+        tr -d '[:space:]' < "$BASE_DIR/prompts/000.$ext"
+    elif [ -f "$BASE_DIR/prompts/default.$ext" ] || [ -L "$BASE_DIR/prompts/default.$ext" ]; then
+        tr -d '[:space:]' < "$BASE_DIR/prompts/default.$ext"
+    fi
+}
+
 # ── Redis CLI helper (native or docker exec fallback) ──
 
 redis_cli() {
@@ -231,17 +254,13 @@ do_start() {
     if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
         log_warn "Session $SESSION_NAME already exists. Attach with: tmux attach -t $SESSION_NAME"
     else
-        # E1 : moteur / modèle / login / effort — prompts/000.<ext> > prompts/default.<ext>
+        # E1 : moteur / modèle / login / effort — répertoire 000-* >
+        # prompts/000.<ext> > prompts/default.<ext>.
         local PROMPTS_DIR="$BASE_DIR/prompts"
         local CLI="" MODEL="" LOGIN_PROFILE="" EFFORT=""
         local ext val
         for ext in cli model login effort; do
-            val=""
-            if [ -f "$PROMPTS_DIR/000.$ext" ]; then
-                val=$(cat "$PROMPTS_DIR/000.$ext" | tr -d '[:space:]')
-            elif [ -f "$PROMPTS_DIR/default.$ext" ]; then
-                val=$(cat "$PROMPTS_DIR/default.$ext" | tr -d '[:space:]')
-            fi
+            val=$(resolve_000_config "$ext")
             case "$ext" in
                 cli)    CLI="$val" ;;
                 model)  MODEL="$val" ;;

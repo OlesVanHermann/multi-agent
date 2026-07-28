@@ -142,7 +142,8 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
   if (!data) return <div className="login-model-panel" style={{ display: hidden ? 'none' : undefined }}><p style={{ color: 'var(--text-secondary)' }}>Loading...</p></div>
 
   const {
-    logins, models, default_login, default_model, default_effort, agents, groups,
+    logins, models, default_login, default_model, default_effort,
+    default_effort_levels, agents, groups,
   } = data
 
   // E1 : n'exposer que les modèles compatibles avec le moteur de la ligne.
@@ -208,7 +209,7 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
             </td>
             <td>
               <span className="lm-effort-toggle">
-                {['L', 'M', 'H'].map(lvl => (
+                {(default_effort_levels || ['L', 'M', 'H']).map(lvl => (
                   <button
                     key={lvl}
                     className={`lm-effort-btn ${(default_effort || 'M') === lvl ? 'lm-effort-active' : ''}`}
@@ -291,7 +292,7 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
                 </td>
                 <td>
                   <span className="lm-effort-toggle">
-                    {['L', 'M', 'H'].map(lvl => {
+                    {(agent.effort_levels || ['L', 'M', 'H']).map(lvl => {
                       const isActive = agent.effort === lvl
                       const isOverride = agent.effort_source === 'override'
                       return (

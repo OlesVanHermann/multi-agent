@@ -37,6 +37,15 @@ def _write_panel_config(data: dict):
     tmp.rename(cfg.PANEL_CONFIG_PATH)
 
 
+class AmbiguousAgentConfig(RuntimeError):
+    """Deux répertoires de même préfixe portent le même fichier d'override.
+
+    État créé hors API (copie de répertoire pendant une migration). Levée
+    plutôt que résolue par ordre d'itération ; les routes la convertissent
+    en erreur par ligne (GET) ou en 409 (écritures), jamais en 500 global.
+    """
+
+
 def _resolve_prompts_dir(prompts_dir: Path, numeric_id: str) -> Optional[Path]:
     """Resolve a numeric agent ID to its prompts directory.
     Handles both plain (345/) and named (345-develop-fonction-beta/) directories.
@@ -54,14 +63,33 @@ def _resolve_prompts_dir(prompts_dir: Path, numeric_id: str) -> Optional[Path]:
 
 def _find_agent_config(prompts_dir: Path, agent_id: str, ext: str) -> Optional[Path]:
     """Find config file (.model, .login, .effort) for an agent.
-    Check agent directory first (x45/z21/mono), then prompts/.
+    Check every matching agent directory first, then prompts/.
+
+    More than one named directory can temporarily share a numeric prefix after
+    an upgrade (for example ``000-hub-master`` and ``000-super-master``).
+    Select the directory that actually contains the exact config filename
+    instead of trusting directory iteration order.
     """
     base_id = agent_id.split("-")[0] if "-" in agent_id else agent_id
-    agent_dir = _resolve_prompts_dir(prompts_dir, base_id)
-    if agent_dir:
+    directories = []
+    exact = prompts_dir / base_id
+    if exact.is_dir():
+        directories.append(exact)
+    directories.extend(sorted(
+        d for d in prompts_dir.glob(f"{base_id}-*") if d.is_dir()
+    ))
+    matches = []
+    for agent_dir in directories:
         candidate = agent_dir / f"{agent_id}.{ext}"
         if candidate.exists() or candidate.is_symlink():
-            return candidate
+            matches.append(candidate)
+    if len(matches) > 1:
+        raise AmbiguousAgentConfig(
+            f"{agent_id}: multiple .{ext} overrides: "
+            + ", ".join(str(path) for path in matches)
+        )
+    if matches:
+        return matches[0]
     candidate = prompts_dir / f"{agent_id}.{ext}"
     if candidate.exists() or candidate.is_symlink():
         return candidate

@@ -1660,7 +1660,7 @@ body {
   border-color: var(--blue);
 }
 
-/* Effort toggle (L/M/H) */
+/* Effort toggle (L/M/H/X/U selon les capacités du modèle) */
 .lm-effort-toggle {
   display: inline-flex;
   gap: 1px;

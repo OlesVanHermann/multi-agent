@@ -76,13 +76,28 @@ seconde sonde `/model` pour cette donnée.
 
 ## Effort et reasoning
 
-Le dashboard conserve trois niveaux neutres dans les fichiers `.effort` :
+Le dashboard conserve cinq niveaux neutres dans les fichiers `.effort` :
 
 | Interface | Niveau TUI |
 |---|---|
 | `L` | `medium` |
 | `M` | `high` |
 | `H` | `xhigh` / Extra high |
+| `X` | `max` / Max |
+| `U` | `ultracode` / Ultra |
+
+La sémantique est commune à Claude Code et Codex, mais la sélection dépend du
+moteur. Claude Code reçoit `/effort medium|high|xhigh|max|ultracode`. Codex
+utilise le picker `Select Reasoning Level`; `X` et `U` ouvrent
+`More reasoning…`, puis choisissent respectivement `Max` ou `Ultra` dans
+`Advanced Reasoning`.
+
+Ces cheminements sont des relevés de TUI réels (Claude : hub mx9,
+2026-07-28 ; Codex : mx6, codex-cli 0.144.x, 2026-07-28), consignés dans
+`scripts/engines.sh`. Comme tout marqueur, ils se contre-relèvent à chaque
+montée de version du CLI et ne se devinent jamais. La liste des modèles à
+efforts étendus (`X`/`U`) vit dans la couche moteur :
+`engines.effort_levels_for_model()` (`scripts/agent-bridge/engines.py`).
 
 Les nouveaux clones livrent `prompts/default.effort` à `M`. Sur un projet
 existant, `upgrade.sh` préserve `prompts/` et ne crée ni ne remplace ce fichier :

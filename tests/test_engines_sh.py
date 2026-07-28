@@ -133,24 +133,40 @@ class TestNeutralLoginSlots:
 
 class TestEffortCommand:
     """L'effort passe par la COMMANDE du CLI (modifiable en cours de session),
-    pas par une option de lancement. Mapping opérateur : L→medium, M→high,
-    H→xhigh — le niveau « low » n'est jamais utilisé pour des agents."""
+    pas par une option de lancement. Mapping commun : L→medium, M→high,
+    H→xhigh, X→max et U→ultracode/Ultra."""
 
     @pytest.mark.parametrize('level,expected', [
         ('L', 'medium'), ('M', 'high'), ('H', 'xhigh'),
+        ('X', 'max'), ('U', 'ultracode'),
     ])
     def test_effort_level_mapping(self, level, expected):
         out = sh(f'engine_effort_level claude {level}', check_rc=True).stdout.strip()
         assert out == expected
 
     @pytest.mark.parametrize('level,digit', [
-        ('L', '2'), ('M', '3'), ('H', '4'),
+        ('L', '2'), ('M', '3'), ('H', '4'), ('X', '5'), ('U', '5'),
     ])
     def test_codex_picker_digit(self, level, digit):
         """Picker codex « Select Reasoning Level » (vérifié 0.144.4) :
-        1=Low 2=Medium 3=High 4=Extra high."""
+        1=Low 2=Medium 3=High 4=Extra high 5=More reasoning."""
         out = sh(f'engine_codex_effort_digit {level}', check_rc=True).stdout.strip()
         assert out == digit
+
+    def test_codex_max_and_ultra_use_advanced_reasoning(self):
+        source = open(ENGINES_SH).read()
+        assert 'grep -q "Advanced Reasoning"' in source
+        assert 'tmux send-keys -t "$target" -l "1"' in source
+        assert 'tmux send-keys -t "$target" -l "2"' in source
+        assert 'tmux send-keys -t "$target" Enter' in source
+
+    def test_agent_config_resolution_does_not_trust_first_named_directory(self):
+        source = open(AGENT_SH).read()
+        resolve_body = source.split("resolve_config() {", 1)[1].split(
+            "# The engine is inferred", 1)[0]
+        assert '"$PROMPTS_DIR"/${base}-*/' in resolve_body
+        assert 'plusieurs overrides' in resolve_body
+        assert 'find_x45_dir "$base"' not in resolve_body
 
     def test_empty_effort_emits_nothing(self):
         assert sh('engine_effort_level codex ""', check_rc=True).stdout.strip() == ''

@@ -40,7 +40,7 @@ class AgentEngineUpdate(BaseModel):
 
 class EffortUpdate(BaseModel):
     agent_id: str      # "300" or "default"
-    level: str         # "L", "M", "H", or "" (remove override)
+    level: str         # L/M/H/X/U ; X=Max, U=Ultra/ultracode
     confirm_global: bool = False
 
 

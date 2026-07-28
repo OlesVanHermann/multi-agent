@@ -23,7 +23,7 @@ from contextlib import asynccontextmanager
 import redis.asyncio as redis
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from multi_agent import config as cfg
@@ -36,6 +36,7 @@ from multi_agent.auth import (
     _verify_jwt_minimal,
 )
 from multi_agent.cache import _cache_loop, _seed_prompt_history
+from multi_agent.prompts import AmbiguousAgentConfig
 from multi_agent.ratelimit import _check_rate_limit
 from multi_agent.routers import agent_chat, agents, chat, crontab, echo, system, ws
 from multi_agent.routers import config as config_routes
@@ -136,6 +137,13 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None,
 )
+
+
+@app.exception_handler(AmbiguousAgentConfig)
+async def _ambiguous_agent_config_handler(request, exc):
+    """Override dupliqué (répertoires copiés hors API) : 409 réparable
+    avec le détail des chemins, jamais un 500 opaque."""
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 app.add_middleware(
     CORSMiddleware,
