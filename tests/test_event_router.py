@@ -2,6 +2,7 @@
 
 from queue import Queue
 from threading import Lock
+from types import MethodType
 from unittest.mock import MagicMock
 
 import event_router
@@ -55,6 +56,58 @@ def test_thousand_control_events_produce_zero_model_turns():
             envelope("PROTOCOL_ERROR", correlation_id=f"corr-{number}"))
     assert agent.prompt_queue.qsize() == 0
     assert agent._ack_inbox.call_count == 1000
+
+
+def test_control_event_uses_real_wal_signature_and_is_acked(monkeypatch):
+    """Un champ métier nommé event ne doit pas entrer en collision avec le
+    paramètre positionnel event de _wal (TypeError avant XACK = rejeu infini)."""
+    agent = bridge("334-134")
+    agent._wal = MethodType(TmuxAgent._wal, agent)
+    emitted = []
+
+    def fake_emit(client, run_id, wal_event, agent_id, task_id, **fields):
+        emitted.append((wal_event, agent_id, task_id, fields))
+
+    monkeypatch.setattr("agent.wal.emit", fake_emit)
+    agent._handle_inbox_message(
+        "1-0", envelope("PROTOCOL_ERROR", correlation_id="corr-control"))
+
+    assert agent.prompt_queue.empty()
+    agent._ack_inbox.assert_called_once_with("1-0")
+    assert emitted == [(
+        "event_suppressed",
+        "334-134",
+        "task-1",
+        {
+            "suppressed_event": "PROTOCOL_ERROR",
+            "classification": "control",
+            "correlation_id": "corr-control",
+        },
+    )]
+
+
+def test_duplicate_terminal_uses_real_wal_signature_and_is_acked(monkeypatch):
+    agent = bridge("334-134")
+    agent._wal = MethodType(TmuxAgent._wal, agent)
+    agent.redis.set.return_value = False
+    emitted = []
+
+    def fake_emit(client, run_id, wal_event, agent_id, task_id, **fields):
+        emitted.append((wal_event, fields))
+
+    monkeypatch.setattr("agent.wal.emit", fake_emit)
+    agent._handle_inbox_message("2-0", envelope("DONE"))
+
+    assert agent.prompt_queue.empty()
+    agent._ack_inbox.assert_called_once_with("2-0")
+    assert emitted == [(
+        "event_suppressed",
+        {
+            "suppressed_event": "DONE",
+            "classification": "duplicate",
+            "correlation_id": "corr-1",
+        },
+    )]
 
 
 def test_master_report_is_stored_without_model_turn():

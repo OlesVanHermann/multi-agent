@@ -1133,7 +1133,8 @@ class TmuxAgent:
                 stream, stored, maxlen=IO_STREAM_MAXLEN, approximate=True)
             self._wal(
                 "event_suppressed", data.get("task_id"),
-                event=data.get("event", ""), classification=event_class,
+                suppressed_event=data.get("event", ""),
+                classification=event_class,
                 correlation_id=data.get("correlation_id", ""))
             self._log(
                 f"<- {event_class.upper()} {data.get('event', '')} stored; "
@@ -1148,7 +1149,8 @@ class TmuxAgent:
                     dedup_key, int(time.time()), nx=True, ex=604800):
                 self._wal(
                     "event_suppressed", data.get("task_id"),
-                    event=data.get("event", ""), classification="duplicate",
+                    suppressed_event=data.get("event", ""),
+                    classification="duplicate",
                     correlation_id=data.get("correlation_id", ""))
                 self._ack_inbox(msg_id)
                 return
