@@ -129,6 +129,7 @@ PROMPTS_FRAMEWORK_DIRS=(150-create-mono 160-create-x45 170-create-z21)
 # sont jamais remplacés ; seuls ces noms stables appartenant au framework le sont.
 PROMPTS_FRAMEWORK_FILES=(agent_mono.type agent_x45.type agent_z21.type
     gpt-5-6-luna.model gpt-5-6-sol.model gpt-5-6-terra.model opus-5.model
+    fable-5.model sonnet-5.model
     codex1a.login codex1b.login codex2a.login codex2b.login
     codex3a.login codex3b.login codex4a.login codex4b.login)
 
@@ -141,7 +142,7 @@ MANIFEST_PATHS=(scripts web docs patch setup tests templates examples framework 
                 prompts/AGENT.md prompts/CHROME.md
                 prompts/agent_mono.type prompts/agent_x45.type prompts/agent_z21.type
                 prompts/gpt-5-6-luna.model prompts/gpt-5-6-sol.model prompts/gpt-5-6-terra.model
-                prompts/opus-5.model
+                prompts/opus-5.model prompts/fable-5.model prompts/sonnet-5.model
                 'prompts/codex*.login'
                 requirements.txt CLAUDE.md AGENTS.md README.md LICENSE .gitignore)
 
@@ -543,12 +544,16 @@ if [ -f "$TOPOLOGY_MIGRATOR" ] && [ -d "./prompts" ]; then
     log_ok "topologies agents v3.2 et Contradictors 2XX (rapport : $TOPOLOGY_MIGRATION_LOG)"
 fi
 
-# 6d.1 Matrice générique des moteurs par rôle pour toutes les topologies
-# x45/z21 existantes. Aucun ID de triangle n'est codé en dur.
+# 6d.1 Matrice des moteurs par rôle : depuis la règle opérateur du
+# 2026-07-28, elle ne s'applique qu'à la CRÉATION d'un agent (créateurs
+# 150/160/170 et scaffolders). Un agent existant garde son affectation —
+# l'upgrade ne réécrit plus les .model/.login/.effort des triangles en
+# place ; il rapporte seulement les écarts, à titre informatif.
 MODEL_CONFIGURATOR="$TEMP_DIR/scripts/configure-x45-models.py"
 if [ -f "$MODEL_CONFIGURATOR" ] && [ -d "./prompts" ]; then
-    $PYTHON_CMD "$MODEL_CONFIGURATOR" --base "$(pwd)" --all
-    log_ok "modèles/logins x45/z21 par rôle"
+    $PYTHON_CMD "$MODEL_CONFIGURATOR" --base "$(pwd)" --all --check \
+        | sed 's/^/  /' || true
+    log_ok "matrice modèles/logins : écarts rapportés, aucun agent existant modifié"
 fi
 
 # 6e. Prompts agents existants : après la matérialisation topologique afin que
