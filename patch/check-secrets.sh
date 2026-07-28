@@ -46,6 +46,26 @@ else
     echo "[WARN] gitleaks non installé — scan anti-secrets délégué à la CI (security.yml)."
 fi
 
+# ── 4. État local machine tracké (leçon du 2026-07-28 : tokens OAuth réels
+#       et mémoires gre-*.txt entrés dans des branches patch) ────────────────
+LOCAL_STATE=$(git ls-files -- 'gre-*.txt' 'login/*/.credentials.json' \
+    'login/*/auth.json' 'login/*/file-history/*' 'login/*/projects/*' \
+    'login/*/sessions/*' 'login/*/todos/*' 'login/*/shell-snapshots/*' \
+    | grep -v '/\.gitkeep$' || true)
+if [ -n "$LOCAL_STATE" ]; then
+    echo "[FAIL] État local machine tracké par git (credentials/transcripts/mémoires) :"
+    echo "$LOCAL_STATE" | sed 's/^/    /'
+    FAIL=1
+fi
+HISTORY_CONTENT=$(git ls-files -- 'login/*/history.jsonl' | while read -r f; do
+    [ -s "$f" ] && echo "$f"
+done || true)
+if [ -n "$HISTORY_CONTENT" ]; then
+    echo "[FAIL] history.jsonl non vide tracké (transcript réel, placeholder attendu) :"
+    echo "$HISTORY_CONTENT" | sed 's/^/    /'
+    FAIL=1
+fi
+
 if [ "$FAIL" -eq 0 ]; then
     echo "[OK] Aucun secret tracké, pas de valeur par défaut."
 fi

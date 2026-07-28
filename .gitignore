@@ -122,5 +122,31 @@ login/*/backups/*
 login/*/cache/*
 !login/*/cache/.gitkeep
 
+# Credentials et état runtime des profils — JAMAIS versionnés, même sous les
+# répertoires re-inclus plus haut (dernier motif gagnant). C'est par ce trou
+# que des tokens OAuth réels sont entrés dans une branche patch (2026-07-28).
+login/*/.credentials.json
+login/*/auth.json
+login/*/file-history/*
+!login/*/file-history/.gitkeep
+login/*/projects/*
+!login/*/projects/.gitkeep
+login/*/sessions/*
+!login/*/sessions/.gitkeep
+login/*/shell-snapshots/*
+!login/*/shell-snapshots/.gitkeep
+login/*/tasks/*
+!login/*/tasks/.gitkeep
+login/*/todos/*
+login/*/statsig/*
+!login/*/statsig/.gitkeep
+login/*/session-env/*
+!login/*/session-env/.gitkeep
+login/*/debug/*
+!login/*/debug/.gitkeep
+
+# Mémoires de reprise locales — état machine, jamais dans le repo
+gre-*.txt
+
 # Runtime hub — history de l'agent 000
 prompts/000-hub-master/000.history

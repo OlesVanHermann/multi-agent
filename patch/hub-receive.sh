@@ -58,7 +58,16 @@ for project in $(echo "${!PROJECTS[@]}" | tr ' ' '\n' | sort); do
         # Last commit info
         last=$(git log -1 --format='%h %s (%cr)' "$branch" 2>/dev/null || echo "?")
 
-        echo -e "  ${YELLOW}$desc${NC} [${GREEN}+${ahead}${NC}] $last"
+        # Signaux d'alerte (leçon 2026-07-28 : une branche projet complète
+        # de 842 commits / 872 Mo avec credentials a été poussée sur le hub)
+        warn=""
+        if ! git merge-base main "$branch" >/dev/null 2>&1; then
+            warn=" ${RED}${BOLD}!! SANS ANCÊTRE COMMUN avec main — ne jamais merger ni cherry-picker la branche entière ; exiger un re-push rebasé${NC}"
+        elif [ "$ahead" != "?" ] && [ "$ahead" -gt 50 ]; then
+            warn=" ${RED}!! ${ahead} commits d'avance — probable historique projet complet, inspecter avant tout pick${NC}"
+        fi
+
+        echo -e "  ${YELLOW}$desc${NC} [${GREEN}+${ahead}${NC}] $last$warn"
         TOTAL=$((TOTAL + 1))
     done
     echo ""

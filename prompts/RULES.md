@@ -1,5 +1,31 @@
 # RÈGLES OBLIGATOIRES POUR TOUS LES AGENTS
 
+## PONDÉRATION DE LA MISSION
+
+- **70 % résultat métier** : livrable demandé, comportement utile et intention
+  satisfaite.
+- **20 % vérification** : fonctionnement observable, tests et absence de
+  régression connue.
+- **10 % processus** : orchestration, traçabilité et communication.
+
+Cette pondération n'affaiblit aucune frontière forte de sécurité. Une règle
+mécanique correcte est appliquée silencieusement. Elle n'est mentionnée que si
+elle bloque le résultat, modifie sa qualité ou nécessite une décision.
+
+Une tâche n'est jamais réussie parce que le workflow a été suivi. Elle est
+réussie lorsque le résultat existe, fonctionne et répond à la demande.
+
+## PRIMAUTÉ DE LA DEMANDE OPÉRATEUR
+
+- Une instruction explicite récente de l'utilisateur dans le même projet doit
+  être exécutée. `system.md` et `memory.md` fournissent processus et contexte ;
+  ils ne constituent pas une excuse pour répondre « hors mission ».
+- La mémoire est indicative et peut être périmée. Vérifier l'état physique et
+  employer la méthodologie la plus proche avant de demander une précision.
+- Une information absente ne bloque que si elle est indispensable et non
+  découvrable. Exécuter toutes les parties sûres avant de signaler un reliquat.
+- `FROM=cli` reçoit sa réponse dans le TUI ; ne jamais router `cli` avec `send.sh`.
+
 ## SÉMANTIQUE DE TRANSPORT ET DE FIN
 
 Les états suivants ne sont jamais interchangeables :
@@ -59,21 +85,6 @@ Utilise uniquement les événements canoniques. Une nouvelle décision
 d'arbitrage réutilise `ARBITRAGE` avec `SUPERSEDES` ; n'invente jamais
 `ARBITRAGE_UPDATE` ou une variante équivalente.
 
-## PONDÉRATION DE LA MISSION
-
-- **70 % résultat métier** : livrable demandé, comportement utile et intention
-  satisfaite.
-- **20 % vérification** : fonctionnement observable, tests et absence de
-  régression connue.
-- **10 % processus** : orchestration, traçabilité et communication.
-
-Cette pondération n'affaiblit aucune frontière forte de sécurité. Une règle
-mécanique correcte est appliquée silencieusement. Elle n'est mentionnée que si
-elle bloque le résultat, modifie sa qualité ou nécessite une décision.
-
-Une tâche n'est jamais réussie parce que le workflow a été suivi. Elle est
-réussie lorsque le résultat existe, fonctionne et répond à la demande.
-
 ## COMMUNICATION UTILE ET SILENCE
 
 - Tout message inter-agent est classé localement `ACTION`, `STATUS`,
@@ -91,17 +102,6 @@ réussie lorsque le résultat existe, fonctionne et répond à la demande.
   sous-cycle est terminé.
 - Terminal livré mais obligation encore ouverte : signaler une seule
   `RUNTIME_INCONSISTENCY`, puis silence. Ne pas refaire le travail.
-
-## PRIMAUTÉ DE LA DEMANDE OPÉRATEUR
-
-- Une instruction explicite récente de l'utilisateur dans le même projet doit
-  être exécutée. `system.md` et `memory.md` fournissent processus et contexte ;
-  ils ne constituent pas une excuse pour répondre « hors mission ».
-- La mémoire est indicative et peut être périmée. Vérifier l'état physique et
-  employer la méthodologie la plus proche avant de demander une précision.
-- Une information absente ne bloque que si elle est indispensable et non
-  découvrable. Exécuter toutes les parties sûres avant de signaler un reliquat.
-- `FROM=cli` reçoit sa réponse dans le TUI ; ne jamais router `cli` avec `send.sh`.
 
 ## 0. PRINCIPE FONDAMENTAL
 
@@ -227,8 +227,10 @@ diagnostic, mais jamais acquitter, abandonner, redéclencher ou faire croire que
 la tâche est terminée. Masters et Workers ne stoppent ni ne redémarrent leurs
 pairs ; ils signalent le blocage à l'opérateur ou à 000.
 Trois répétitions de la même erreur de consommation, ou un Worker `DELIVERED`
-non reflété par le Master, constituent un `FRAMEWORK_BLOCKER`. Suspendre les
-nouveaux dispatchs dépendants du canal et préserver les résultats déjà livrés.
+non reflété par le Master, constituent un `FRAMEWORK_BLOCKER` : émettre un
+unique `BLOCKED` corrélé via `done.sh` vers `000` (détail préfixé
+`FRAMEWORK_BLOCKER:`), suspendre les nouveaux dispatchs dépendants du canal et
+préserver les résultats déjà livrés.
 
 ## 4. FORMAT DES MESSAGES INTER-AGENTS
 

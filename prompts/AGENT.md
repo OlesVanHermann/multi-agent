@@ -408,7 +408,9 @@ réactiver une tâche absente de l'état physique.
 - Si le bridge répète la même erreur de consommation plus de trois fois, ou si
   un Worker `DELIVERED` reste absent de l'état Master, classe
   `FRAMEWORK_BLOCKER`, suspends les nouveaux dispatchs dépendants du canal et
-  signale à `000`. Ne masque pas l'incident par des `STATUS_REQUIRED` répétés.
+  signale à `000` par un unique `BLOCKED` corrélé via `done.sh` (détail
+  préfixé `FRAMEWORK_BLOCKER:`). Ne masque pas l'incident par des
+  `STATUS_REQUIRED` répétés.
 
 ### Secrets et diagnostics
 
