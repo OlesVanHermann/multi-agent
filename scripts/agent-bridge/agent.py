@@ -1406,6 +1406,21 @@ class TmuxAgent:
             and str(task.get("from_agent", "")) != "watchdog"
         )
 
+    def _api_retry_task(self, task, retry_count):
+        """C4 : copie complète bornée d'un tour pour un retry API.
+
+        Ne reconstruit PAS le dict à la main : cela perdait event,
+        expected_event, requester, owner et l'identité de tour. Un tour non
+        gardé (event hors ensemble corrélé) redevenait gardé après retry
+        (event perdu = "") et rouvrait le faux positif de fin de tour. On
+        préserve toute l'enveloppe et on ne surcharge que les compteurs.
+        """
+        retry_task = dict(task)
+        retry_task['_retry_count'] = retry_count + 1
+        retry_task['_verify_retry'] = task.get('_verify_retry', 0)
+        retry_task.setdefault('source', 'retry')
+        return retry_task
+
     def _has_correlated_business_event(self, task):
         """Check explicit send.sh/done.sh delivery for this correlation."""
         correlation_id = str(task.get("correlation_id", ""))
@@ -1673,22 +1688,8 @@ class TmuxAgent:
                     self.redis.hset(f"agent:{self.agent_id}", "status", "api_error_retry")
                 except Exception:
                     pass
-                self.prompt_queue.put({
-                    'prompt': task['prompt'],
-                    'from_agent': task.get('from_agent', 'unknown'),
-                    'msg_id': task.get('msg_id', ''),
-                    'ack_id': task.get('ack_id'),
-                    'correlation_id': task.get('correlation_id', ''),
-                    'cycle': task.get('cycle', ''),
-                    # V3 : le retry API ne doit pas faire perdre le gate verify
-                    'verify_cmd': task.get('verify_cmd', ''),
-                    'project_dir': task.get('project_dir', ''),
-                    'task_id': task.get('task_id', ''),
-                    'deadline': task.get('deadline', ''),
-                    '_verify_retry': task.get('_verify_retry', 0),
-                    '_retry_count': retry_count + 1,
-                    'source': task.get('source', 'retry')
-                })
+                self.prompt_queue.put(
+                    self._api_retry_task(task, retry_count))
                 with self.state_lock:
                     self.current_task = None
                     self.state = State.IDLE

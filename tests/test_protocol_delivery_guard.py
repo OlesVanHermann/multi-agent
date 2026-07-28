@@ -74,6 +74,36 @@ def test_protocol_error_is_correlated_and_never_done():
     assert requester_event["classification"] == "control"
 
 
+# ── C4 : le retry API préserve l'enveloppe complète du tour ──────────────────
+
+def test_c4_api_retry_preserves_unguarded_event():
+    """Un tour non gardé (event hors ensemble corrélé) le reste après un
+    retry API : l'événement survit à la copie, le faux positif de fin de
+    tour ne se rouvre pas (avant le fix, event perdu = "" = gardé)."""
+    agent = _agent()
+    task = _task(event="PROGRESS", _turn_id="t7", _turn_started_at=42)
+    assert not agent._requires_correlated_event(task)
+    retry = agent._api_retry_task(task, 0)
+    assert retry["event"] == "PROGRESS"
+    assert retry["_retry_count"] == 1
+    assert retry["_turn_id"] == "t7"
+    assert retry["_turn_started_at"] == 42
+    assert not agent._requires_correlated_event(retry)
+
+
+def test_c4_api_retry_preserves_business_dispatch_envelope():
+    agent = _agent()
+    task = _task(event="DISPATCH", expected_event="DONE",
+                 owner="334-134", _turn_id="t8", _protocol_retry=1)
+    retry = agent._api_retry_task(task, 1)
+    for key in ("event", "expected_event", "from_agent", "owner",
+                "correlation_id", "task_id", "cycle", "_turn_id",
+                "_protocol_retry"):
+        assert retry.get(key) == task.get(key), key
+    assert retry["_retry_count"] == 2
+    assert agent._requires_correlated_event(retry)
+
+
 def _load_stop_guard():
     path = os.path.join(ROOT, "scripts", "claude-stop-guard.py")
     spec = importlib.util.spec_from_file_location("claude_stop_guard", path)
