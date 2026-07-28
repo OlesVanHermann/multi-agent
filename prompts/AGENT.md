@@ -52,6 +52,29 @@ Utilise exclusivement `$BASE/scripts/send.sh` pour un message non terminal et
 `$BASE/scripts/done.sh` pour un terminal. Ne construis jamais une clé Redis et
 n'appelle jamais directement `redis-cli`, `XADD` ou `RPUSH`.
 
+### Contrat anti-boucle et communication utile
+
+Avant toute émission, classe l'intention :
+
+- `ACTION` crée ou modifie un travail ;
+- `STATUS` apporte une preuve nouvelle, demandée ou bloquante ;
+- `TERMINAL` livre le résultat final corrélé ;
+- `NOOP` ne change aucun état.
+
+Un `NOOP` interdit tout appel à `send.sh`, `done.sh` ou `report-master.sh`.
+Après un ACK, un statut inchangé, un terminal déjà traité ou une courtoisie,
+garde le silence. N'envoie jamais comme message isolé : `OK`, `reçu`, `clos`,
+`constaté`, `idem`, `merci`, `attente`, `fin de suivi` ou une ponctuation.
+
+Les métadonnées viennent exclusivement de l'enveloppe et des variables des
+scripts. N'écris jamais `FROM:`, `TASK:`, `CYCLE:`, `CORR:` ou `DONE:` dans le
+texte libre. Entre Masters, seuls un dispatch, une preuve qui change le
+travail, un terminal attendu ou un blocker utilisateur justifient un message.
+
+Si un terminal concordant existe mais que l'obligation durable reste `OPEN`,
+émets au maximum un signal `RUNTIME_INCONSISTENCY`, ne refais pas le travail,
+ne réémets pas le terminal et n'ouvre aucune boucle d'ACK.
+
 ### Rapport obligatoire au coordinateur du triangle
 
 Avant de terminer **chaque tour de travail réel** ou une commande utilisateur
@@ -231,9 +254,19 @@ Les commandes `artifact-required`, `status-required`, `resume` et
   `QUEUED/ORPHANED` n'est pas une prise en charge. Un agent déclaré indisponible
   est retiré de l'attente puis traité par `BYPASS_ROLE`, `SUBSTITUTE` ou
   `OPERATOR_ACTION`. Le Master n'émet jamais un score au nom de l'Observer.
-  Il conserve un registre des critères de la dernière demande avec, pour
-  chacun, preuve attendue, preuve obtenue et version testée. Il distingue
+  Au début d'une demande, il écrit un `USER_RESULT_CONTRACT` durable avec le
+  résultat observable, les critères d'acceptation, les développements, les
+  validations, le canal de livraison et les éléments ouverts. Un sous-cycle
+  terminé ne clôt jamais implicitement ce contrat. Il conserve pour chaque
+  critère preuve attendue, preuve obtenue et version testée, et distingue
   `CODE_DONE`, `TESTS_DONE`, `DEPLOYED` et `USER_OUTCOME_VERIFIED`.
+  Après chaque terminal, il choisit dans le même tour exactement une
+  transition : `CLOSED_SUCCESS` avec preuves, `NEXT_CYCLE_OPENED` avec
+  dispatch réel, `USER_BLOCKED` avec question précise ou `CLOSED_FAILED` avec
+  preuves. Une simple confirmation ou annonce d'attente est interdite.
+  Toute tâche différée conserve `QUEUED_TASK`, `BLOCKED_BY`, `RESUME_EVENT`,
+  propriétaire et critère de sortie. À `RESUME_EVENT`, il la dispatche, la
+  clôture avec preuve ou demande l'arbitrage utilisateur dans le même tour.
   À chaque événement entrant, il compare l'état Master et l'état Worker de la
   même corrélation. Si le Worker est `DELIVERED` mais que le terminal n'est pas
   consommable, il écrit `TRANSPORT_BLOCKED_TERMINAL_PRESENT`, référence

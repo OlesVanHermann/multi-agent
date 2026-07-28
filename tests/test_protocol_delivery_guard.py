@@ -40,6 +40,42 @@ def test_cli_and_uncorrelated_turns_are_not_guarded():
         _task(correlation_id=""))
 
 
+def test_business_events_open_end_of_turn_guards():
+    """Arbitrage 2026-07-28 : MESSAGE/DISPATCH/INFO_REQUIRED sont gardés ;
+    l'événement vide (enveloppe legacy hors send.sh) et DECISION_REQUIRED
+    ne le sont plus — c'était la classe majeure de faux positifs."""
+    agent = _agent()
+    assert agent._requires_correlated_event(_task(event="DISPATCH"))
+    assert agent._requires_correlated_event(_task(event="MESSAGE"))
+    assert agent._requires_correlated_event(_task(event="INFO_REQUIRED"))
+    assert not agent._requires_correlated_event(_task(event=""))
+    assert not agent._requires_correlated_event(
+        _task(event="DECISION_REQUIRED"))
+
+
+def test_api_retry_preserves_complete_envelope():
+    agent = _agent()
+    task = _task(
+        event="DISPATCH", expected_event="DONE|BLOCKED",
+        requester="334-134", owner="334-334", verify_cmd="true",
+        custom_field="keep-me")
+    retry = agent._api_retry_task(task, 0)
+    assert retry["event"] == "DISPATCH"
+    assert retry["expected_event"] == "DONE|BLOCKED"
+    assert retry["requester"] == "334-134"
+    assert retry["owner"] == "334-334"
+    assert retry["custom_field"] == "keep-me"
+    assert retry["_retry_count"] == 1
+
+
+def test_wal_accepts_business_event_field():
+    from agent import TmuxAgent
+    agent = _agent()
+    agent._wal = TmuxAgent._wal.__get__(agent, TmuxAgent)
+    agent._wal("event_suppressed", "task-128", event="DONE")
+    assert agent.redis.xadd.called
+
+
 def test_done_event_satisfies_guard():
     agent = _agent()
     agent.redis.xrevrange.side_effect = lambda stream, count=200: (

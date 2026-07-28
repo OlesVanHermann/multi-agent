@@ -1495,12 +1495,18 @@ class TmuxAgent:
         self._log("WARNING: legacy_listener thread exiting")
 
     def _requires_correlated_event(self, task):
-        """Seul un vrai travail ouvre une obligation de réponse."""
+        """Seul un vrai travail ouvre une obligation de réponse.
+
+        Arbitrage 2026-07-28 : MESSAGE et INFO_REQUIRED restent gardés tant
+        que send.sh émet MESSAGE par défaut entre agents ; seul l'événement
+        vide (enveloppe legacy fabriquée hors send.sh) sort de la garde —
+        c'était la classe majeure de faux positifs de fin de tour.
+        """
         requester = str(task.get("from_agent", ""))
         return (
             task.get("source") == "redis"
             and str(task.get("event", "") or "").upper()
-            in ("", "MESSAGE", "DISPATCH", "INFO_REQUIRED")
+            in ("MESSAGE", "DISPATCH", "INFO_REQUIRED")
             and bool(task.get("correlation_id"))
             and bool(task.get("task_id"))
             and bool(task.get("cycle"))
@@ -1517,7 +1523,7 @@ class TmuxAgent:
         event = str(task.get("event", "") or "").upper()
         return (
             task.get("source") == "redis"
-            and event in ("", "MESSAGE", "DISPATCH", "INFO_REQUIRED")
+            and event in ("MESSAGE", "DISPATCH", "INFO_REQUIRED")
             and str(task.get("from_agent", "")) != "watchdog"
         )
 
@@ -1868,7 +1874,15 @@ class TmuxAgent:
                 self._wal("api_error_retry", task.get('task_id'),
                           retry=retry_count + 1)
                 try:
-                    self.redis.hset(f"agent:{self.agent_id}", "status", "api_error_retry")
+                    self.redis.hset(
+                        f"agent:{self.agent_id}",
+                        mapping={
+                            "status": "retrying",
+                            "last_error": "api_error",
+                            "last_error_at": int(time.time()),
+                            "current_correlation":
+                                task.get("correlation_id", ""),
+                        })
                 except Exception:
                     pass
                 self.prompt_queue.put(

@@ -53,6 +53,23 @@ Utilise exclusivement `$BASE/scripts/send.sh` pour un message non terminal et
 `$BASE/scripts/done.sh` pour un terminal. Ne construis jamais une clé Redis et
 n'appelle jamais directement `redis-cli`, `XADD` ou `RPUSH`.
 
+### Contrat anti-boucle et communication utile
+
+Classe toute émission `ACTION`, `STATUS`, `TERMINAL` ou `NOOP`. `NOOP` impose
+le silence : aucun `OK`, ACK de courtoisie, suivi inchangé, remerciement ou
+ponctuation isolée. Un terminal reçu ne reçoit jamais de terminal d'ACK.
+Les métadonnées structurées ne sont jamais recopiées dans le texte libre.
+
+Le Master maintient un `USER_RESULT_CONTRACT` et agrège ses sous-cycles. Après
+chaque terminal, il choisit exactement `CLOSED_SUCCESS`,
+`NEXT_CYCLE_OPENED`, `USER_BLOCKED` ou `CLOSED_FAILED`. Une tâche différée
+conserve `QUEUED_TASK`, `BLOCKED_BY` et `RESUME_EVENT` et reprend dès cet
+événement.
+
+Si un terminal concordant existe mais que l'obligation reste ouverte, signale
+une seule `RUNTIME_INCONSISTENCY`, ne refais pas le travail et garde ensuite le
+silence.
+
 ### Rapport obligatoire au coordinateur du triangle
 
 Avant de terminer **chaque tour de travail réel** ou une commande utilisateur

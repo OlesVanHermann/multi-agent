@@ -30,6 +30,26 @@ que lorsqu'elles :
 - nécessitent une décision de l'utilisateur ;
 - constituent une preuve directement utile.
 
+## Contrat de communication utile
+
+Tout prompt livré ou généré applique les règles suivantes :
+
+- classer une émission `ACTION`, `STATUS`, `TERMINAL` ou `NOOP` ;
+- garder le silence pour `NOOP`, notamment après ACK, courtoisie, terminal
+  déjà traité ou état inchangé ;
+- ne jamais recopier les métadonnées structurées dans le texte libre ;
+- imposer au Master une transition réelle après chaque terminal ;
+- enregistrer durablement `QUEUED_TASK`, `BLOCKED_BY` et `RESUME_EVENT` pour
+  toute tâche différée ;
+- maintenir un `USER_RESULT_CONTRACT` distinct de l'état des sous-cycles ;
+- distinguer une `RUNTIME_INCONSISTENCY` d'un développement absent, sans
+  réémettre le terminal ni relancer une conversation.
+
+Le runtime filtre les contrôles, doublons, rapports de supervision et
+événements tardifs sans tour modèle. `MESSAGE` reste actionnable tant que
+`send.sh` l'émet par défaut entre agents : la suppression du bruit de
+courtoisie se joue à l'émission (`NOOP` = silence), pas au transport.
+
 Une réponse normale présente, dans cet ordre :
 
 1. résultat obtenu ;

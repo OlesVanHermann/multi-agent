@@ -45,6 +45,26 @@ def test_common_contract_is_present():
     assert "report-master.sh" in agent
 
 
+def test_common_contract_suppresses_noop_and_resumes_deferred_work():
+    sources = [
+        ROOT / "prompts" / "AGENT.md",
+        ROOT / "prompts" / "RULES.md",
+        ROOT / "templates" / "x45" / "prompts" / "AGENT.md",
+        ROOT / "prompts" / "160-create-x45" / "160-160-system.md",
+    ]
+    for path in sources:
+        text = path.read_text()
+        assert "NOOP" in text, path
+        assert "USER_RESULT_CONTRACT" in text, path
+        assert "RESUME_EVENT" in text, path
+    agent = sources[0].read_text()
+    for transition in (
+            "CLOSED_SUCCESS", "NEXT_CYCLE_OPENED",
+            "USER_BLOCKED", "CLOSED_FAILED"):
+        assert transition in agent
+    assert "RUNTIME_INCONSISTENCY" in agent
+
+
 def run_script(path, *args, env_extra=None):
     env = dict(os.environ)
     env.pop("TMUX", None)

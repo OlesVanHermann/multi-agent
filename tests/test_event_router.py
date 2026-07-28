@@ -41,12 +41,34 @@ def envelope(event, **extra):
 
 
 def test_event_taxonomy():
+    # Arbitrage 2026-07-28 : MESSAGE reste actionnable tant que send.sh
+    # l'émet par défaut entre agents — la suppression du bruit de courtoisie
+    # est un contrat de prompt (NOOP à l'émission), pas une reclassification.
+    assert event_router.classify(envelope("")) == "actionable"
     assert event_router.classify(envelope("DISPATCH")) == "actionable"
+    assert event_router.classify(envelope("MESSAGE")) == "actionable"
+    assert event_router.classify(
+        envelope("MESSAGE", from_agent="cli")) == "actionable"
     assert event_router.classify(envelope("DONE")) == "terminal"
+    assert event_router.classify(envelope("INFO_REQUIRED")) == "terminal"
     assert event_router.classify(envelope("MASTER_REPORT")) == "supervision"
     assert event_router.classify(envelope("PROTOCOL_ERROR")) == "control"
     assert event_router.classify(envelope("TERMINAL_PENDING")) == "control"
+    assert event_router.classify(
+        envelope("RUNTIME_INCONSISTENCY")) == "control"
     assert event_router.classify(envelope("UNATTRIBUTED")) == "quarantine"
+
+
+def test_terminals_wake_bare_id_recipients():
+    """Pipeline standard (IDs nus) : pas de coordinateur NNN-1XX — le
+    destinataire d'un DONE ou d'un INFO_REQUIRED doit être réveillé."""
+    assert event_router.should_wake_for_terminal("100", envelope("DONE"))
+    assert event_router.should_wake_for_terminal(
+        "300", envelope("INFO_REQUIRED"))
+    assert event_router.should_wake_for_terminal(
+        "334-134", envelope("DONE"))
+    assert not event_router.should_wake_for_terminal(
+        "334-834", envelope("DONE"))
 
 
 def test_thousand_control_events_produce_zero_model_turns():

@@ -83,15 +83,47 @@ CYCLE="${CYCLE:-}"
 REQUESTER_ID="${REQUESTER_ID:-$TO_AGENT}"
 OWNER_ID="${OWNER_ID:-$TO_AGENT}"
 
+# État de comptabilité de l'obligation durable, annexé au rapport de livraison.
+# Vide = rien à comptabiliser ou obligation close ; UNRECONCILED = échec exposé.
+OBLIGATION_STATE=""
+
 close_obligation() {
-    python3 "$SCRIPT_DIR/agent-bridge/obligations.py" close \
+    local out rc inconsistency_key
+    out=$(python3 "$SCRIPT_DIR/agent-bridge/obligations.py" close \
         --base "$BASE_DIR" \
         --task "$TASK_ID" \
         --cycle "$CYCLE" \
         --agent "$FROM_AGENT" \
         --correlation "$CORRELATION_ID" \
-        --event "$SIGNAL_TYPE" >/dev/null 2>&1 || \
-        echo "warning: durable obligation cleanup failed" >&2
+        --event "$SIGNAL_TYPE" 2>&1)
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        # Échec de comptabilité APRÈS livraison : le terminal est déjà journalisé
+        # dans le stream completion (fait foi). On rend l'écart visible SANS
+        # réémettre de terminal — l'obligation durable reste OPEN et sera reprise
+        # par la réconciliation du watchdog.
+        OBLIGATION_STATE=" obligation=UNRECONCILED"
+        echo "unreconciled: durable obligation still OPEN after delivery (${out})" >&2
+        # Une seule preuve machine, non actionnable. Elle permet au dashboard
+        # et au watchdog de distinguer un défaut de comptabilité d'un travail
+        # réellement absent sans réveiller un modèle ni réémettre le terminal.
+        inconsistency_key="runtime_inconsistency:${FROM_AGENT}:${TASK_ID}:${CYCLE}:${CORRELATION_ID}:${SIGNAL_TYPE}"
+        if [ "$($REDIS_CLI SET "$inconsistency_key" 1 NX EX "${TERMINAL_DEDUP_TTL:-604800}" 2>/dev/null)" = "OK" ]; then
+            # XADD échoué = clé de dédup relâchée, sinon la preuve serait
+            # perdue pour toute la durée du TTL.
+            $REDIS_CLI XADD "runtime:inconsistencies" MAXLEN '~' "${STREAM_MAXLEN:-1000}" '*' \
+                from_agent "$FROM_AGENT" \
+                to_agent "$TO_AGENT" \
+                event "RUNTIME_INCONSISTENCY" \
+                task_id "$TASK_ID" \
+                cycle "$CYCLE" \
+                correlation_id "$CORRELATION_ID" \
+                terminal_event "$SIGNAL_TYPE" \
+                detail "$out" \
+                timestamp "$TIMESTAMP" >/dev/null 2>&1 \
+                || $REDIS_CLI DEL "$inconsistency_key" >/dev/null 2>&1
+        fi
+    fi
 }
 
 if [ "$FROM_AGENT" != "cli" ]; then
@@ -128,7 +160,7 @@ if [ "$DEDUP_RESULT" != "OK" ]; then
     PREVIOUS=$($REDIS_CLI GET "$DEDUP_KEY" 2>/dev/null)
     if [ "$PREVIOUS" = "$SIGNAL_FINGERPRINT" ]; then
         close_obligation
-        echo "replay: $TO_AGENT event=$SIGNAL_TYPE task=$TASK_ID cycle=$CYCLE corr=$CORRELATION_ID state=ALREADY_DELIVERED"
+        echo "replay: $TO_AGENT event=$SIGNAL_TYPE task=$TASK_ID cycle=$CYCLE corr=$CORRELATION_ID state=ALREADY_DELIVERED${OBLIGATION_STATE}"
         exit 0
     fi
     echo "refused: $TO_AGENT event=$SIGNAL_TYPE task=$TASK_ID cycle=$CYCLE corr=$CORRELATION_ID state=NOT_DELIVERED" >&2
@@ -181,8 +213,8 @@ if [ -z "$MSG_ID" ]; then
 fi
 
 if ! tmux has-session -t "=$(agent_session_name "$TO_AGENT")" 2>/dev/null; then
-    echo "queued: $TO_AGENT $MSG_ID corr=$CORRELATION_ID state=ORPHANED" >&2
+    echo "queued: $TO_AGENT $MSG_ID corr=$CORRELATION_ID state=ORPHANED${OBLIGATION_STATE}" >&2
     exit 2
 fi
 
-echo "ok: $TO_AGENT $MSG_ID corr=$CORRELATION_ID state=DELIVERED"
+echo "ok: $TO_AGENT $MSG_ID corr=$CORRELATION_ID state=DELIVERED${OBLIGATION_STATE}"

@@ -36,10 +36,10 @@ def stream(prefix=None):
     return "wal"
 
 
-def emit(redis_cli, prefix, event, agent_id, task_id="-", **fields):
+def emit(redis_cli, prefix, wal_event, agent_id, task_id="-", **fields):
     """Ajoute un événement au WAL. Retourne l'ID du message."""
     entry = {
-        "event": str(event),
+        "event": str(wal_event),
         "agent_id": str(agent_id),
         "task_id": str(task_id or "-"),
         "ts": int(time.time()),

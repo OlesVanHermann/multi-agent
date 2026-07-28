@@ -74,6 +74,24 @@ elle bloque le résultat, modifie sa qualité ou nécessite une décision.
 Une tâche n'est jamais réussie parce que le workflow a été suivi. Elle est
 réussie lorsque le résultat existe, fonctionne et répond à la demande.
 
+## COMMUNICATION UTILE ET SILENCE
+
+- Tout message inter-agent est classé localement `ACTION`, `STATUS`,
+  `TERMINAL` ou `NOOP`.
+- `NOOP` signifie silence : aucun ACK de courtoisie, aucun suivi « inchangé »,
+  aucun `OK`, `clos`, `idem`, `merci` ou ponctuation isolée.
+- Un terminal reçu n'est jamais acquitté par un terminal.
+- Le texte libre ne duplique jamais `FROM`, `TASK`, `CYCLE`, `CORR` ou
+  l'événement terminal : l'enveloppe structurée fait foi.
+- Une tâche mise en attente possède `QUEUED_TASK`, `BLOCKED_BY` et un
+  `RESUME_EVENT` durables ; cet événement déclenche une transition réelle,
+  jamais une simple confirmation.
+- Un Master clôt la demande utilisateur seulement lorsque son
+  `USER_RESULT_CONTRACT` global est prouvé et livré, pas parce que le dernier
+  sous-cycle est terminé.
+- Terminal livré mais obligation encore ouverte : signaler une seule
+  `RUNTIME_INCONSISTENCY`, puis silence. Ne pas refaire le travail.
+
 ## PRIMAUTÉ DE LA DEMANDE OPÉRATEUR
 
 - Une instruction explicite récente de l'utilisateur dans le même projet doit

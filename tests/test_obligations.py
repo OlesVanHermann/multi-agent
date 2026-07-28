@@ -3,6 +3,7 @@
 import importlib
 import json
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -61,11 +62,165 @@ def test_done_sh_closes_obligation_after_completion_before_inbox():
     assert completion < cleanup < inbox
 
 
+def test_done_sh_records_runtime_inconsistency_without_agent_prompt():
+    source = (ROOT / "scripts" / "done.sh").read_text()
+    assert '"runtime:inconsistencies"' in source
+    assert 'event "RUNTIME_INCONSISTENCY"' in source
+    block = source[
+        source.index('inconsistency_key="runtime_inconsistency:'):
+        source.index("fi\n}", source.index(
+            'inconsistency_key="runtime_inconsistency:'))
+    ]
+    assert "agent_inbox_key" not in block
+
+
 def test_wrong_terminal_does_not_close_obligation(tmp_path):
     path = obligations.create(tmp_path, "303-303", dispatch(), "1-0", now=10)
     assert obligations.close(
         tmp_path, "task-1", "1", "303-303", "corr-1", "DONE") is None
     assert path.is_file()
+
+
+COMPOSITE = "ARBITRAGE|INFO_REQUIRED|BLOCKED|ERROR"
+
+
+def test_expected_set_splits_composite_but_keeps_atomic():
+    assert obligations._expected_set("ARBITRAGE") == {"ARBITRAGE"}
+    assert obligations._expected_set(COMPOSITE) == {
+        "ARBITRAGE", "INFO_REQUIRED", "BLOCKED", "ERROR"}
+    assert obligations._expected_set("") == set()
+    assert obligations._expected_set(None) == set()
+
+
+def test_composite_expected_closes_on_each_alternative(tmp_path):
+    for index, alternative in enumerate(COMPOSITE.split("|")):
+        obligations.create(
+            tmp_path, "303-303",
+            dispatch(cycle=f"c{index}", expected=COMPOSITE), "1-0", now=10)
+        archived = obligations.close(
+            tmp_path, "task-1", f"c{index}", "303-303", "corr-1",
+            alternative, now=20)
+        assert archived is not None and archived.is_file()
+        data = json.loads(archived.read_text())
+        assert data["status"] == "DELIVERED"
+        assert data["event"] == alternative
+        assert list(obligations.iter_open(tmp_path) or []) == []
+
+
+def test_event_outside_composite_set_keeps_obligation_open(tmp_path):
+    path = obligations.create(
+        tmp_path, "303-303", dispatch(expected=COMPOSITE), "1-0", now=10)
+    assert obligations.close(
+        tmp_path, "task-1", "1", "303-303", "corr-1", "DONE") is None
+    assert path.is_file()
+    assert json.loads(path.read_text())["status"] == "OPEN"
+
+
+def test_close_status_classifies_each_outcome(tmp_path):
+    obligations.create(
+        tmp_path, "303-303", dispatch(expected=COMPOSITE), "1-0", now=10)
+    # corrélation différente → échec de comptabilité explicite
+    assert obligations.close_status(
+        tmp_path, "task-1", "1", "303-303", "wrong-corr", "ARBITRAGE") == (
+        "corr-mismatch", "corr-1")
+    # événement hors ensemble → échec explicite avec ensemble attendu
+    status, detail = obligations.close_status(
+        tmp_path, "task-1", "1", "303-303", "corr-1", "DONE")
+    assert status == "event-unexpected"
+    assert set(detail.split("|")) == {
+        "ARBITRAGE", "INFO_REQUIRED", "BLOCKED", "ERROR"}
+    # alternative valide → close
+    status, detail = obligations.close_status(
+        tmp_path, "task-1", "1", "303-303", "corr-1", "BLOCKED", now=20)
+    assert status == "closed"
+    # rejeu → absent (idempotent), pas de seconde archive
+    assert obligations.close_status(
+        tmp_path, "task-1", "1", "303-303", "corr-1", "BLOCKED") == ("absent", "")
+
+
+def test_replay_is_idempotent_no_second_archive(tmp_path):
+    obligations.create(
+        tmp_path, "303-303", dispatch(expected=COMPOSITE), "1-0", now=10)
+    first = obligations.close(
+        tmp_path, "task-1", "1", "303-303", "corr-1", "ARBITRAGE", now=20)
+    assert first is not None
+    second = obligations.close(
+        tmp_path, "task-1", "1", "303-303", "corr-1", "ARBITRAGE", now=21)
+    assert second is None
+    archive_dir = first.parent
+    assert len(list(archive_dir.glob("303-303-*.json"))) == 1
+
+
+def _run_cli(base, task, cycle, agent, corr, event):
+    return subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "agent-bridge" / "obligations.py"),
+         "close", "--base", str(base), "--task", task, "--cycle", cycle,
+         "--agent", agent, "--correlation", corr, "--event", event],
+        capture_output=True, text=True)
+
+
+def test_cli_surfaces_accounting_failure_without_second_terminal(tmp_path):
+    obligations.create(
+        tmp_path, "303-303", dispatch(expected=COMPOSITE), "1-0", now=10)
+    # événement hors ensemble → exit non nul + message explicite (échec visible)
+    bad = _run_cli(tmp_path, "task-1", "1", "303-303", "corr-1", "DONE")
+    assert bad.returncode == 4
+    assert "unreconciled" in bad.stderr
+    # l'obligation reste OPEN — aucune fausse clôture
+    assert obligations.obligation_path(
+        tmp_path, "task-1", "1", "303-303").is_file()
+    # alternative valide → close, exit 0
+    ok = _run_cli(tmp_path, "task-1", "1", "303-303", "corr-1", "ARBITRAGE")
+    assert ok.returncode == 0
+    assert ok.stdout.startswith("closed:")
+    # rejeu → no-obligation, exit 0, aucune seconde archive
+    replay = _run_cli(tmp_path, "task-1", "1", "303-303", "corr-1", "ARBITRAGE")
+    assert replay.returncode == 0
+    assert replay.stdout.strip() == "no-obligation"
+
+
+def test_cli_absent_obligation_is_success(tmp_path):
+    # Émetteur sans DISPATCH : aucune obligation → succès silencieux idempotent
+    result = _run_cli(tmp_path, "task-x", "9", "303-303", "corr-x", "DONE")
+    assert result.returncode == 0
+    assert result.stdout.strip() == "no-obligation"
+
+
+def test_reconcile_closes_composite_obligation(tmp_path, redis_client):
+    obligations.create(
+        tmp_path, "303-303", dispatch(expected=COMPOSITE), "1-0", now=10)
+    redis_client.xadd("completion", {
+        "from": "303-303",
+        "event": "ARBITRAGE",
+        "task_id": "task-1",
+        "cycle": "1",
+        "correlation_id": "corr-1",
+    })
+    closed = obligations.reconcile(redis_client, tmp_path)
+    assert len(closed) == 1
+    assert list(obligations.iter_open(tmp_path) or []) == []
+
+
+def test_reconcile_does_not_cross_tasks_with_same_cycle_corr_owner(
+        tmp_path, redis_client):
+    obligations.create(
+        tmp_path, "303-303",
+        dispatch(task="task-a", expected="ARBITRAGE"), "1-0", now=10)
+    obligations.create(
+        tmp_path, "303-303",
+        dispatch(task="task-b", expected="ARBITRAGE"), "2-0", now=11)
+    redis_client.xadd("completion", {
+        "from": "303-303",
+        "event": "ARBITRAGE",
+        "task_id": "task-a",
+        "cycle": "1",
+        "correlation_id": "corr-1",
+    })
+    closed = obligations.reconcile(redis_client, tmp_path)
+    assert len(closed) == 1
+    remaining = list(obligations.iter_open(tmp_path) or [])
+    assert len(remaining) == 1
+    assert remaining[0][1]["task_id"] == "task-b"
 
 
 def test_same_corr_different_cycles_are_distinct(tmp_path):
