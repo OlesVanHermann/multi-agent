@@ -81,6 +81,16 @@ def test_global_mutations_are_explicit_without_popup():
     assert "engine_codex_preflight" in backend
 
 
+def test_effort_ui_exposes_deferred_application_and_serializes_clicks():
+    frontend = (ROOT / "web/frontend/src/components/LoginModelPanel.jsx").read_text()
+    assert "detail.applied === false" in frontend
+    assert "detail.reason" in frontend
+    assert "activeEffort" in frontend
+    assert "if (activeEffort) return" in frontend
+    assert "isActive && isOverride ? '' : lvl" not in frontend
+    assert "Retirer l’override et réappliquer l’effort hérité" in frontend
+
+
 def test_systemd_write_contract_is_synchronized():
     required = {"logs", "uploads", "crontab", "keepalive", "prompts"}
     dropin = (ROOT / "setup/multiagent-dashboard-hardening.conf.example").read_text()

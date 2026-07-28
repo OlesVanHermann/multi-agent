@@ -335,13 +335,13 @@ def _bashes_block(markers):
             'then has_bashes=1; fi; ')
 
 
-def _busy_block(markers, busy_re, prompt0):
+def _busy_block(markers, busy_re):
     """Bloc bash de détection « occupé », selon busy_scope (cf. BUSY_SCOPES)."""
     if markers["busy_scope"] == "status_line":
         return (
             'if [ "$alive" -eq 0 ]; then busy=0; '
             f'elif printf "%s" "$bp_line" | grep -qE {_q(busy_re)}; then busy=1; '
-            f'elif printf "%s" "$out" | tail -10 | grep -qF {_q(prompt0)}; then busy=0; '
+            'elif [ -n "$bp_line" ]; then busy=0; '
             'else busy=1; fi; '
         )
     # 'pane' : l'indicateur d'activité est ailleurs que dans la ligne de statut,
@@ -368,8 +368,6 @@ def build_pane_eval(markers):
     api_error_re = "|".join(
         str(p) for p in markers["api_error_immediate_patterns"]
     )
-    prompt0 = str(markers["prompt_markers"][0])
-
     return (
         f'alive=0; case "$pane_cmd" in {procs}) alive=1;; esac; '
         'busy=0; has_bashes=0; has_down=0; plan_mode=0; compacted=0; ctx=-1; '
@@ -378,7 +376,7 @@ def build_pane_eval(markers):
         f'bp_line=$(printf "%s" "$out" | grep -F {_q(markers["status_line"])} | tail -1); '
         + f'if printf "%s" "$out" | grep -qiE {_q(login_re)}; then login_required=1; fi; '
         + _bashes_block(markers)
-        + _busy_block(markers, busy_re, prompt0) +
+        + _busy_block(markers, busy_re) +
         'if [ "$login_required" -eq 1 ]; then busy=0; fi; '
         f'if printf "%s" "$bp_line" | grep -qF {_q(markers["scroll_indicator"])}; then has_down=1; fi; '
         f'plan_scope=$(printf "%s" "$out" | tail -{int(markers.get("plan_mode_tail_lines", 3))}); '

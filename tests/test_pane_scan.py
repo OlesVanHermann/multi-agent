@@ -52,6 +52,14 @@ PANES = {
         "❯ \n"
         f"{STATUS}\n"
     ),
+    # Claude peut laisser beaucoup de lignes vides sous son composer après un
+    # redimensionnement tmux. L'absence de ❯ dans tail -10 ne signifie pas busy.
+    'idle_with_trailing_blank_lines': (
+        "Je suis prêt.\n"
+        "❯ \n"
+        f"{STATUS}\n"
+        + "\n" * 25
+    ),
     'busy': (
         "Analyse en cours…\n"
         f"{STATUS} · esc to interrupt\n"
@@ -186,6 +194,11 @@ class TestSemantics:
         """Piège : « ❯ » présent ET « esc to interrupt » → occupé."""
         st = run_bash_eval(MARKERS, PANES['busy_with_prompt_visible'], 'claude', '300')
         assert st['busy'] is True
+
+    def test_status_line_without_interrupt_is_idle_despite_trailing_blanks(self):
+        st = run_bash_eval(
+            MARKERS, PANES['idle_with_trailing_blank_lines'], 'claude', '300')
+        assert st['busy'] is False
 
     def test_dead_process_is_never_busy(self):
         st = run_bash_eval(MARKERS, PANES['busy'], 'bash', '300')
@@ -449,16 +462,18 @@ class TestCodexSemantics:
         assert '›' in CODEX_PANES['busy']          # le composer EST visible
         assert self._st('busy')['busy'] is True    # et pourtant : occupé
 
-    def test_claude_algorithm_would_get_it_wrong(self):
-        """Preuve directe : le même pane, parsé avec busy_scope=status_line,
-        donne le MAUVAIS résultat. C'est ce que ferait un portage naïf — et
-        c'est indétectable en production : l'agent est simplement toujours vu
-        libre, on lui envoie des prompts par-dessus une réponse en cours."""
+    def test_claude_algorithm_is_not_portable_to_codex(self):
+        """Le scan Claude exige sa ligne de statut. Appliqué à ces snapshots
+        Codex, il échoue prudemment en busy même lorsque Codex est idle : la
+        portée pane de Codex reste donc indispensable."""
         naive = dict(MARKERS_CODEX)
         naive['busy_scope'] = 'status_line'
-        assert run_bash_eval(naive, CODEX_PANES['busy'], 'codex', '300')['busy'] is False
+        assert run_bash_eval(
+            naive, CODEX_PANES['busy'], 'codex', '300')['busy'] is True
+        assert run_bash_eval(
+            naive, CODEX_PANES['idle'], 'codex', '300')['busy'] is True
         assert agent_mod._parse_pane_state(
-            CODEX_PANES['busy'], 'codex', '300', markers=naive)['busy'] is False
+            CODEX_PANES['idle'], 'codex', '300', markers=naive)['busy'] is True
 
     def test_remapped_interrupt_key_still_detected(self):
         """La touche d'interruption est remappable : le marqueur ne doit pas en

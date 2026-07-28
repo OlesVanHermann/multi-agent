@@ -273,7 +273,6 @@ def _parse_pane_state(out, pane_cmd, agent_id, process_names=None, busy_scope=No
     if busy_scope is None:
         busy_scope = m['busy_scope']
 
-    prompt_markers = m['prompt_markers']
     busy_markers = m['busy_markers']
 
     claude_alive = pane_cmd in tuple(process_names)
@@ -299,7 +298,7 @@ def _parse_pane_state(out, pane_cmd, agent_id, process_names=None, busy_scope=No
         # sa présence ne prouve rien. Seule la ligne de statut fait foi.
         if any(x in bp_line for x in busy_markers):
             busy = True
-        elif any(prompt_markers[0] in l for l in lines[-10:]):
+        elif bp_line:
             busy = False
         else:
             busy = True
@@ -1055,14 +1054,17 @@ class TmuxAgent:
         Claude Code. Les utiliser comme sondes laisse le menu ouvert et fige
         l'agent. Une information absente reste donc inconnue.
         """
-        model_match = re.search(
+        model_matches = re.findall(
             MARKERS['model_check_response_pattern'], recent_pane, re.MULTILINE)
-        effort_match = re.search(
+        effort_matches = re.findall(
             MARKERS['effort_check_response_pattern'], recent_pane, re.MULTILINE)
-        if model_match:
-            self._observed_model = _normalize_model_name(model_match.group(1))
-        if effort_match:
-            self._observed_effort = effort_match.group(1).lower()
+        # Une pane peut contenir plusieurs changements successifs. La première
+        # confirmation décrit alors un ancien état et produisait un faux
+        # model_mismatch (donc un agent jaune) après un clic pourtant réussi.
+        if model_matches:
+            self._observed_model = _normalize_model_name(model_matches[-1])
+        if effort_matches:
+            self._observed_effort = effort_matches[-1].lower()
 
     def _heartbeat_loop(self):
         """Thread: heartbeat enrichi toutes les 10s — EF-003, CA-004.

@@ -616,6 +616,7 @@ async def update_effort(data: EffortUpdate):
     root_path = prompts_dir / f"{data.agent_id}.effort"
     effort_path, _ = _link_path_for(prompts_dir, data.agent_id, "effort")
 
+    status = "updated"
     if data.level == "":
         # Remove override (only for non-default) — clean BOTH locations
         if data.agent_id == "default":
@@ -623,24 +624,29 @@ async def update_effort(data: EffortUpdate):
         for p in {effort_path, root_path}:
             if p.exists() or p.is_symlink():
                 p.unlink()
-        return {"status": "removed", "agent_id": data.agent_id}
+        status = "removed"
+        # Retirer l'override ne signifie pas « ne rien faire » : le TUI doit
+        # revenir immédiatement au niveau hérité (groupe puis défaut global).
+        effective_level = engines.resolve_agent_config(
+            prompts_dir, data.agent_id, "effort", "M").strip().upper() or "M"
+    else:
+        model_id = _effective_model_id(prompts_dir, data.agent_id)
+        allowed_levels = _effort_levels_for_model(model_id)
+        if data.level not in allowed_levels:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"level must be one of {', '.join(allowed_levels)} "
+                    f"for model '{model_id or 'unknown'}'"
+                ),
+            )
 
-    model_id = _effective_model_id(prompts_dir, data.agent_id)
-    allowed_levels = _effort_levels_for_model(model_id)
-    if data.level not in allowed_levels:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"level must be one of {', '.join(allowed_levels)} "
-                f"for model '{model_id or 'unknown'}'"
-            ),
-        )
-
-    # Write to canonical location, and remove any ghost in the other to keep GET deterministic
-    effort_path.parent.mkdir(parents=True, exist_ok=True)
-    effort_path.write_text(data.level + "\n")
-    if effort_path != root_path and (root_path.exists() or root_path.is_symlink()):
-        root_path.unlink()
+        # Write to canonical location, and remove any ghost in the other to keep GET deterministic
+        effort_path.parent.mkdir(parents=True, exist_ok=True)
+        effort_path.write_text(data.level + "\n")
+        if effort_path != root_path and (root_path.exists() or root_path.is_symlink()):
+            root_path.unlink()
+        effective_level = data.level
 
     # Application À CHAUD : si la session tourne et que l'agent est libre, la
     # commande du CLI est envoyée au TUI (claude: /effort <niveau> ; codex:
@@ -648,7 +654,10 @@ async def update_effort(data: EffortUpdate):
     # scripts/engines.sh, partagée avec agent.sh/infra.sh. Agent occupé ou
     # session absente : le .effort prendra effet au prochain démarrage.
     applied = False
-    reason = "session absente"
+    reason = (
+        "défaut global enregistré — sessions actives inchangées"
+        if data.agent_id == "default" else "session absente"
+    )
     if data.agent_id != "default":
         session = f"agent-{data.agent_id}"
         alive = await _run_subprocess(["tmux", "has-session", "-t", session])
@@ -668,13 +677,20 @@ async def update_effort(data: EffortUpdate):
                 res = await _run_subprocess(
                     ["bash", "-c",
                      'source "$1/scripts/engines.sh" && engine_apply_model_effort "$2" "$3" "$4" "$5"',
-                     "_", str(cfg.BASE_DIR), session, cli, model_arg, data.level],
+                     "_", str(cfg.BASE_DIR), session, cli, model_arg, effective_level],
                     timeout=40,
                 )
                 applied = res.returncode == 0
                 reason = "" if applied else "échec de la commande TUI (voir logs)"
-    return {"status": "updated", "agent_id": data.agent_id, "level": data.level,
-            "applied": applied, **({"reason": reason} if not applied else {})}
+    return {
+        "status": status,
+        "agent_id": data.agent_id,
+        "level": effective_level,
+        "configured_level": data.level or None,
+        "applied": applied,
+        "deferred": not applied,
+        **({"reason": reason} if not applied else {}),
+    }
 
 
 # --- Favoris (persisted JSON per user per project) ---

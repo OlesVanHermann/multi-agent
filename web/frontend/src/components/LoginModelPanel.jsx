@@ -15,10 +15,12 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
   const runningIds = new Set((runningAgents || []).map(a => a.id))
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
+  const [feedback, setFeedback] = useState(null)
   // Action en cours : {id, action}. Pas de compte à rebours — le backend
   // rend la main quand l'état réel est atteint (session tmux présente/absente),
   // les boutons se réactivent à la réponse.
   const [activeRestart, setActiveRestart] = useState(null)
+  const [activeEffort, setActiveEffort] = useState(null)
   const [tmuxWidth, setTmuxWidth] = useState(null)
 
   const fetchData = async () => {
@@ -35,6 +37,7 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
   // Fetch all config every time panel is opened
   useEffect(() => {
     if (!hidden) {
+      setFeedback(null)
       fetchData()
       fetch(api('api/config/tmux-width'))
         .then(r => r.json())
@@ -106,6 +109,10 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
   }
 
   const handleEffort = async (agentId, level) => {
+    if (activeEffort) return
+    setActiveEffort({ id: agentId, level })
+    setError(null)
+    setFeedback(null)
     try {
       // Même politique explicite que handleChange pour « Défaut global ».
       const confirmGlobal = agentId === 'default'
@@ -114,10 +121,24 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent_id: agentId, level, confirm_global: confirmGlobal }),
       })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const detail = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(detail.detail || `HTTP ${res.status}`)
       await fetchData()
+      if (detail.applied === false) {
+        setFeedback({
+          kind: 'warning',
+          text: `Effort ${agentId} enregistré mais non appliqué : ${detail.reason || 'raison inconnue'}`,
+        })
+      } else {
+        const action = detail.status === 'removed'
+          ? `Override retiré ; effort hérité ${detail.level}`
+          : `Effort ${detail.level} appliqué`
+        setFeedback({ kind: 'success', text: `${action} sur ${agentId}` })
+      }
     } catch (err) {
       setError(err.message)
+    } finally {
+      setActiveEffort(null)
     }
   }
 
@@ -156,6 +177,13 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
   return (
     <div className="login-model-panel" style={{ display: hidden ? 'none' : undefined }}>
       {error && <p style={{ color: 'var(--red)', fontSize: '0.7rem', margin: '0 0 0.5rem' }}>Error: {error}</p>}
+      {feedback && (
+        <p style={{
+          color: feedback.kind === 'warning' ? 'var(--yellow)' : 'var(--green)',
+          fontSize: '0.7rem',
+          margin: '0 0 0.5rem',
+        }}>{feedback.text}</p>
+      )}
       <table className="lm-table">
         <thead>
           <tr>
@@ -212,8 +240,9 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
                 {(default_effort_levels || ['L', 'M', 'H']).map(lvl => (
                   <button
                     key={lvl}
-                    className={`lm-effort-btn ${(default_effort || 'M') === lvl ? 'lm-effort-active' : ''}`}
+                    className={`lm-effort-btn ${(default_effort || 'M') === lvl ? 'lm-effort-active' : ''} ${activeEffort?.id === 'default' && activeEffort?.level === lvl ? 'lm-effort-pending' : ''}`}
                     onClick={() => handleEffort('default', lvl)}
+                    disabled={!!activeEffort}
                   >{lvl}</button>
                 ))}
               </span>
@@ -298,11 +327,20 @@ function LoginModelPanel({ hidden, mode, panelConfig, onPanelChange, runningAgen
                       return (
                         <button
                           key={lvl}
-                          className={`lm-effort-btn ${isActive ? (isOverride ? 'lm-effort-override' : 'lm-effort-active') : ''}`}
-                          onClick={() => handleEffort(agent.id, isActive && isOverride ? '' : lvl)}
+                          className={`lm-effort-btn ${isActive ? (isOverride ? 'lm-effort-override' : 'lm-effort-active') : ''} ${activeEffort?.id === agent.id && activeEffort?.level === lvl ? 'lm-effort-pending' : ''}`}
+                          onClick={() => handleEffort(agent.id, lvl)}
+                          disabled={!!activeEffort || isActive}
                         >{lvl}</button>
                       )
                     })}
+                    {agent.effort_source === 'override' && (
+                      <button
+                        className={`lm-effort-btn lm-effort-reset ${activeEffort?.id === agent.id && activeEffort?.level === '' ? 'lm-effort-pending' : ''}`}
+                        onClick={() => handleEffort(agent.id, '')}
+                        disabled={!!activeEffort}
+                        title="Retirer l’override et réappliquer l’effort hérité"
+                      >↺</button>
+                    )}
                   </span>
                 </td>
                 <td>

@@ -188,6 +188,14 @@ class TestEffortCommand:
         assert 'engine_apply_model_effort' in open(AGENT_SH).read()
         assert 'engine_apply_model_effort' in open(INFRA_SH).read()
 
+    def test_claude_effort_requires_a_new_confirmation(self):
+        """Une ancienne confirmation dans le scrollback ne vaut pas ACK."""
+        source = open(ENGINES_SH).read()
+        assert 'before_count=$(tmux capture-pane' in source
+        assert 'after_count=$(tmux capture-pane' in source
+        assert 'grep -Fc "Set effort level to $lvl"' in source
+        assert '[ "$after_count" -gt "$before_count" ]' in source
+
     def test_infra_applies_effort_once(self):
         """000 ne doit pas rejouer une ancienne slash-command après la danse."""
         source = open(INFRA_SH).read()

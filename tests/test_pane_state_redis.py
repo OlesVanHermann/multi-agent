@@ -32,6 +32,12 @@ class TestParsePaneState:
         assert st['busy'] is False
         assert st['claude_alive'] is True
 
+    def test_idle_when_status_line_is_far_from_pane_bottom(self):
+        out = "❯ \nbypass permissions on\n" + "\n" * 25
+        st = self._parse(out)
+        assert st['busy'] is False
+        assert st['claude_alive'] is True
+
     def test_not_busy_when_claude_dead(self):
         st = self._parse("whatever", pane_cmd="bash")
         assert st['busy'] is False
@@ -107,6 +113,20 @@ class TestParsePaneState:
         )
         assert instance._observed_model == "claude-fable-5"
         assert instance._observed_effort == "xhigh"
+
+    def test_claude_model_effort_observation_uses_latest_confirmation(self):
+        from agent import TmuxAgent
+        instance = object.__new__(TmuxAgent)
+        instance._observed_model = ""
+        instance._observed_effort = ""
+        instance._observe_claude_model_effort(
+            "Set model to Sonnet 5 and saved as your default for new sessions\n"
+            "Set effort level to high (saved as your default)\n"
+            "Set model to Fable 5 and saved as your default for new sessions\n"
+            "Set effort level to max (this session only)\n"
+        )
+        assert instance._observed_model == "claude-fable-5"
+        assert instance._observed_effort == "max"
 
     def test_bridge_never_uses_bare_model_or_effort_as_probe(self):
         source = open(os.path.join(_REPO_ROOT, "scripts", "agent-bridge", "agent.py")).read()

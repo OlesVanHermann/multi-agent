@@ -155,7 +155,7 @@ engine_apply_model_effort() {
                 tmux send-keys -t "$target" -l "/model $model"
                 sleep 0.5; tmux send-keys -t "$target" Enter; sleep 3
             fi
-            local lvl attempt
+            local lvl attempt before_count after_count
             lvl=$(engine_effort_level "$cli" "$effort")
             if [ -n "$lvl" ]; then
                 # Juste après /model, le re-rendu du TUI peut MANGER la frappe
@@ -164,12 +164,20 @@ engine_apply_model_effort() {
                 # affiche « <niveau> · /effort » quand c'est pris — et
                 # réessayer, composer nettoyé (C-u) avant chaque tentative.
                 for attempt in 1 2 3; do
+                    # Ne jamais valider sur une ANCIENNE confirmation encore
+                    # visible dans le scrollback. C'était possible après une
+                    # série max → ultracode → xhigh : une frappe avalée était
+                    # déclarée réussie si le niveau avait déjà été utilisé.
+                    before_count=$(tmux capture-pane -t "$target" -p -S -2000 2>/dev/null \
+                        | grep -Fc "Set effort level to $lvl" || true)
                     tmux send-keys -t "$target" C-u; sleep 0.3
                     tmux send-keys -t "$target" -l "/effort $lvl"
                     sleep 0.8; tmux send-keys -t "$target" Enter; sleep 1.5
                     # Ligne de résultat du TUI : « Set effort level to <lvl> … »
                     # (l'indicateur du footer n'est pas rendu en permanence).
-                    if tmux capture-pane -t "$target" -p -S -60 2>/dev/null | grep -q "Set effort level to $lvl"; then
+                    after_count=$(tmux capture-pane -t "$target" -p -S -2000 2>/dev/null \
+                        | grep -Fc "Set effort level to $lvl" || true)
+                    if [ "$after_count" -gt "$before_count" ]; then
                         return 0
                     fi
                 done
