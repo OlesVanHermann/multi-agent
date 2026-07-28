@@ -77,7 +77,18 @@ le bridge.
 Le runtime classe les événements avant toute injection : rapports dans
 `agent:<master>:reports`, contrôles dans `agent:<id>:control` et terminaux dans
 `agent:<id>:terminals`. Après upgrade, les bridges doivent être redémarrés
-manuellement pour charger ce routeur. L'upgrade ne les redémarre pas.
+manuellement pour charger ce routeur (`./scripts/agent.sh restart <triangle>`,
+par triangle, à la fenêtre choisie par l'opérateur). L'upgrade ne les
+redémarre pas. Le watchdog seul se recharge sans toucher aux services ni aux
+agents :
+
+```bash
+./scripts/infra.sh restart-watchdog
+```
+
+La commande vérifie que le PID de `logs/watchdog.pid` appartient bien à
+`healthcheck.py --watchdog` avant tout kill, est idempotente et affiche sa
+durée.
 
 Après l'upgrade :
 

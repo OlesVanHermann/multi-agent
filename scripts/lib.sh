@@ -21,6 +21,19 @@ agent_status_key()   { printf 'agent:%s\n' "$1"; }
 agent_inbox_key()    { printf 'agent:%s:inbox\n' "$1"; }
 agent_outbox_key()   { printf 'agent:%s:outbox\n' "$1"; }
 
+# Vérifie qu'un PID appartient bien au watchdog (healthcheck.py --watchdog).
+# Ne jamais tuer un PID recyclé par un autre process : le fichier
+# logs/watchdog.pid peut survivre à un reboot.
+watchdog_pid_matches() {
+    local pid="$1" args
+    [ -n "$pid" ] || return 1
+    args=$(ps -p "$pid" -o args= 2>/dev/null) || return 1
+    case "$args" in
+        *healthcheck.py*--watchdog*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Coordinateur d'un triangle NNN-YZZ : NNN-1ZZ.
 # Retourne 1 pour un ID global ou pour le coordinateur lui-même.
 triangle_master_id() {

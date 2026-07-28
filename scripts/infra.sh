@@ -17,6 +17,7 @@ if [ -f "$BASE_DIR/setup/secrets.cfg" ]; then
     set +a
 fi
 source "$SCRIPT_DIR/engines.sh"   # E1 : moteurs CLI (claude | codex)
+source "$SCRIPT_DIR/lib.sh"       # watchdog_pid_matches, IDs agents
 BRIDGE_SCRIPT="$BASE_DIR/scripts/agent-bridge/agent.py"
 LOG_DIR="$BASE_DIR/logs/000"
 WEB_DIR="$BASE_DIR/web"
@@ -102,6 +103,42 @@ stop_watchdog() {
     else
         log_warn "Watchdog not running"
     fi
+}
+
+# Recharge UNIQUEMENT le watchdog (ex. après upgrade, pour charger le
+# nouveau healthcheck.py). Redis, Keycloak, le dashboard, l'agent 000 et
+# tous les agents ne sont pas touchés. Idempotent : watchdog absent ou PID
+# périmé = démarrage propre. Durée mesurée (horloge monotone) et affichée.
+do_restart_watchdog() {
+    local t0 t1 pid="" new_pid="" i
+    t0=$(cut -d' ' -f1 /proc/uptime)
+    [ -f "$WATCHDOG_PID_FILE" ] && pid=$(cat "$WATCHDOG_PID_FILE" 2>/dev/null || true)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        if ! watchdog_pid_matches "$pid"; then
+            log_error "PID $pid (logs/watchdog.pid) n'est pas healthcheck.py --watchdog — aucun kill" >&2
+            return 1
+        fi
+        kill "$pid"
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.3
+        done
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+        log_ok "Watchdog stopped (PID: $pid)"
+    else
+        log_warn "Watchdog not running — restart = démarrage propre"
+    fi
+    : >"$WATCHDOG_PID_FILE" 2>/dev/null || true
+    start_watchdog
+    [ -f "$WATCHDOG_PID_FILE" ] && new_pid=$(cat "$WATCHDOG_PID_FILE" 2>/dev/null || true)
+    if [ -z "$new_pid" ] || ! kill -0 "$new_pid" 2>/dev/null; then
+        log_error "Watchdog non démarré après restart" >&2
+        return 1
+    fi
+    t1=$(cut -d' ' -f1 /proc/uptime)
+    log_ok "restart-watchdog terminé en $(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.1f", b-a}')s (PID: $new_pid)"
 }
 
 # ── Docker helper ──
@@ -383,10 +420,11 @@ do_stop() {
 # ── Help ──
 
 show_help() {
-    echo "Usage: $0 <start|stop>"
+    echo "Usage: $0 <start|stop|restart-watchdog>"
     echo ""
-    echo "  $0 start   Start Docker, Redis, Keycloak, Dashboard, Agent 000"
-    echo "  $0 stop    Stop everything"
+    echo "  $0 start             Start Docker, Redis, Keycloak, Dashboard, Agent 000"
+    echo "  $0 stop              Stop everything"
+    echo "  $0 restart-watchdog  Reload ONLY the watchdog (services et agents intacts)"
 }
 
 # ── Main ──
@@ -394,6 +432,7 @@ show_help() {
 case "$1" in
     start)  do_start ;;
     stop)   do_stop ;;
+    restart-watchdog) do_restart_watchdog ;;
     -h|--help|help|"") show_help ;;
     *)      log_error "Unknown action: $1"; show_help; exit 1 ;;
 esac

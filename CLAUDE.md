@@ -323,6 +323,7 @@ pending/  →  assigned/  →  done/
 # ── Infrastructure ──
 ./scripts/infra.sh start          # Docker, Redis, Keycloak, Dashboard, Agent 000
 ./scripts/infra.sh stop           # Tout arrêter
+./scripts/infra.sh restart-watchdog  # Recharger UNIQUEMENT le watchdog
 
 # ── Agents ──
 ./scripts/agent.sh start all     # Lancer tous les agents
@@ -380,7 +381,7 @@ Claude Code et `gpt-*` utilise Codex CLI.
 |---|---|---|
 | `.login` | slot de compte neutre | `prompts/login1a.login` |
 | `.model` | identifiant de modèle | `prompts/gpt-5-6-sol.model` → `gpt-5.6-sol` |
-| `.effort` | effort de raisonnement (L/M/H) | `prompts/301.effort` |
+| `.effort` | effort de raisonnement (L/M/H/X/U selon le modèle) | `prompts/301.effort` |
 
 Même cascade de résolution pour les trois configurations :
 `prompts/<dir-agent>/<id>.<ext>` → `prompts/<id>.<ext>` → `prompts/default.<ext>`.
