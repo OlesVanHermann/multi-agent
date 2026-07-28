@@ -54,7 +54,7 @@ def scaffold(base, triangle, directory_name, contradictor_login,
     entry.symlink_to(Path("..") / "AGENT.md")
 
     assignments = {
-        agent_id: ("opus-5.model", f"{contradictor_login}.login", "M"),
+        agent_id: ("fable-5.model", f"{contradictor_login}.login", "M"),
     }
     for agent_id, (model, login, effort) in assignments.items():
         for ext, source in (("model", model), ("login", login)):

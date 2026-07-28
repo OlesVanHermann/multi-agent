@@ -173,20 +173,20 @@ for id in {ID}-1{XX} {ID}-{ID} {ID}-5{XX} {ID}-7{XX} {ID}-8{XX} {ID}-9{XX}; do
   ln -s ../AGENT.md ${id}.md
 done
 
-# Model + Login
-ln -s ../gpt-5-6-sol.model {ID}-1{XX}.model # Master = gpt-5.6-sol
+# Model + Login (matrice nouveaux agents — un agent existant garde son affectation)
+ln -s ../sonnet-5.model {ID}-1{XX}.model    # Master = claude-sonnet-5
 ln -s ../opus-5.model {ID}-{ID}.model       # Dev = claude-opus-5
-ln -s ../sonnet-5.model {ID}-5{XX}.model    # Tester = sonnet-5
-ln -s ../sonnet-5.model {ID}-7{XX}.model    # Reviewer = sonnet-5
-ln -s ../sonnet-5.model {ID}-8{XX}.model    # Coach = sonnet-5
+ln -s ../fable-5.model {ID}-5{XX}.model     # Tester = claude-fable-5
+ln -s ../gpt-5-6-sol.model {ID}-7{XX}.model # Reviewer = gpt-5.6-sol
+ln -s ../gpt-5-6-sol.model {ID}-8{XX}.model # Coach = gpt-5.6-sol
 ln -s ../gpt-5-6-sol.model {ID}-9{XX}.model # Architect = gpt-5.6-sol
 
-ln -s ../login1a.login {ID}-1{XX}.login
-ln -s ../login1a.login {ID}-{ID}.login
+ln -s ../login3a.login {ID}-1{XX}.login
+ln -s ../login4a.login {ID}-{ID}.login
 ln -s ../login1a.login {ID}-5{XX}.login
-ln -s ../login1b.login {ID}-7{XX}.login
-ln -s ../login1b.login {ID}-8{XX}.login
-ln -s ../login1b.login {ID}-9{XX}.login
+ln -s ../login4a.login {ID}-7{XX}.login
+ln -s ../login1a.login {ID}-8{XX}.login
+ln -s ../login4a.login {ID}-9{XX}.login
 ```
 
 ### 7. Verifier

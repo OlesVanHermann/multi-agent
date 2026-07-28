@@ -132,7 +132,7 @@ def main():
     parser.add_argument("--main-suffix", help="slot 1XX (défaut: mêmes dizaines/unités)")
     parser.add_argument("--contradictor-suffix", help="slot 2XX (défaut: mêmes dizaines/unités)")
     parser.add_argument("--base", type=Path, default=BASE)
-    parser.add_argument("--contradictor-model", default="opus-5")
+    parser.add_argument("--contradictor-model", default="fable-5")
     parser.add_argument("--contradictor-login", default="login3a")
     parser.add_argument("--main-model", default="gpt-5-6-sol")
     parser.add_argument("--main-login", default="login1a")

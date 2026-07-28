@@ -123,4 +123,6 @@ python3 scripts/scaffold-observers.py 345 \
   --contradictor-login login3a
 ```
 
-Le Contradictor utilise par défaut `opus-5`, `login3a` et l'effort `M`.
+Le Contradictor utilise par défaut `fable-5`, `login3a` et l'effort `M`
+(matrice des nouveaux agents ; un Contradictor existant garde son
+affectation en place).

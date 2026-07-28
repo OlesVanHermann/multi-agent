@@ -8,13 +8,15 @@ from pathlib import Path
 
 BASE = Path(__file__).resolve().parent.parent
 
+# Matrice opérateur 2026-07-28 : s'applique aux NOUVEAUX agents ;
+# un agent existant garde son affectation en place (aucune migration auto).
 ROLE_DEFAULTS = {
-    "master": ("100", "gpt-5-6-sol", "login3a", "M"),
-    "contradictor": ("200", "opus-5", "login3a", "M"),
-    "developer": ("300", "opus-5", "login1a", "M"),
-    "observer": ("500", "gpt-5-6-sol", "login1a", "M"),
+    "master": ("100", "sonnet-5", "login3a", "M"),
+    "contradictor": ("200", "fable-5", "login3a", "M"),
+    "developer": ("300", "opus-5", "login4a", "M"),
+    "observer": ("500", "fable-5", "login1a", "M"),
     "curator": ("700", "gpt-5-6-sol", "login4a", "M"),
-    "coach": ("800", "opus-5", "login1a", "M"),
+    "coach": ("800", "gpt-5-6-sol", "login1a", "M"),
     "architect": ("900", "gpt-5-6-sol", "login4a", "M"),
 }
 

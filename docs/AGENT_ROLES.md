@@ -201,14 +201,18 @@ cohérence globale et évite les doublons ou les zones sans propriétaire.
 | Sortie | conclusion consultative au `1XX` | bilan, hard gates et score |
 | Effet direct sur le cycle | aucun | transition selon la preuve du bridge |
 
-## Affectation par défaut
+## Affectation par défaut (nouveaux agents)
 
-| Rôles | Login | Effort |
-|---|---|---|
-| Developer ou principal mono | `login1a` | `M` |
-| Observer | `login1a` | `M` |
-| Coach | `login1a` | `M` |
-| Master + Contradictor | `login3a` | `M` |
-| Curator + Architect | `login4a` | `M` |
+| Rôles | Modèle | Login | Effort |
+|---|---|---|---|
+| Master `1XX` | `sonnet-5` | `login3a` | `M` |
+| Contradictor `2XX` | `fable-5` | `login3a` | `M` |
+| Developer `3XX` | `opus-5` | `login4a` | `M` |
+| Observer `5XX` | `fable-5` | `login1a` | `M` |
+| Curator `7XX` | `gpt-5-6-sol` | `login4a` | `M` |
+| Coach `8XX` | `gpt-5-6-sol` | `login1a` | `M` |
+| Architect `9XX` | `gpt-5-6-sol` | `login4a` | `M` |
 
-Tous les profils utilisent le slot `a` par défaut.
+Tous les profils utilisent le slot `a` par défaut. Un agent déjà installé
+garde son affectation existante : la matrice ne migre jamais un agent en
+place automatiquement.
