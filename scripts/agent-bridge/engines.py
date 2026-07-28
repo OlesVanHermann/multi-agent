@@ -264,16 +264,38 @@ def _substitute_na(node):
 # dans scripts/agent.sh.
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _resolve_agent_dir(prompts_dir, base_id):
-    """Répertoire x45/z21 d'un agent : prompts/<id> ou prompts/<id>-<nom>."""
-    import re
+def resolve_agent_config(prompts_dir, agent_id, extension, default=""):
+    """Resolve one agent config without trusting directory iteration order."""
+    prompts_dir = Path(prompts_dir)
+    base_id = agent_id.split("-")[0]
+    directories = []
     exact = prompts_dir / base_id
     if exact.is_dir():
-        return exact
-    for d in prompts_dir.iterdir():
-        if d.is_dir() and re.match(rf"^{re.escape(base_id)}-", d.name):
-            return d
-    return None
+        directories.append(exact)
+    directories.extend(sorted(
+        path for path in prompts_dir.glob(f"{base_id}-*") if path.is_dir()
+    ))
+    matches = []
+    for directory in directories:
+        candidate = directory / f"{agent_id}.{extension}"
+        if candidate.is_symlink() or candidate.exists():
+            matches.append(candidate)
+    if len(matches) > 1:
+        raise RuntimeError(
+            f"{agent_id}: multiple .{extension} overrides: "
+            + ", ".join(str(path) for path in matches)
+        )
+    candidates = matches + [prompts_dir / f"{agent_id}.{extension}"]
+    if "-" in agent_id:
+        candidates.append(prompts_dir / f"{base_id}.{extension}")
+    candidates.append(prompts_dir / f"default.{extension}")
+    for candidate in candidates:
+        if candidate.is_symlink() or candidate.exists():
+            try:
+                return candidate.read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+    return default
 
 
 def agent_engine(prompts_dir, agent_id):
@@ -283,21 +305,8 @@ def agent_engine(prompts_dir, agent_id):
     divergence ferait parser un pane codex avec les marqueurs de Claude Code
     (agent vu figé ou mort au dashboard, sans erreur).
     """
-    prompts_dir = Path(prompts_dir)
-    base_id = agent_id.split("-")[0]
-    candidates = []
-    agent_dir = _resolve_agent_dir(prompts_dir, base_id)
-    if agent_dir is not None:
-        candidates.append(agent_dir / f"{agent_id}.model")
-    candidates.append(prompts_dir / f"{agent_id}.model")
-    if "-" in agent_id:
-        candidates.append(prompts_dir / f"{base_id}.model")
-    candidates.append(prompts_dir / "default.model")
-    for cand in candidates:
-        if cand.is_symlink() or cand.exists():
-            model_id = cand.read_text(encoding="utf-8").strip()
-            return "codex" if model_id.startswith("gpt-") else "claude"
-    return ENGINE_DEFAULT
+    model_id = resolve_agent_config(prompts_dir, agent_id, "model")
+    return engine_for_model(model_id) if model_id else ENGINE_DEFAULT
 
 
 # ═══════════════════════════════════════════════════════════════════════════

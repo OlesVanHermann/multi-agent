@@ -161,24 +161,8 @@ def _plan_mode_active(out, markers):
 
 def _configured_value(agent_id, extension, default=""):
     """Résout une configuration selon la cascade canonique, sans mutation."""
-    prompts = BASE_DIR / "prompts"
-    base_id = str(agent_id).split('-')[0]
-    agent_dir = prompts / base_id
-    if not agent_dir.is_dir():
-        matches = sorted(p for p in prompts.glob(f"{base_id}-*") if p.is_dir())
-        agent_dir = matches[0] if matches else None
-    candidates = []
-    if agent_dir:
-        candidates.append(agent_dir / f"{agent_id}.{extension}")
-    candidates.extend((prompts / f"{agent_id}.{extension}",
-                       prompts / f"default.{extension}"))
-    for path in candidates:
-        try:
-            if path.exists() or path.is_symlink():
-                return path.read_text().strip()
-        except OSError:
-            continue
-    return default
+    return engines.resolve_agent_config(
+        BASE_DIR / "prompts", str(agent_id), extension, default)
 
 
 def _configured_model(agent_id):
@@ -190,7 +174,13 @@ def _configured_effort(agent_id):
 
 
 def _expected_effort_name(effort):
-    return {"L": "medium", "M": "high", "H": "xhigh"}.get(
+    return {
+        "L": "medium",
+        "M": "high",
+        "H": "xhigh",
+        "X": "max",
+        "U": "ultracode",
+    }.get(
         str(effort).strip().upper(), str(effort).strip().lower())
 
 

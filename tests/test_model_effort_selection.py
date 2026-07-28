@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import engines
 from web.backend.multi_agent.prompts import _find_agent_config
 from web.backend.multi_agent.routers.config import (
     _config_owner_dir,
@@ -27,6 +28,9 @@ def test_config_resolver_selects_directory_that_owns_override(tmp_path):
     prompts, _hub, active = _fixture_dirs(tmp_path)
 
     assert _find_agent_config(prompts, "000", "model") == active / "000.model"
+    assert engines.resolve_agent_config(
+        prompts, "000", "model") == "claude-fable-5"
+    assert engines.agent_engine(prompts, "000") == "claude"
     assert _config_owner_dir(prompts, "000") == active
     assert _link_path_for(prompts, "000", "effort") == (
         active / "000.effort",
@@ -40,6 +44,8 @@ def test_config_resolver_rejects_two_exact_overrides(tmp_path):
 
     with pytest.raises(RuntimeError, match="multiple .model overrides"):
         _find_agent_config(prompts, "000", "model")
+    with pytest.raises(RuntimeError, match="multiple .model overrides"):
+        engines.resolve_agent_config(prompts, "000", "model")
 
 
 @pytest.mark.parametrize(

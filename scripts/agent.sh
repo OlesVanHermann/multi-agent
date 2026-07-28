@@ -147,7 +147,12 @@ resolve_config() {
         cat "$PROMPTS_DIR/${agent_id}.${ext}" | tr -d '[:space:]'
         return
     fi
-    # 3. prompts/default.ext (fallback)
+    # 3. Override du groupe pour un satellite.
+    if [[ "$agent_id" == *-* ]] && [ -f "$PROMPTS_DIR/${base}.${ext}" ]; then
+        cat "$PROMPTS_DIR/${base}.${ext}" | tr -d '[:space:]'
+        return
+    fi
+    # 4. prompts/default.ext (fallback)
     if [ -f "$PROMPTS_DIR/default.${ext}" ]; then
         cat "$PROMPTS_DIR/default.${ext}" | tr -d '[:space:]'
         return
