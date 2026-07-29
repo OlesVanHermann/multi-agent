@@ -34,10 +34,28 @@ sont interdits dans les prompts.
 | `ALREADY_DELIVERED` | rejeu strict d'un terminal au contenu identique | aucune transition supplémentaire |
 | `NOT_DELIVERED` | même slot terminal, contenu différent | ouvrir un nouveau `CYCLE`/`CORR`, puis réémettre |
 | `ORPHANED` | message persisté, session cible absente | attendre le rejeu au redémarrage, sans réémission en boucle |
-| `INVALID` | enveloppe ou événement invalide | corriger ou utiliser le canal de secours |
+| `INVALID` | enveloppe sans contenu ou malformée | corriger ou utiliser le canal de secours |
 | `rescue:` | signal de métadonnée manquante seulement | réparer l'enveloppe avant le résultat métier |
 
 Un état de transport n'est jamais une preuve de réussite métier.
+
+## Routage ouvert entre agents
+
+La taxonomie des événements sert au routage, à la corrélation et à
+l'anti-bruit. Elle ne constitue jamais une liste d'autorisation : aucun type
+d'événement ne permet d'autoriser ou d'interdire à un agent de parler à un
+autre.
+
+Tout message inter-agent qui contient un contenu exploitable est actionnable et
+atteint le TUI de sa cible, même si son type est inconnu de la taxonomie. Le
+type inconnu reste conservé dans l'enveloppe pour l'audit ; il ne justifie ni
+blocage ni quarantaine. La quarantaine est réservée aux enveloppes sans contenu
+ou malformées, qui ne peuvent pas être injectées de manière fiable.
+
+`CONCLUSION` est le type canonique émis par le Contradictor. L'ancien type
+`ADVISORY_CONCLUSION` reste accepté comme alias terminal : dans les deux cas,
+l'avis atteint le TUI du Master et n'ouvre aucune obligation de réponse ou
+d'acquittement.
 
 ## Canal de secours
 

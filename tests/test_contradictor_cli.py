@@ -91,12 +91,14 @@ def test_send_transmits_exact_conclusion_and_archives_proof(tmp_path, monkeypatc
     def fake_run(command, **kwargs):
         captured["command"] = command
         captured["input"] = kwargs["input"]
+        captured["env"] = kwargs["env"]
         return type("Result", (), {"returncode": 0, "stdout": "ok: 345-145 1-0", "stderr": ""})()
 
     monkeypatch.setattr(MODULE.subprocess, "run", fake_run)
     MODULE.send("345")
     assert captured["command"][-1] == "345-145"
     assert captured["input"] == conclusion
+    assert captured["env"]["MESSAGE_EVENT"] == "CONCLUSION"
     sent = list((output / "sent").glob("*-conclusion.md"))
     assert len(sent) == 1
     assert sent[0].read_text() == conclusion

@@ -51,12 +51,16 @@ def test_event_taxonomy():
         envelope("MESSAGE", from_agent="cli")) == "actionable"
     assert event_router.classify(envelope("DONE")) == "terminal"
     assert event_router.classify(envelope("INFO_REQUIRED")) == "terminal"
+    assert event_router.classify(envelope("CONCLUSION")) == "terminal"
+    assert event_router.classify(
+        envelope("ADVISORY_CONCLUSION")) == "terminal"
     assert event_router.classify(envelope("MASTER_REPORT")) == "supervision"
     assert event_router.classify(envelope("PROTOCOL_ERROR")) == "control"
     assert event_router.classify(envelope("TERMINAL_PENDING")) == "control"
     assert event_router.classify(
         envelope("RUNTIME_INCONSISTENCY")) == "control"
-    assert event_router.classify(envelope("UNATTRIBUTED")) == "quarantine"
+    assert event_router.classify(
+        envelope("UNATTRIBUTED", prompt="")) == "quarantine"
 
 
 def test_terminals_wake_bare_id_recipients():
@@ -165,6 +169,63 @@ def test_duplicate_terminal_never_creates_second_turn():
     agent._handle_inbox_message("1-0", envelope("DONE"))
     agent._handle_inbox_message("2-0", envelope("DONE"))
     assert agent.prompt_queue.qsize() == 1
+
+
+def test_advisory_conclusion_reaches_master_as_one_decision_turn():
+    agent = bridge("303-103")
+    advisory = envelope(
+        "ADVISORY_CONCLUSION",
+        from_agent="303-203",
+        prompt="Conclusion contradictoire factuelle.",
+    )
+
+    agent._handle_inbox_message("1-0", advisory)
+
+    assert agent.prompt_queue.qsize() == 1
+    task = agent.prompt_queue.get_nowait()
+    assert task["from_agent"] == "303-203"
+    assert task["event"] == "DECISION_REQUIRED"
+    assert "Conclusion contradictoire factuelle." in task["prompt"]
+    assert not agent._requires_correlated_event(task)
+    assert not agent._requires_master_report(task)
+
+
+def test_unknown_inter_agent_event_with_prompt_is_actionable_and_queued():
+    agent = bridge("303-103")
+    message = envelope(
+        "FIELD_NOTE",
+        from_agent="303-203",
+        prompt="Observation utile non encore normalisée.",
+    )
+
+    assert event_router.classify(message) == "actionable"
+    agent._handle_inbox_message("1-0", message)
+
+    assert agent.prompt_queue.qsize() == 1
+    task = agent.prompt_queue.get_nowait()
+    assert task["event"] == "FIELD_NOTE"
+    assert task["prompt"] == "Observation utile non encore normalisée."
+    assert all(
+        call.args[0] != "agent:303-103:quarantine"
+        for call in agent.redis.xadd.call_args_list
+    )
+
+
+def test_duplicate_advisory_conclusion_opens_only_one_decision_turn():
+    agent = bridge("303-103")
+    agent.redis.set.side_effect = [True, False]
+    advisory = envelope(
+        "ADVISORY_CONCLUSION",
+        from_agent="303-203",
+        prompt="Même conclusion, même enveloppe.",
+    )
+
+    agent._handle_inbox_message("1-0", advisory)
+    agent._handle_inbox_message("2-0", advisory)
+
+    assert agent.prompt_queue.qsize() == 1
+    task = agent.prompt_queue.get_nowait()
+    assert task["event"] == "DECISION_REQUIRED"
 
 
 def test_watchdog_observes_silence_without_fabricating_protocol_error():

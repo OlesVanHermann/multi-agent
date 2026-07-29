@@ -14,7 +14,7 @@ import json
 ACTIONABLE = {"", "MESSAGE", "DISPATCH", "DECISION_REQUIRED"}
 TERMINAL = {
     "DONE", "SCORE", "BLOCKED", "ERROR", "INFO_REQUIRED", "ARTIFACT_READY",
-    "CONCLUSION", "ARBITRAGE", "PROMPT_RELOADED",
+    "CONCLUSION", "ADVISORY_CONCLUSION", "ARBITRAGE", "PROMPT_RELOADED",
 }
 SUPERVISION = {"MASTER_REPORT", "STATUS", "PROGRESS", "ACK"}
 CONTROL = {
@@ -41,6 +41,12 @@ def classify(data):
     if event in CONTROL:
         return "control"
     if event in ACTIONABLE:
+        return "actionable"
+    # La taxonomie sert à optimiser le routage, jamais à décider si un agent
+    # a le droit de parler à un autre. Un événement applicatif nouveau ou
+    # inconnu qui transporte réellement un message doit donc atteindre le
+    # destinataire. La quarantaine reste réservée aux enveloppes sans contenu.
+    if str(data.get("prompt", "") or "").strip():
         return "actionable"
     return "quarantine"
 

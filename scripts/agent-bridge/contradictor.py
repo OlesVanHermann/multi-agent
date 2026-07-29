@@ -210,7 +210,7 @@ def analysis_view(target, triangle_agents, task_list, memory_text, streams,
     terminal_events = {
         "DONE", "SCORE", "INFO_REQUIRED", "ERROR", "BLOCKED",
         "ARTIFACT_READY", "PROTOCOL_ERROR", "ARBITRAGE", "CONCLUSION",
-        "PROMPT_RELOADED",
+        "ADVISORY_CONCLUSION", "PROMPT_RELOADED",
     }
     active = task_list[0] if len(task_list) == 1 else None
     task_ids = {task["id"] for task in task_list}
@@ -250,7 +250,7 @@ def analysis_view(target, triangle_agents, task_list, memory_text, streams,
             match = re.search(
                 r"(?:EVENT:|\|)(DONE|SCORE|INFO_REQUIRED|ERROR|BLOCKED|"
                 r"ARTIFACT_READY|PROTOCOL_ERROR|ARBITRAGE|CONCLUSION|"
-                r"PROMPT_RELOADED)\b",
+                r"ADVISORY_CONCLUSION|PROMPT_RELOADED)\b",
                 prompt)
             event = match.group(1) if match else ""
         if event:
@@ -521,7 +521,10 @@ def send(triangle):
     )
     env["REQUESTER_ID"] = state.get("requester") or "cli"
     env["OWNER_ID"] = contradictor
-    env["MESSAGE_EVENT"] = "ADVISORY_CONCLUSION"
+    # Utiliser le terminal canonique déjà compris par tous les bridges en
+    # cours d'exécution. ADVISORY_CONCLUSION reste accepté par le routeur pour
+    # compatibilité avec les messages déjà produits et les anciens émetteurs.
+    env["MESSAGE_EVENT"] = "CONCLUSION"
     try:
         result = subprocess.run([str(BASE / "scripts" / "send.sh"), target], cwd=BASE,
                                 input=message, text=True, capture_output=True, env=env,
