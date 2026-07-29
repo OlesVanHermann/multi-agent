@@ -112,6 +112,32 @@ fichier `.effort` est donc réutilisé lors d'un changement de modèle.
 Les erreurs TUI qui rendent un agent rouge, leur source et leur traitement sont
 documentés dans [ENGINE-ERRORS.md](ENGINE-ERRORS.md).
 
-Un changement depuis le dashboard est aussi appliqué à chaud si la session
-existe et que l'agent est libre. Sinon, le fichier est conservé et prendra
-effet au prochain démarrage.
+## Ce qui s'applique à chaud, ce qui exige un redémarrage
+
+C'est le **moteur** qui décide, pas le modèle.
+
+| Changement | Effet |
+|---|---|
+| Modèle à moteur constant (`claude-*`→`claude-*`, `gpt-*`→`gpt-*`) | appliqué à chaud, automatiquement |
+| Effort / raisonnement (`L`…`U`) | appliqué à chaud, automatiquement |
+| Moteur (`claude-*` ↔ `gpt-*`) | enregistré seulement — **redémarrage requis** |
+| Profil de login | enregistré seulement — **redémarrage requis** |
+
+À moteur constant, le CLI déjà lancé sait changer de modèle et de niveau par
+ses propres commandes : la session, la mémoire et l'historique de l'agent sont
+préservés, et l'opérateur n'a rien à faire.
+
+Un changement de moteur ou de profil ne peut pas s'appliquer à chaud : le
+binaire et la variable d'authentification (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`)
+sont fixés au lancement. La nouvelle valeur est écrite dans `.model`/`.login`
+et prendra effet au prochain démarrage. **Le framework ne redémarre jamais un
+agent de lui-même** : la réponse porte `restart_required: true` et la commande
+reste à la main de l'opérateur.
+
+```bash
+./scripts/agent.sh restart <id>
+```
+
+Dans tous les cas, l'application à chaud n'a lieu que si la session tourne et
+que l'agent est libre ; sinon la valeur est conservée et la réponse l'annonce
+comme différée (`deferred`) avec sa raison.

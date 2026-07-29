@@ -497,9 +497,54 @@ async def update_agent_engine(data: AgentEngineUpdate):
     }
 
 
+async def _apply_to_live_tui(prompts_dir: Path, agent_id: str,
+                             effort_level: str, send_model: bool = False):
+    """Applique modèle et/ou effort au TUI d'une session vivante et libre.
+
+    Retourne `(applied, reason)`. N'est appelée QUE lorsque le moteur ne
+    change pas : le CLI déjà lancé sait changer de modèle et d'effort par
+    ses propres commandes. Un changement de moteur, lui, exige un
+    redémarrage — jamais automatique, c'est une décision de l'opérateur.
+    """
+    session = f"agent-{agent_id}"
+    alive = await _run_subprocess(["tmux", "has-session", "-t", session])
+    if alive.returncode != 0:
+        return False, "session absente"
+    busy = False
+    if state.redis_pool:
+        try:
+            pane = await state.redis_pool.hget(f"agent:{agent_id}", "pane_state")
+            busy = bool(json.loads(pane).get("busy")) if pane else False
+        except Exception:
+            busy = False
+    if busy:
+        return False, "agent occupé — effectif au prochain démarrage"
+    model_id = _effective_model_id(prompts_dir, agent_id)
+    cli = engines.engine_for_model(model_id)
+    # Codex passe toujours par son picker (modèle et niveau dans le même
+    # flux) ; Claude ne reçoit `/model` que si le modèle change vraiment.
+    model_arg = model_id if (send_model or cli == "codex") else ""
+    res = await _run_subprocess(
+        ["bash", "-c",
+         'source "$1/scripts/engines.sh" && engine_apply_model_effort "$2" "$3" "$4" "$5"',
+         "_", str(cfg.BASE_DIR), session, cli, model_arg, effort_level],
+        timeout=40,
+    )
+    if res.returncode == 0:
+        return True, ""
+    return False, "échec de la commande TUI (voir logs)"
+
+
 @router.post("/api/config/logins-models")
 async def update_login_model(data: LoginModelUpdate):
-    """Create or remove a login/model symlink override for an agent."""
+    """Create or remove a login/model symlink override for an agent.
+
+    Modèle à moteur constant (`claude-*`→`claude-*`, `gpt-*`→`gpt-*`) :
+    appliqué à chaud, l'agent garde sa session et sa mémoire. Changement de
+    moteur ou de profil de login : enregistré seulement, avec
+    `restart_required` — le redémarrage appartient à l'opérateur et n'est
+    JAMAIS déclenché automatiquement.
+    """
     prompts_dir = cfg.BASE_DIR / "prompts"
 
     if data.type not in ("login", "model"):
@@ -553,6 +598,11 @@ async def update_login_model(data: LoginModelUpdate):
                             f"CODEX_HOME={cfg.BASE_DIR}/login/{profile} codex login"),
                 )
 
+    # Moteur AVANT écriture : c'est lui, pas le modèle, qui décide si le
+    # changement est applicable à chaud ou s'il exige un redémarrage.
+    previous_engine = engines.engine_for_model(
+        _effective_model_id(prompts_dir, data.agent_id))
+
     # Même résolution que la lecture (_find_agent_config) : répertoire de
     # l'agent d'abord (mono comme x45/z21), prompts/ sinon.
     link_path, _prefix = _link_path_for(prompts_dir, data.agent_id, data.type)
@@ -592,7 +642,43 @@ async def update_login_model(data: LoginModelUpdate):
     if ghost != link_path and (ghost.is_symlink() or ghost.exists()):
         ghost.unlink()
 
-    return {"status": "updated", "agent_id": data.agent_id, "type": data.type, "value": data.value}
+    # ── Application : à chaud à moteur constant, différée sinon ──────────
+    new_engine = engines.engine_for_model(
+        _effective_model_id(prompts_dir, data.agent_id))
+    engine_changed = new_engine != previous_engine
+    # Un profil de login est passé au CLI à son lancement
+    # (CLAUDE_CONFIG_DIR / CODEX_HOME) : il ne se change pas dans le TUI.
+    restart_required = engine_changed or data.type == "login"
+    applied = False
+    if restart_required:
+        reason = (
+            f"changement de moteur {previous_engine} → {new_engine} : "
+            "redémarrage requis (./scripts/agent.sh restart "
+            f"{data.agent_id}) — jamais automatique"
+            if engine_changed else
+            "changement de profil de login : redémarrage requis "
+            f"(./scripts/agent.sh restart {data.agent_id}) — jamais automatique"
+        )
+    elif data.agent_id == "default":
+        reason = "défaut global enregistré — sessions actives inchangées"
+    else:
+        effort_level = (engines.resolve_agent_config(
+            prompts_dir, data.agent_id, "effort", "M").strip().upper() or "M")
+        applied, reason = await _apply_to_live_tui(
+            prompts_dir, data.agent_id, effort_level, send_model=True)
+
+    return {
+        "status": "updated",
+        "agent_id": data.agent_id,
+        "type": data.type,
+        "value": data.value,
+        "engine": new_engine,
+        "engine_changed": engine_changed,
+        "applied": applied,
+        "deferred": not applied,
+        "restart_required": restart_required,
+        **({"reason": reason} if not applied else {}),
+    }
 
 
 @router.post("/api/config/effort")
@@ -659,29 +745,10 @@ async def update_effort(data: EffortUpdate):
         if data.agent_id == "default" else "session absente"
     )
     if data.agent_id != "default":
-        session = f"agent-{data.agent_id}"
-        alive = await _run_subprocess(["tmux", "has-session", "-t", session])
-        if alive.returncode == 0:
-            busy = False
-            if state.redis_pool:
-                try:
-                    ps = await state.redis_pool.hget(f"agent:{data.agent_id}", "pane_state")
-                    busy = bool(json.loads(ps).get("busy")) if ps else False
-                except Exception:
-                    busy = False
-            if busy:
-                reason = "agent occupé — effectif au prochain démarrage"
-            else:
-                cli = engines.engine_for_model(_effective_model_id(prompts_dir, data.agent_id))
-                model_arg = _effective_model_id(prompts_dir, data.agent_id) if cli == "codex" else ""
-                res = await _run_subprocess(
-                    ["bash", "-c",
-                     'source "$1/scripts/engines.sh" && engine_apply_model_effort "$2" "$3" "$4" "$5"',
-                     "_", str(cfg.BASE_DIR), session, cli, model_arg, effective_level],
-                    timeout=40,
-                )
-                applied = res.returncode == 0
-                reason = "" if applied else "échec de la commande TUI (voir logs)"
+        # Même chemin d'application que le changement de modèle à moteur
+        # constant : l'effort se règle par la commande du CLI en cours.
+        applied, reason = await _apply_to_live_tui(
+            prompts_dir, data.agent_id, effective_level)
     return {
         "status": status,
         "agent_id": data.agent_id,
