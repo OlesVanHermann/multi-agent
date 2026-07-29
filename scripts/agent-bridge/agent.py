@@ -1159,25 +1159,46 @@ class TmuxAgent:
         with self._inflight_lock:
             self._inflight_ids.discard(msg_id)
 
-    def _attach_pending_reports(self, task):
-        """Ajoute un résumé borné au prochain vrai tour du Master.
+    def _pending_streams(self):
+        """Streams parqués à annexer au prochain vrai tour de CET agent.
 
-        Couvre les rapports de supervision ET les contrôles (dont
-        TERMINAL_PENDING) : un demandeur en WAITING constate ainsi le
-        silence de sa cible sans réveil dédié et sans polling.
+        Tout stream qui a un écrivain doit avoir un lecteur. Le non-réveil
+        reste la règle (anti-bruit v3.2.12), mais le contenu doit finir par
+        atteindre son destinataire : sinon il est perdu alors que l'émetteur
+        a lu `DELIVERED`. `reports` n'existe que pour un coordinateur de
+        triangle ; `control`, `terminals` et `supervision` concernent TOUS
+        les agents — y compris les IDs nus, pour lesquels le watchdog écrit
+        déjà des TERMINAL_PENDING en promettant ce drainage.
         """
-        if event_router.triangle_master(self.agent_id) != self.agent_id:
-            return task
-        cursor_key = f"agent:{self.agent_id}"
-        sections = []
-        for stream_name, cursor_field, header in (
-            (f"agent:{self.agent_id}:reports", "reports_cursor",
-             "RAPPORTS DE SUPERVISION NOUVEAUX (information, ne pas "
-             "les acquitter individuellement) :"),
+        streams = []
+        if event_router.triangle_master(self.agent_id) == self.agent_id:
+            streams.append((
+                f"agent:{self.agent_id}:reports", "reports_cursor",
+                "RAPPORTS DE SUPERVISION NOUVEAUX (information, ne pas "
+                "les acquitter individuellement) :"))
+        streams.extend((
             (f"agent:{self.agent_id}:control", "control_cursor",
              "CONTRÔLES NOUVEAUX (observation — aucun rapport en retour, "
              "au plus une relance corrélée par TERMINAL_PENDING) :"),
-        ):
+            (f"agent:{self.agent_id}:terminals", "terminals_cursor",
+             "TERMINAUX REÇUS (déjà livrés — n'y réponds jamais par un "
+             "terminal ; agis seulement si le contenu appelle un travail) :"),
+            (f"agent:{self.agent_id}:supervision", "supervision_cursor",
+             "MESSAGES DE SUPERVISION REÇUS (information, aucun "
+             "acquittement) :"),
+        ))
+        return streams
+
+    def _attach_pending_reports(self, task):
+        """Ajoute un résumé borné au prochain vrai tour de l'agent.
+
+        Couvre rapports, contrôles, terminaux reçus et supervision : un
+        demandeur en WAITING constate le silence de sa cible, et un worker
+        voit la question qui lui a été posée — sans réveil ni polling.
+        """
+        cursor_key = f"agent:{self.agent_id}"
+        sections = []
+        for stream_name, cursor_field, header in self._pending_streams():
             try:
                 cursor = self.redis.hget(cursor_key, cursor_field) or "-"
                 minimum = f"({cursor}" if cursor != "-" else "-"
@@ -1190,11 +1211,20 @@ class TmuxAgent:
                 continue
             lines = []
             for report_id, fields in entries:
+                # Un rapport porte summary/detail ; un terminal ou un message
+                # de supervision porte son texte dans prompt. Sans ce repli,
+                # le drainage annexerait des lignes vides.
+                body = (fields.get("summary") or fields.get("detail")
+                        or fields.get("prompt") or "")
                 lines.append(
                     f"- {fields.get('from_agent', '?')} "
                     f"{fields.get('status', fields.get('event', 'STATUS'))}: "
-                    f"{fields.get('summary', fields.get('detail', ''))[:300]}")
+                    f"{body[:300]}")
             self.redis.hset(cursor_key, cursor_field, entries[-1][0])
+            if not lines:
+                # Entrées sans corps lisible : avancer le curseur, mais ne
+                # jamais annexer un en-tête sans contenu au prompt.
+                continue
             sections.append(header + "\n" + "\n".join(lines))
         if not sections:
             return task

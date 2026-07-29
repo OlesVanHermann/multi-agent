@@ -30,8 +30,9 @@ usage() {
 
 [ -z "$TO_AGENT" ] || [ -z "$SIGNAL_TYPE" ] && usage
 
-if ! is_valid_agent_id "$TO_AGENT"; then
-    echo "Error: Invalid agent ID format: $TO_AGENT (expected NNN or NNN-NNN)" >&2
+# `=NNN` = adressage global explicite (jamais résolu vers le triangle).
+if ! is_valid_agent_id "${TO_AGENT#=}"; then
+    echo "Error: Invalid agent ID format: $TO_AGENT (expected NNN, NNN-NNN ou =NNN)" >&2
     exit 1
 fi
 
@@ -68,13 +69,16 @@ if [ -n "$TMUX" ]; then
 fi
 FROM_AGENT=${FROM_AGENT:-cli}
 
+# Triangle auto-resolve (règle partagée : resolve_triangle_target, lib.sh)
+TO_AGENT=$(resolve_triangle_target "$FROM_AGENT" "$TO_AGENT" "done.sh")
+
+# Anti-auto-envoi APRÈS la résolution : depuis 300-301, « done.sh 301 » est
+# résolu en 300-301 — un contrôle placé avant la résolution laissait donc
+# passer le terminal auto-adressé qu'il prétend interdire.
 if [ "$FROM_AGENT" = "$TO_AGENT" ]; then
     echo "Error: an agent never sends DONE/SCORE to itself" >&2
     exit 1
 fi
-
-# Triangle auto-resolve (règle partagée : resolve_triangle_target, lib.sh)
-TO_AGENT=$(resolve_triangle_target "$FROM_AGENT" "$TO_AGENT" "done.sh")
 
 TIMESTAMP=$(date +%s)
 CORRELATION_ID="${CORRELATION_ID:-}"
@@ -215,6 +219,17 @@ fi
 if ! tmux has-session -t "=$(agent_session_name "$TO_AGENT")" 2>/dev/null; then
     echo "queued: $TO_AGENT $MSG_ID corr=$CORRELATION_ID state=ORPHANED${OBLIGATION_STATE}" >&2
     exit 2
+fi
+
+# Un terminal destiné à un membre de triangle qui n'est pas son coordinateur
+# n'ouvre AUCUN tour chez lui (règle anti-boucle : un seul point de décision).
+# Il est parqué dans son stream terminals et annexé à son prochain vrai tour.
+# Annoncer DELIVERED laisserait croire à une prise en charge immédiate.
+# A6 : le format d'ID reste dans lib.sh — triangle_master_id retourne 0
+# uniquement pour un membre de triangle qui n'est pas le coordinateur.
+if triangle_master_id "$TO_AGENT" >/dev/null; then
+    echo "ok: $TO_AGENT $MSG_ID corr=$CORRELATION_ID state=PARKED_NO_WAKE${OBLIGATION_STATE}"
+    exit 0
 fi
 
 echo "ok: $TO_AGENT $MSG_ID corr=$CORRELATION_ID state=DELIVERED${OBLIGATION_STATE}"

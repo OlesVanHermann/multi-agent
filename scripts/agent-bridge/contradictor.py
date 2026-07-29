@@ -162,15 +162,22 @@ def classify_messages(target, triangle_agents, streams):
     """
     user_requests = []
     inter_agent = []
+    external = []
     seen = set()
-    for source_name in ("inbox", "outbox"):
+    for source_name in ("inbox", "outbox", "reports", "control"):
+        if source_name not in streams:
+            continue
         for entry in streams[source_name]["entries"]:
             fields = entry["fields"]
             identity = (source_name, fields.get("stream_agent", ""), entry["id"])
             if identity in seen:
                 continue
             seen.add(identity)
-            prompt = fields.get("prompt", "").strip()
+            # Les canaux sans réveil ne portent pas de champ `prompt` (c'est
+            # ce qui les empêche de réveiller un modèle) : leur contenu vit
+            # dans summary/detail.
+            prompt = (fields.get("prompt") or fields.get("summary")
+                      or fields.get("detail") or "").strip()
             if not prompt:
                 continue
             item = {
@@ -194,15 +201,28 @@ def classify_messages(target, triangle_agents, streams):
                 fields.get("from_agent", "") == "cli"
                 or fields.get("event", "").upper() == "USER_REQUEST"
             )
-            if reaches_target and user_origin:
+            if user_origin and fields.get("stream_agent", "") in triangle_agents \
+                    and source_name == "inbox":
+                # Une demande utilisateur adressée directement à un membre du
+                # triangle (court-circuitant le 1XX) reste une demande
+                # utilisateur : la perdre fait juger l'exécution contre une
+                # intention incomplète.
+                item["received_by"] = fields.get("stream_agent", "")
                 user_requests.append(item)
             elif fields.get("from_agent", "") in triangle_agents:
                 inter_agent.append(item)
+            else:
+                # Ni demande utilisateur ni échange interne : ordre d'un agent
+                # extérieur (000, Master global) ou événement d'un type non
+                # encore normalisé. Un message exploitable ne disparaît jamais
+                # de la vue d'analyse.
+                external.append(item)
     user_requests.sort(key=lambda item: stream_order(item["id"]))
     inter_agent.sort(key=lambda item: stream_order(item["id"]))
+    external.sort(key=lambda item: stream_order(item["id"]))
     for index, item in enumerate(user_requests):
         item["request_kind"] = "INITIAL" if index == 0 else "AMENDMENT"
-    return user_requests, inter_agent
+    return user_requests, inter_agent, external
 
 
 def analysis_view(target, triangle_agents, task_list, memory_text, streams,
@@ -289,7 +309,7 @@ def analysis_view(target, triangle_agents, task_list, memory_text, streams,
             "event_count": len(events),
             "recent_events": events[-30:],
         }
-    user_requests, inter_agent = classify_messages(
+    user_requests, inter_agent, external = classify_messages(
         target, triangle_agents, streams)
     unattributed_candidates = []
     if not user_requests:
@@ -302,10 +322,13 @@ def analysis_view(target, triangle_agents, task_list, memory_text, streams,
             "user_requests": user_requests,
             "unattributed_request_candidates": unattributed_candidates,
             "inter_agent_exchanges": inter_agent,
+            "external_or_direct_messages": external,
             "source_legend": {
-                "USER_REQUEST": "message utilisateur reçu par le 1XX",
+                "USER_REQUEST": "message utilisateur reçu par un membre du triangle",
                 "AGENT_INSTRUCTION": "fichier system/memory/methodology",
                 "INTER_AGENT_MESSAGE": "échange interne au triangle",
+                "EXTERNAL_OR_DIRECT": "ordre d'un agent hors triangle (000, "
+                                      "Master global) ou événement non normalisé",
                 "PHYSICAL_EVIDENCE": "artefact, code, commit ou test vérifiable",
             },
             "execution_assessment": {
@@ -399,10 +422,16 @@ def collect(triangle):
     streams = {
         "inbox": {"available": True, "error": "", "entries": []},
         "outbox": {"available": True, "error": "", "entries": []},
+        # Canaux sans réveil : ce qui est stocké pour être lu doit être lu par
+        # l'auditeur. Sans eux, un FAILED remonté par report-master.sh ou un
+        # PROTOCOL_ERROR du watchdog restaient invisibles, et le Contradictor
+        # pouvait conclure « aucun échec signalé » alors que le signal existe.
+        "reports": {"available": True, "error": "", "entries": []},
+        "control": {"available": True, "error": "", "entries": []},
         "wal": redis_entries("wal"),
     }
     for agent in triangle_agents:
-        for source_name in ("inbox", "outbox"):
+        for source_name in ("inbox", "outbox", "reports", "control"):
             source = redis_entries(f"agent:{agent}:{source_name}")
             streams[source_name]["available"] &= source["available"]
             if source["error"]:

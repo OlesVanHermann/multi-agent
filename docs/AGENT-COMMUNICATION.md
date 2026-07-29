@@ -34,10 +34,37 @@ sont interdits dans les prompts.
 | `ALREADY_DELIVERED` | rejeu strict d'un terminal au contenu identique | aucune transition supplémentaire |
 | `NOT_DELIVERED` | même slot terminal, contenu différent | ouvrir un nouveau `CYCLE`/`CORR`, puis réémettre |
 | `ORPHANED` | message persisté, session cible absente | attendre le rejeu au redémarrage, sans réémission en boucle |
+| `PARKED_NO_WAKE` | terminal reçu par un membre non coordinateur | il sera lu à son prochain vrai tour, pas immédiatement |
 | `INVALID` | enveloppe sans contenu ou malformée | corriger ou utiliser le canal de secours |
 | `rescue:` | signal de métadonnée manquante seulement | réparer l'enveloppe avant le résultat métier |
 
 Un état de transport n'est jamais une preuve de réussite métier.
+
+## Aucun message parqué sans lecteur
+
+Un stream qui a un écrivain a un lecteur. Les canaux sans réveil —
+`agent:<id>:reports`, `:control`, `:terminals`, `:supervision` — sont drainés
+de façon bornée et annexés au **prochain vrai tour** de leur destinataire,
+quel que soit son rôle : un worker voit la question qui lui a été posée, un
+Master à identifiant nu voit le `TERMINAL_PENDING` que le watchdog lui écrit.
+Le non-réveil reste la règle ; il ne justifie jamais qu'un contenu ne soit
+jamais lu. Un contrôle ou un terminal ainsi lu n'ouvre aucune obligation et
+ne reçoit jamais de réponse terminale.
+
+## Adressage explicite
+
+Depuis un agent de triangle, une cible nue est résolue vers le triangle par
+commodité. Deux garanties encadrent ce raccourci :
+
+- une cible préfixée `=` n'est **jamais** réécrite : `send.sh =100` atteint le
+  Master global même si le coordinateur local tourne ;
+- lorsque rien ne tourne, la résolution n'a lieu que si le membre du triangle
+  existe réellement ; sinon la cible globale est conservée, son inbox étant
+  rejouée au redémarrage.
+
+`send.sh all` diffuse réellement sur les sessions vivantes, une enveloppe par
+agent. En l'absence de destinataire, il échoue franchement au lieu d'écrire
+dans un stream que personne ne consomme.
 
 ## Routage ouvert entre agents
 

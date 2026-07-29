@@ -20,8 +20,9 @@ if [ -z "$TO_AGENT" ]; then
     exit 1
 fi
 
-if ! is_valid_agent_id "$TO_AGENT" && [ "$TO_AGENT" != "all" ]; then
-    echo "Error: Invalid agent ID format: $TO_AGENT (expected NNN or NNN-NNN)" >&2
+# `=NNN` = adressage global explicite (jamais résolu vers le triangle).
+if ! is_valid_agent_id "${TO_AGENT#=}" && [ "$TO_AGENT" != "all" ]; then
+    echo "Error: Invalid agent ID format: $TO_AGENT (expected NNN, NNN-NNN, =NNN ou all)" >&2
     exit 1
 fi
 
@@ -108,6 +109,39 @@ elif [ "$RESCUE_MODE" = true ]; then
     CORRELATION_ID="rescue-$(cat /proc/sys/kernel/random/uuid)"
 else
     CORRELATION_ID=$(cat /proc/sys/kernel/random/uuid)
+fi
+
+# ── Broadcast : fan-out réel sur les sessions vivantes ──
+# `agent:all:inbox` n'a AUCUN consommateur : y écrire perdait le message en
+# annonçant « queued/ORPHANED ». Le seul broadcast qui existe est un fan-out
+# par agent — on le fait ici, en échouant franchement s'il n'y a personne.
+if [ "$TO_AGENT" = "all" ]; then
+    SENT=0
+    while IFS= read -r target; do
+        [ "$target" = "$FROM_AGENT" ] && continue
+        if $REDIS_CLI XADD "$(agent_inbox_key "$target")" MAXLEN '~' "${IO_STREAM_MAXLEN:-10000}" '*' \
+            prompt "$MESSAGE" \
+            from_agent "$FROM_AGENT" \
+            event "$MESSAGE_EVENT" \
+            correlation_id "$CORRELATION_ID" \
+            task_id "$TASK_ID" \
+            cycle "$CYCLE" \
+            requester "$REQUESTER_ID" \
+            owner "$target" \
+            expected_event "$EXPECTED_EVENT" \
+            timestamp "$TIMESTAMP" >/dev/null 2>&1; then
+            SENT=$((SENT + 1))
+            echo "ok: $target corr=$CORRELATION_ID state=DELIVERED"
+        else
+            echo "ko: XADD failed for agent $target" >&2
+        fi
+    done < <(list_live_agent_ids)
+    if [ "$SENT" -eq 0 ]; then
+        echo "invalid: broadcast sans destinataire (aucune session agent vivante)" >&2
+        exit 2
+    fi
+    echo "broadcast: $SENT agent(s) corr=$CORRELATION_ID"
+    exit 0
 fi
 
 # ── Triangle auto-resolve (règle partagée : resolve_triangle_target, lib.sh) ──
