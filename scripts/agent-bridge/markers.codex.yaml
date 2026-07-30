@@ -227,6 +227,27 @@ login_expired_markers:
 # Une chaîne VIDE matcherait TOUS les panes — d'où le sentinelle explicite.
 survey: '__NON_APPLICABLE__'
 
+# Réponses automatiques permanentes. Codex n'a pas de sondage de session.
+# Pour une approbation, Enter n'est envoyé que si l'overlay complet affiche
+# l'option positive actuellement sélectionnée. Ceci exclut notamment les
+# écrans d'onboarding/trust qui partagent le même footer.
+auto_response:
+  enabled: true
+  tail_lines: 30
+  cooldown_seconds: 15
+  max_attempts: 3
+  survey_option_patterns: []
+  survey_keys: []
+  approval_option_patterns:
+    - '› 1. Yes, proceed'
+    - '1. Yes, proceed'
+  approval_keys: ['Enter']
+  selected_prefixes: ['›']
+  recommended_marker: '(Recommended)'
+  # Codex réutilise ce type de sélection dans des écrans d'onboarding/trust.
+  # Seules les approvals structurées ci-dessus sont autorisées.
+  recommended_keys: []
+
 # ── [NA] Indicateur de scroll dans la ligne de statut ───────────────────────
 # Claude Code affiche « ↓ » dans sa ligne de statut quand le pane est scrollé.
 # Le footer de Codex n'expose pas cet état (« ctrl + t to view transcript » est

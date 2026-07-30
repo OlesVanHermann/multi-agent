@@ -50,6 +50,7 @@ import wal
 # Obligation durable créée par chaque DISPATCH corrélé.
 import obligations
 import event_router
+from autoresponder import AutoResponder, classify_active_dialog
 
 try:
     import yaml
@@ -205,8 +206,9 @@ def _runtime_model_from_pane(out, markers=None):
 def _runtime_effort_from_pane(out, markers=None):
     return _runtime_value_from_pane(out, 'runtime_effort_pattern', markers)
 
-# EF-003 : intervalle heartbeat enrichi (CA-004: toutes les 10s ± 2s)
-HEARTBEAT_INTERVAL = 10
+# EF-003 : intervalle heartbeat enrichi (CA-004: toutes les 10s ± 2s).
+# Surcharge uniquement pour les tests E2E ; la production reste à 10 s.
+HEARTBEAT_INTERVAL = float(os.environ.get("HEARTBEAT_INTERVAL", 10))
 # EF-001 : port de base pour health endpoint (port = base + agent_id numérique)
 HEALTH_PORT_BASE = int(os.environ.get("AGENT_HEALTH_PORT_BASE", 9100))
 
@@ -427,6 +429,11 @@ class TmuxAgent:
         self.state = State.IDLE
         self.state_lock = Lock()
         self._tui_lock = Lock()
+        auto_config = MARKERS["auto_response"]
+        self._auto_responder = AutoResponder(
+            cooldown_seconds=auto_config["cooldown_seconds"],
+            max_attempts=auto_config["max_attempts"],
+        )
         # L'état du modèle est observé passivement. Une slash-command sans
         # argument ouvre un picker interactif et bloquerait le TUI.
         self._observed_model = ""
@@ -667,6 +674,146 @@ class TmuxAgent:
         )
         return result.stdout
 
+    def _capture_dialog_context(self):
+        """Capture le viewport actif et le process juste avant une interaction."""
+
+        target = f"{self.session_name}:0.0"
+        try:
+            pane = subprocess.run(
+                ["tmux", "capture-pane", "-t", target, "-p", "-J"],
+                capture_output=True, text=True, timeout=5)
+            command = subprocess.run(
+                ["tmux", "display-message", "-t", target, "-p",
+                 "#{pane_current_command}"],
+                capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.SubprocessError) as exc:
+            self._log(f"AUTO-RESPONSE capture failed: {exc}")
+            return "", ""
+        if pane.returncode != 0 or command.returncode != 0:
+            return "", ""
+        return pane.stdout, command.stdout.strip()
+
+    def _get_auto_responder(self):
+        """Initialisation paresseuse pour les tests qui construisent via __new__."""
+
+        responder = getattr(self, "_auto_responder", None)
+        if responder is None:
+            config = MARKERS["auto_response"]
+            responder = AutoResponder(
+                cooldown_seconds=config["cooldown_seconds"],
+                max_attempts=config["max_attempts"],
+            )
+            self._auto_responder = responder
+        return responder
+
+    def _send_dialog_keys(self, keys):
+        """Envoie une réponse de modale, sans toucher au composer.
+
+        Contrairement à _send_keys(), cette méthode n'envoie ni C-u, ni
+        collage, ni retry d'Enter. La séquence validée part dans un unique
+        appel tmux afin de ne jamais dupliquer un choix.
+        """
+
+        keys = tuple(str(key) for key in keys)
+        allowed = {"0", "1", "Enter"}
+        if not keys or any(key not in allowed for key in keys):
+            raise ValueError("unsafe auto-response key sequence")
+        target = f"{self.session_name}:0.0"
+        try:
+            result = subprocess.run(
+                ["tmux", "send-keys", "-t", target, *keys],
+                capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.SubprocessError) as exc:
+            self._log(f"AUTO-RESPONSE tmux failure: {exc}")
+            return False
+        if result.returncode != 0:
+            self._log(
+                "AUTO-RESPONSE tmux rejected keys "
+                f"(rc={result.returncode})")
+            return False
+        return True
+
+    def _maybe_auto_respond(self, pane_text, pane_command, source):
+        """Répond à un dialogue complet après une seconde capture TOCTOU."""
+
+        responder = self._get_auto_responder()
+        decision = classify_active_dialog(
+            pane_text, pane_command, MARKERS)
+        if decision is None:
+            responder.reset_when_absent()
+            return False
+
+        # Le navigateur ou l'opérateur peut répondre entre la première capture
+        # et ici. Revalider process, dialogue et empreinte juste avant la frappe.
+        verified_pane, verified_command = self._capture_dialog_context()
+        verified = classify_active_dialog(
+            verified_pane, verified_command, MARKERS)
+        if verified is None or verified.fingerprint != decision.fingerprint:
+            if verified is None:
+                responder.reset_when_absent()
+            return True
+        decision = verified
+
+        if not responder.observe(decision):
+            return True
+
+        attempt = responder.attempts
+        self._log(
+            "AUTO-RESPONSE "
+            f"kind={decision.kind} source={source} attempt={attempt}/"
+            f"{MARKERS['auto_response']['max_attempts']} "
+            f"fingerprint={decision.fingerprint}")
+        self._log_event(
+            "auto_response",
+            f"kind={decision.kind} source={source} attempt={attempt} "
+            f"fingerprint={decision.fingerprint}")
+        try:
+            self.redis.hset(
+                f"agent:{self.agent_id}", "status", "waiting_approval")
+        except Exception:
+            pass
+
+        try:
+            sent = self._send_dialog_keys(decision.keys)
+        except Exception as exc:
+            self._log(f"AUTO-RESPONSE refused: {exc}")
+            sent = False
+        if sent:
+            responder.mark_applied(decision)
+        else:
+            responder.mark_failed(decision)
+            self._log_event(
+                "auto_response_failed",
+                f"kind={decision.kind} source={source} attempt={attempt}")
+        self._set_redis_status()
+        return True
+
+    def _auto_respond_while_idle(self, pane_text, pane_command):
+        """Chemin permanent : agit uniquement si le queue processor est idle."""
+
+        with self.state_lock:
+            if self.state != State.IDLE:
+                return False
+
+        decision = classify_active_dialog(
+            pane_text, pane_command, MARKERS)
+        if decision is None:
+            self._get_auto_responder().reset_when_absent()
+            return False
+
+        # Ne jamais attendre le TUI : pendant un tour, _wait_for_response est
+        # l'unique propriétaire et détient déjà ce verrou.
+        if not self._tui_lock.acquire(blocking=False):
+            return False
+        try:
+            with self.state_lock:
+                if self.state != State.IDLE:
+                    return False
+            return self._maybe_auto_respond(
+                pane_text, pane_command, source="heartbeat-idle")
+        finally:
+            self._tui_lock.release()
+
     def _send_keys(self, text):
         """Send keys to tmux pane 0 (where Claude runs).
 
@@ -829,26 +976,43 @@ class TmuxAgent:
                     queued_logged = True
                 continue
 
-            # Detect plan mode approval prompt — signal blue, wait for user
-            if APPROVAL_PROMPT in current:
-                if not getattr(self, '_plan_approval_logged', False):
-                    self._log("PLAN APPROVAL DETECTED — waiting for user")
-                    self._plan_approval_logged = True
+            # Dialogues interactifs : ce chemin détient déjà _tui_lock pour
+            # toute la durée du tour. Le heartbeat n'intervient donc pas ici.
+            # Une pré-détection bornée évite deux appels tmux à chaque poll.
+            dialog_tail_lines = int(
+                MARKERS["auto_response"].get("tail_lines", 30))
+            dialog_lines = current.splitlines()
+            while dialog_lines and not dialog_lines[-1].strip():
+                dialog_lines.pop()
+            dialog_tail = "\n".join(dialog_lines[-dialog_tail_lines:])
+            dialog_markers = (
+                APPROVAL_PROMPT, SURVEY_PROMPT, WAITING_SELECT)
+            dialog_hint = any(
+                marker and marker in dialog_tail
+                for marker in dialog_markers)
+            if dialog_hint:
+                dialog_pane, dialog_command = self._capture_dialog_context()
+                if self._maybe_auto_respond(
+                        dialog_pane, dialog_command, source="active-turn"):
+                    # Le dialogue (déjà répondu ou dédupliqué) n'est jamais
+                    # une completion de la réponse métier.
+                    last_content = ""
+                    tail3_stable_since = time.time()
+                    last_printed = 0
+                    poll = POLL_MIN
+                    continue
+            else:
+                self._get_auto_responder().reset_when_absent()
+
+            # Un overlay d'approbation incomplet/inconnu reste visible au
+            # dashboard, mais aucune touche n'est inventée.
+            if APPROVAL_PROMPT in dialog_tail:
                 try:
-                    self.redis.hset(f"agent:{self.agent_id}", "status", "waiting_approval")
+                    self.redis.hset(
+                        f"agent:{self.agent_id}",
+                        "status", "waiting_approval")
                 except Exception:
                     pass
-
-            # Detect and dismiss Claude session survey
-            if SURVEY_PROMPT in current:
-                self._log("SURVEY DETECTED — auto-dismissing (0)")
-                self._send_keys("0")
-                time.sleep(2)
-                last_content = ""
-                tail3_stable_since = time.time()
-                last_printed = 0
-                poll = POLL_MIN
-                continue
 
             # Detect context compaction — only if NEW (more occurrences than baseline)
             if current.count(COMPACTION_DONE) > baseline_compaction_count:
@@ -866,7 +1030,6 @@ class TmuxAgent:
 
             if current != last_content:
                 last_content = current
-                self._plan_approval_logged = False
                 if hash(current) != baseline_hash:
                     response_started = True
 
@@ -1017,6 +1180,7 @@ class TmuxAgent:
         result from Redis instead of forking a multi-grep scan per cycle.
         """
         target = f"{self.session_name}:0.0"
+        self._last_pane_snapshot = None
         try:
             out = subprocess.run(
                 ["tmux", "capture-pane", "-t", target, "-p", "-J", "-S", "-30"],
@@ -1026,6 +1190,7 @@ class TmuxAgent:
                 capture_output=True, text=True, timeout=10).stdout.strip()
         except Exception:
             return None
+        self._last_pane_snapshot = (out, pane_cmd)
         pane_state = _parse_pane_state(out, pane_cmd, self.agent_id)
         if AGENT_CLI == 'codex':
             self._observed_model = _runtime_model_from_pane(out)
@@ -1108,6 +1273,9 @@ class TmuxAgent:
                 # B6: publish pane-derived state so the dashboard skips tmux scans
                 pane_state = self._derive_pane_state()
                 if pane_state is not None:
+                    snapshot = getattr(self, "_last_pane_snapshot", None)
+                    if snapshot is not None:
+                        self._auto_respond_while_idle(*snapshot)
                     self._auth_blocked = bool(
                         pane_state.get("login_required"))
                     self.redis.hset(f"agent:{self.agent_id}", mapping={

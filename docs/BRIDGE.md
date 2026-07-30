@@ -101,12 +101,62 @@ Logique de `_wait_for_response` :
 |--------------------------|--------------------|
 | `Conversation compacted` (nouvelle occurrence) | Re-met en queue : msg 1 `deviens agent <prompt>` (ré-injection identité) + msg 2 rappel du contexte (dernière ligne `.history` + prompt d'origine), qui porte l'`ack_id` et le `correlation_id` d'origine. Statut transitoire `context_compacted`. |
 | `API Error:` / `rate_limit` / `overloaded_error`… (`api_error_patterns`) | Re-queue du prompt avec backoff `RETRY_BACKOFF_SECS` (max 2 retries). Événement `api_error_retry` dans `events.jsonl`, statut transitoire `api_error_retry`. |
-| `How is Claude doing` (sondage de session) | Auto-rejet : envoi de `0`, puis reprise de l'attente. |
-| `Would you like to proceed` (plan mode) | Statut Redis `waiting_approval` tant que la demande est visible ; l'utilisateur approuve directement dans le pane tmux. |
-| `Press up to edit queued messages` | Le prompt n'a pas été traité (Claude occupé) : retour immédiat. |
+| `How is Claude doing` + option `0 … Dismiss` | Auto-rejet permanent : envoi atomique de `0 Enter`, pendant un tour ou depuis le heartbeat si l'agent est idle. |
+| `Would you like to proceed` + option positive + footer de sélection | Auto-approbation permanente : `1 Enter` pour Claude, `Enter` pour Codex lorsque l'option positive est déjà sélectionnée. |
+| Question Claude avec option sélectionnée portant `(Recommended)` + footer de sélection | Validation de l'option recommandée par `Enter`. Une recommandation non sélectionnée ou un menu ambigu reste en attente. Codex limite l'auto-réponse à ses overlays d'approbation structurés. |
+| `Press up to edit queued messages` | Le prompt reste pending ; le bridge attend l'idle sans réinjection ni faux acquittement. |
 
 *(Les libellés ci-dessus sont ceux du moteur `claude`. Pour un autre moteur, ce
 sont les valeurs de son propre `markers.<moteur>.yaml`.)*
+
+### Auto-réponse permanente aux dialogues
+
+L'auto-réponse appartient au **backend du bridge**, pas au frontend. Elle reste
+donc active quand aucun navigateur n'est connecté et ne dépend pas d'un reload
+du dashboard :
+
+- pendant un tour `BUSY`, `_wait_for_response()` est l'unique propriétaire du
+  TUI ;
+- quand la queue est vide et l'agent `IDLE`, le heartbeat inspecte le viewport
+  et prend `_tui_lock` sans jamais attendre ;
+- le dialogue est recapturé et reclassé immédiatement avant la frappe afin de
+  ne pas répondre par-dessus une action web ou opérateur ;
+- les touches partent dans un unique `tmux send-keys`, sans `C-u`, collage ou
+  retry d'`Enter` ;
+- une empreinte empêche tout double envoi après succès ; un échec tmux peut
+  être retenté au maximum trois fois, avec cooldown ;
+- seuls les 30 derniers rangs actifs sont classés, le process du pane doit être
+  celui du moteur et un marqueur isolé dans l'historique ne suffit jamais.
+
+Les règles et touches sont externalisées sous `auto_response` dans
+`markers.claude.yaml` et `markers.codex.yaml`. Un dialogue incomplet, ambigu ou
+dont le marqueur, l'option positive sélectionnée et le footer n'appartiennent
+pas au même bloc courant n'est pas validé automatiquement.
+
+#### Garde-fou irréversible — jamais une suppression
+
+Règle opérateur : **jamais `rm` & co, toujours `mv` vers `removed/`**
+(`safe_rm`). Le problème n'est pas l'auto-validation, c'est la commande : un
+déplacement est rattrapable, une suppression ne l'est pas.
+
+`autoresponder.irreversible_marker()` inspecte donc le dialogue actif avant
+toute classification. Si un motif irréversible y est visible — `rm`, `rmdir`,
+`unlink`, `shred`, `truncate`, `mkfs`, `dd if=`, `DROP TABLE`,
+`DELETE FROM`, `git clean`, `git reset --hard`, `git push --force`,
+`find … -delete`, `kill -9`, `chmod -R`, un `curl`/`wget` tubé vers un
+shell — **aucune touche n'est calculée**, quel que soit le type de dialogue.
+Cela couvre aussi une option explicitement marquée « (Recommended) » : ce mot
+n'a jamais accordé d'autorité destructive. L'écran reste `waiting_approval` et
+la décision revient à l'opérateur.
+
+Cette liste est volontairement **hors des fichiers de marqueurs** : ce ne sont
+pas des chaînes d'UI de CLI, et cette frontière de sécurité ne doit pas
+pouvoir être affaiblie en éditant un marqueur. Elle s'applique identiquement à
+tous les moteurs.
+
+Effet recherché : l'ergonomie pousse vers la bonne pratique. Un agent qui écrit
+`mv`/`safe_rm` voit son approbation passer seule ; un agent qui écrit `rm -f`
+reste bloqué à attendre un humain.
 
 ### Une seule implémentation du parsing de pane (E1)
 

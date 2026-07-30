@@ -8,7 +8,8 @@ Scénarios couverts (markers.yaml) :
 - compaction : "Conversation compacted" → ré-injection identité + rappel
 - api_error : "API Error: 401" → retry avec backoff (events.jsonl) puis succès
 - survey : "How is Claude doing" → auto-rejet ("0") puis réponse
-- plan : "Would you like to proceed" → statut waiting_approval, approbation, réponse
+- idle_survey : même auto-rejet avec queue vide, via heartbeat
+- plan : "Would you like to proceed" → auto-approbation, réponse
 
 Tests isolés : redis-server privé sur port libre et session tmux dédiée
 uniques par test, LOG_DIR dans tmp_path, nettoyage systématique. Skippés si
@@ -100,7 +101,7 @@ def bridge(redis_server, tmp_path):
              "-e", f"FAKE_CLAUDE_SCENARIO={scenario}",
              "-e", f"FAKE_CLAUDE_LOG={fake_log}",
              "-e", "FAKE_CLAUDE_DELAY=1",
-             f"bash {FAKE_CLAUDE}"],
+            f"exec -a claude bash {FAKE_CLAUDE}"],
             check=True)
 
         env = dict(
@@ -109,7 +110,8 @@ def bridge(redis_server, tmp_path):
             LOG_DIR=str(log_dir),
             RESPONSE_TIMEOUT="60", POLL_MIN="0.1", POLL_MAX="0.5",
             STABLE_READY_SECS="1", STABLE_FALLBACK_SECS="3",
-            RETRY_BACKOFF_SECS="1", AGENT_HEALTH_PORT_BASE="19100")
+            RETRY_BACKOFF_SECS="1", HEARTBEAT_INTERVAL="0.5",
+            AGENT_HEALTH_PORT_BASE="19100")
         # stdin=PIPE jamais fermé : EOF sur stdin arrête le bridge (run()).
         out = open(tmp_path / f"bridge_{agent_id}.out", "w")
         proc = subprocess.Popen(
@@ -232,16 +234,28 @@ def test_survey_auto_dismissed(bridge):
         "le bridge n'a pas envoyé '0' pour rejeter le sondage"
 
 
-def test_plan_mode_waits_for_approval(bridge):
-    """Plan mode : statut waiting_approval tant que l'utilisateur n'a pas
-    approuvé, puis la réponse part après approbation."""
+def test_idle_survey_auto_dismissed_without_browser_or_prompt(bridge):
+    """Le heartbeat répond même si le bridge n'attend aucun prompt injecté."""
+    h = bridge("idle_survey", "396")
+
+    _wait_for(
+        lambda: "0" in h.fake_log.read_text().splitlines(),
+        20,
+        "le sondage idle n'a pas été rejeté par le heartbeat")
+    _wait_for(
+        lambda: "IDLE_SURVEY_DISMISSED_OK" in _pane(h),
+        10,
+        "le faux CLI n'a pas reçu la réponse au sondage idle")
+    events = (h.log_dir / "396" / "events.jsonl").read_text()
+    assert "heartbeat-idle" in events
+
+
+def test_plan_mode_is_auto_approved(bridge):
+    """Plan mode : le bridge choisit l'option positive sans navigateur."""
     h = bridge("plan", "395")
     corr = _send(h, "Propose un plan")
 
-    _wait_status(h, "waiting_approval", timeout=30)
-
-    # L'utilisateur approuve (frappe directe dans le pane, hors bridge)
-    subprocess.run(["tmux", "send-keys", "-t", f"{h.session}:0", "1", "Enter"],
-                   check=True)
     response = _wait_response(h, corr, timeout=60)
     assert "PLAN_APPROVED_OK" in response
+    assert "1" in h.fake_log.read_text().splitlines(), \
+        "le bridge n'a pas sélectionné l'option positive"

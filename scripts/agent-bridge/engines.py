@@ -156,6 +156,7 @@ REQUIRED_KEYS = (
     "compaction",
     "approval",
     "survey",
+    "auto_response",
     "queued",
     "waiting_select",
     "context_limit",

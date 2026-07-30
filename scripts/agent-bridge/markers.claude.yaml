@@ -68,6 +68,30 @@ approval: 'Would you like to proceed'
 # Sondage de session Claude (auto-rejeté par le bridge)
 survey: 'How is Claude doing'
 
+# Réponses automatiques permanentes. Le bridge les applique aussi lorsqu'il
+# est idle : elles ne dépendent donc ni du dashboard ni d'un navigateur.
+# Chaque dialogue exige son marqueur ET une option structurante visible dans
+# les dernières lignes du viewport. Une simple occurrence dans l'historique
+# n'autorise jamais une frappe.
+auto_response:
+  enabled: true
+  tail_lines: 30
+  cooldown_seconds: 15
+  max_attempts: 3
+  survey_option_patterns:
+    - '0: Dismiss'
+    - '0. Dismiss'
+    - '0 Dismiss'
+  survey_keys: ['0', 'Enter']
+  approval_option_patterns:
+    - '1. Yes'
+    - '1. Yes, clear context'
+    - '1. Yes, and bypass'
+  approval_keys: ['1', 'Enter']
+  selected_prefixes: ['❯']
+  recommended_marker: '(Recommended)'
+  recommended_keys: ['Enter']
+
 # Message mis en file (prompt non traité, Claude occupé)
 queued: 'Press up to edit queued messages'
 

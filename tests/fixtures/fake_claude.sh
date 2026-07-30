@@ -6,7 +6,8 @@
 # compaction, erreur API, sondage de session, approbation de plan.
 #
 # Variables d'environnement :
-#   FAKE_CLAUDE_SCENARIO  nominal | compaction | api_error | survey | plan
+#   FAKE_CLAUDE_SCENARIO  nominal | compaction | api_error | survey |
+#                         idle_survey | plan
 #   FAKE_CLAUDE_LOG       fichier où chaque ligne reçue est consignée
 #   FAKE_CLAUDE_DELAY     délai (s) avant de répondre — laisse au bridge le
 #                         temps de capturer sa baseline dans _wait_for_response
@@ -33,7 +34,13 @@ clear_pane() {
 
 count=0
 in_bridge_envelope=0
-show_prompt
+if [ "$SCENARIO" = "idle_survey" ]; then
+    echo "How is Claude doing this session?"
+    echo "  1: Bad  2: Fine  3: Great"
+    echo "  0: Dismiss"
+else
+    show_prompt
+fi
 while IFS= read -r line; do
     [ -z "$line" ] && continue
     printf '%s\n' "$line" >> "$LOG"
@@ -78,17 +85,25 @@ while IFS= read -r line; do
             if [ "$count" -eq 1 ]; then
                 echo "How is Claude doing this session?"
                 echo "  1: Bad  2: Fine  3: Great"
+                echo "  0: Dismiss"
             else
                 # le bridge a envoyé "0" pour rejeter le sondage
                 clear_pane
                 echo "SURVEY_DISMISSED_OK"
             fi
             ;;
+        idle_survey)
+            # Aucun prompt métier n'a précédé cette modale : le heartbeat
+            # permanent doit quand même envoyer 0 + Enter.
+            clear_pane
+            echo "IDLE_SURVEY_DISMISSED_OK"
+            ;;
         plan)
             if [ "$count" -eq 1 ]; then
                 echo "Would you like to proceed?"
-                echo "  1. Yes"
+                echo "❯ 1. Yes"
                 echo "  2. No"
+                echo "Enter to select"
                 # ni status line ni marqueur : le bridge reste en waiting_approval
                 continue
             else
