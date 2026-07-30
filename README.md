@@ -1,4 +1,4 @@
-# Multi-Agent System v3.2.17
+# Multi-Agent System v3.2.18
 
 La ligne 3.2 ajoute `claude-opus-5`, utilise l'effort `M` par défaut et étend
 la preuve exécutable aux boucles x45/z21 : contrats pour
@@ -341,4 +341,4 @@ MIT - voir [LICENSE](LICENSE)
 
 ---
 
-*Multi-Agent System v3.2.17 - 2026*
+*Multi-Agent System v3.2.18 - 2026*
