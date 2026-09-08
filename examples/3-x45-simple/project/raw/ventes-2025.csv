@@ -1,0 +1,25 @@
+date,produit,region,quantite,prix_unitaire,total
+2025-01-15,Widget Pro,Nord,150,29.99,4498.50
+2025-01-20,Widget Basic,Sud,230,14.99,3447.70
+2025-02-10,Gadget X,Est,85,49.99,4249.15
+2025-02-28,Widget Pro,Ouest,120,29.99,3598.80
+2025-03-05,Service Premium,Nord,40,99.99,3999.60
+2025-03-18,Widget Basic,Nord,310,14.99,4646.90
+2025-04-02,Gadget Y,Sud,95,39.99,3799.05
+2025-04-15,Widget Pro,Est,175,29.99,5248.25
+2025-05-01,Widget Basic,Ouest,280,14.99,4197.20
+2025-05-22,Gadget X,Nord,110,49.99,5498.90
+2025-06-10,Service Premium,Sud,55,99.99,5499.45
+2025-06-25,Widget Pro,Nord,200,29.99,5998.00
+2025-07-08,Gadget Y,Est,130,39.99,5198.70
+2025-07-20,Widget Basic,Sud,350,14.99,5246.50
+2025-08-05,Widget Pro,Ouest,160,29.99,4798.40
+2025-08-18,Gadget X,Nord,95,49.99,4749.05
+2025-09-01,Service Premium,Est,65,99.99,6499.35
+2025-09-15,Widget Basic,Nord,290,14.99,4347.10
+2025-10-03,Gadget Y,Ouest,75,39.99,2999.25
+2025-10-20,Widget Pro,Sud,185,29.99,5548.15
+2025-11-08,Widget Basic,Est,320,14.99,4796.80
+2025-11-22,Gadget X,Sud,100,49.99,4999.00
+2025-12-05,Service Premium,Nord,70,99.99,6999.30
+2025-12-18,Widget Pro,Nord,210,29.99,6297.90

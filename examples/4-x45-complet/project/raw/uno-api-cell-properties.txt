@@ -1,0 +1,55 @@
+LibreOffice UNO API — com.sun.star.sheet.SheetCell / CellProperties
+
+Service: com.sun.star.table.CellProperties
+Included in: com.sun.star.sheet.SheetCell
+
+Property: CellBackColor
+  Type: long (32-bit integer)
+  Description: Background color of the cell, as RGB integer.
+  Example: 0xFF0000 = red, 0x00FF00 = green, 0x0000FF = blue
+  Note: -1 means "no background color" (transparent)
+
+Property: IsCellBackgroundTransparent
+  Type: boolean
+  Description: If true, the background is transparent (CellBackColor is ignored).
+
+To set a cell background color via UNO:
+  cell = sheet.getCellByPosition(col, row)   # 0-indexed
+  cell.CellBackColor = 0xFF0000              # set to red
+
+To read the current color:
+  current = cell.CellBackColor               # returns int
+  is_transparent = cell.IsCellBackgroundTransparent
+
+Cell addressing:
+  getCellByPosition(col, row)  — 0-indexed integers
+  getCellRangeByName("A1")     — string address like "B3", "AA12"
+
+Opening a spreadsheet document:
+  import uno
+  from com.sun.star.beans import PropertyValue
+
+  def connect_to_libreoffice(port=2002):
+      localContext = uno.getComponentContext()
+      resolver = localContext.ServiceManager.createInstanceWithContext(
+          "com.sun.star.bridge.UnoUrlResolver", localContext)
+      ctx = resolver.resolve(
+          "uno:socket,host=localhost,port=%d;urp;StarOffice.ComponentContext" % port)
+      smgr = ctx.ServiceManager
+      desktop = smgr.createInstanceWithContext("com.sun.star.frame.Desktop", ctx)
+      return desktop
+
+  def get_active_spreadsheet(desktop):
+      doc = desktop.getCurrentComponent()
+      return doc
+
+  def get_sheet_by_name(doc, name):
+      return doc.getSheets().getByName(name)
+
+  def get_sheet_by_index(doc, index):
+      return doc.getSheets().getByIndex(index)
+
+Color conversion helpers:
+  RGB to int: (r << 16) + (g << 8) + b
+  int to RGB: r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, b = c & 0xFF
+  Hex string "#FF0000" to int: int("FF0000", 16) → 16711680

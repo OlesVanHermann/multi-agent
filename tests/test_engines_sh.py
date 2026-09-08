@@ -1,0 +1,324 @@
+"""E1 — Couche moteur CLI côté shell (scripts/engines.sh).
+
+engines.sh est la source unique de vérité pour : moteurs supportés, variable
+d'authentification, drapeau de bypass, compatibilité modèle↔moteur et
+construction de la commande de lancement. Une régression ici démarre un agent
+avec le mauvais binaire, le mauvais profil, ou un modèle que le TUI ignore
+silencieusement.
+"""
+import os
+import subprocess
+
+import pytest
+
+
+def _find_project_root(start, markers=('CLAUDE.md', '.git')):
+    current = os.path.realpath(start)
+    while current != os.path.dirname(current):
+        if any(os.path.exists(os.path.join(current, m)) for m in markers):
+            return current
+        current = os.path.dirname(current)
+    raise FileNotFoundError(f"Marqueur {markers} introuvable depuis {start}")
+
+
+BASE_DIR = _find_project_root(os.path.dirname(os.path.realpath(__file__)))
+ENGINES_SH = os.path.join(BASE_DIR, 'scripts', 'engines.sh')
+AGENT_SH = os.path.join(BASE_DIR, 'scripts', 'agent.sh')
+INFRA_SH = os.path.join(BASE_DIR, 'scripts', 'infra.sh')
+
+
+def sh(snippet, check_rc=False):
+    """Exécute un snippet bash après avoir sourcé engines.sh."""
+    r = subprocess.run(
+        ['bash', '-c', f'source "{ENGINES_SH}"\n{snippet}'],
+        capture_output=True, text=True, timeout=15,
+    )
+    if check_rc:
+        assert r.returncode == 0, r.stderr
+    return r
+
+
+class TestEnginesSourcing:
+    def test_engines_sh_exists(self):
+        assert os.path.isfile(ENGINES_SH)
+
+    def test_sources_cleanly(self):
+        r = sh('echo "${ENGINES[*]}"', check_rc=True)
+        assert r.stdout.strip() == 'claude codex'
+
+    def test_default_engine_is_claude(self):
+        """Rétro-compat : sans modèle GPT, une installation reste sur Claude."""
+        r = sh('echo "$ENGINE_DEFAULT"', check_rc=True)
+        assert r.stdout.strip() == 'claude'
+
+    def test_agent_sh_sources_engines(self):
+        assert 'engines.sh' in open(AGENT_SH).read()
+
+    def test_infra_sh_sources_engines(self):
+        assert 'engines.sh' in open(INFRA_SH).read()
+
+
+class TestEngineIsValid:
+    @pytest.mark.parametrize('cli', ['claude', 'codex'])
+    def test_accepts_supported(self, cli):
+        assert sh(f'engine_is_valid {cli}').returncode == 0
+
+    @pytest.mark.parametrize('cli', ['gemini', 'bash', 'claude2', '', 'CLAUDE'])
+    def test_rejects_unsupported(self, cli):
+        assert sh(f'engine_is_valid "{cli}"').returncode != 0
+
+
+class TestConfigEnv:
+    def test_claude_uses_claude_config_dir(self):
+        assert sh('engine_config_env claude', check_rc=True).stdout.strip() == 'CLAUDE_CONFIG_DIR'
+
+    def test_codex_uses_codex_home(self):
+        assert sh('engine_config_env codex', check_rc=True).stdout.strip() == 'CODEX_HOME'
+
+
+class TestBypassFlag:
+    def test_claude_flag_unchanged(self):
+        """Le drapeau historique ne doit pas bouger — README + isolation."""
+        out = sh('engine_bypass_flag claude', check_rc=True).stdout.strip()
+        assert out == '--dangerously-skip-permissions'
+
+    def test_codex_flag(self):
+        out = sh('engine_bypass_flag codex', check_rc=True).stdout.strip()
+        assert out == '--dangerously-bypass-approvals-and-sandbox'
+
+
+class TestModelCompatibility:
+    """Garde-fou central : un modèle OpenAI envoyé à Claude Code est IGNORÉ
+    par le TUI, sans erreur. L'agent tourne alors sur le mauvais modèle."""
+
+    @pytest.mark.parametrize('cli,model', [
+        ('claude', 'claude-opus-4-8'),
+        ('claude', 'claude-sonnet-4-5-20250929'),
+        ('codex', 'gpt-5.6-sol'),
+        ('codex', 'gpt-5.6-terra'),
+    ])
+    def test_compatible_pairs(self, cli, model):
+        assert sh(f'engine_model_is_compatible {cli} {model}').returncode == 0
+
+    @pytest.mark.parametrize('cli,model', [
+        ('claude', 'gpt-5.6-sol'),
+        ('codex', 'claude-opus-4-8'),
+        ('codex', 'sonnet-5'),
+    ])
+    def test_incompatible_pairs_rejected(self, cli, model):
+        assert sh(f'engine_model_is_compatible {cli} {model}').returncode != 0
+
+    def test_empty_model_always_ok(self):
+        """Pas de modèle imposé → le CLI garde son défaut : combinaison valide."""
+        assert sh('engine_model_is_compatible codex ""').returncode == 0
+        assert sh('engine_model_is_compatible claude ""').returncode == 0
+
+
+class TestModelViaSlash:
+    def test_claude_uses_slash_command(self):
+        """Claude Code n'a pas d'option de lancement fiable → /model dans le TUI."""
+        assert sh('engine_model_via_slash claude').returncode == 0
+
+    def test_codex_uses_slash_like_claude(self):
+        assert sh('engine_model_via_slash codex').returncode == 0
+
+
+class TestNeutralLoginSlots:
+    def test_slot_maps_to_claude_profile(self):
+        assert sh('engine_effective_profile claude login2b', check_rc=True).stdout.strip() == 'claude2b'
+
+    def test_slot_maps_to_codex_profile(self):
+        assert sh('engine_effective_profile codex login2b', check_rc=True).stdout.strip() == 'codex2b'
+
+
+class TestEffortCommand:
+    """L'effort passe par la COMMANDE du CLI (modifiable en cours de session),
+    pas par une option de lancement. Mapping commun : L→medium, M→high,
+    H→xhigh, X→max et U→ultracode/Ultra."""
+
+    @pytest.mark.parametrize('level,expected', [
+        ('L', 'medium'), ('M', 'high'), ('H', 'xhigh'),
+        ('X', 'max'), ('U', 'ultracode'),
+    ])
+    def test_effort_level_mapping(self, level, expected):
+        out = sh(f'engine_effort_level claude {level}', check_rc=True).stdout.strip()
+        assert out == expected
+
+    @pytest.mark.parametrize('level,digit', [
+        ('L', '2'), ('M', '3'), ('H', '4'), ('X', '5'), ('U', '5'),
+    ])
+    def test_codex_picker_digit(self, level, digit):
+        """Picker codex « Select Reasoning Level » (vérifié 0.144.4) :
+        1=Low 2=Medium 3=High 4=Extra high 5=More reasoning."""
+        out = sh(f'engine_codex_effort_digit {level}', check_rc=True).stdout.strip()
+        assert out == digit
+
+    def test_codex_max_and_ultra_use_advanced_reasoning(self):
+        source = open(ENGINES_SH).read()
+        assert 'grep -q "Advanced Reasoning"' in source
+        assert 'tmux send-keys -t "$target" -l "1"' in source
+        assert 'tmux send-keys -t "$target" -l "2"' in source
+        assert 'tmux send-keys -t "$target" Enter' in source
+
+    def test_agent_config_resolution_does_not_trust_first_named_directory(self):
+        source = open(AGENT_SH).read()
+        resolve_body = source.split("resolve_config() {", 1)[1].split(
+            "# The engine is inferred", 1)[0]
+        assert '"$PROMPTS_DIR"/${base}-*/' in resolve_body
+        assert 'plusieurs overrides' in resolve_body
+        assert 'find_x45_dir "$base"' not in resolve_body
+
+    def test_empty_effort_emits_nothing(self):
+        assert sh('engine_effort_level codex ""', check_rc=True).stdout.strip() == ''
+
+    def test_apply_defaults_to_m_when_effort_file_is_absent(self):
+        """Le backend affiche M sans default.effort : la couche moteur doit
+        donc normaliser une valeur absente vers M/high."""
+        source = open(ENGINES_SH).read()
+        assert 'effort="${4:-M}"' in source
+        assert '"${lvl_digit:-4}"' in source
+
+    def test_fresh_clone_has_explicit_m_default(self):
+        path = os.path.join(BASE_DIR, 'prompts', 'default.effort')
+        assert open(path).read().strip() == 'M'
+
+    def test_apply_function_is_shared(self):
+        """Une seule danse TUI, partagée par agent.sh, infra.sh et le backend."""
+        assert 'engine_apply_model_effort()' in open(ENGINES_SH).read()
+        assert 'engine_apply_model_effort' in open(AGENT_SH).read()
+        assert 'engine_apply_model_effort' in open(INFRA_SH).read()
+
+    def test_claude_effort_requires_a_new_confirmation(self):
+        """Une ancienne confirmation dans le scrollback ne vaut pas ACK."""
+        source = open(ENGINES_SH).read()
+        assert 'before_count=$(tmux capture-pane' in source
+        assert 'after_count=$(tmux capture-pane' in source
+        assert 'grep -Fc "Set effort level to $lvl"' in source
+        assert '[ "$after_count" -gt "$before_count" ]' in source
+
+    def test_infra_applies_effort_once(self):
+        """000 ne doit pas rejouer une ancienne slash-command après la danse."""
+        source = open(INFRA_SH).read()
+        assert source.count('engine_apply_model_effort "$SESSION_NAME"') == 1
+        assert 'engine_effort_slash' not in source
+
+
+class TestPerAgentResponseTimeout:
+    def test_timeout_is_validated_before_shell_injection(self):
+        """A8 : les lancements de bridge sont factorisés dans
+        start_bridge_window — la validation vit UNE fois, sur ce chemin
+        unique, et tous les sites de lancement passent par lui."""
+        source = open(AGENT_SH).read()
+        assert "resolve_agent_timeout()" in source
+        assert "[[ ! \"$value\" =~ ^[0-9]+$ ]]" in source
+        assert '[ "$value" -lt 30 ]' in source
+        assert '[ "$value" -gt 86400 ]' in source
+        assert source.count('resolve_agent_timeout "$agent_id"') == 1
+        window_body = source.split("start_bridge_window() {", 1)[1]
+        window_body = window_body.split("\n}", 1)[0]
+        assert 'resolve_agent_timeout "$agent_id"' in window_body
+        assert "python3 '$BRIDGE_SCRIPT'" in window_body
+        # Aucun lancement de bridge hors de la fonction factorisée.
+        outside = source.replace(window_body, "")
+        assert "python3 '$BRIDGE_SCRIPT'" not in outside
+        # start_single, start_all et reload-bridge passent tous par elle.
+        assert source.count('start_bridge_window "$agent_id" "$CLI"') == 3
+
+    def test_bridge_receives_validated_timeout(self):
+        source = open(AGENT_SH).read()
+        assert "RESPONSE_TIMEOUT='$AGENT_TIMEOUT'" in source
+
+
+class TestLaunchCmd:
+    def test_claude_command_is_byte_identical_to_v3(self):
+        """RÉGRESSION : la commande claude doit rester CELLE de v3.0.13."""
+        out = sh(
+            'engine_launch_cmd claude /opt/ma/login claude1a claude-opus-4-8',
+            check_rc=True,
+        ).stdout.strip()
+        assert out == (
+            'CLAUDE_CONFIG_DIR=/opt/ma/login/claude1a claude '
+            '--dangerously-skip-permissions'
+        )
+        # Le modèle N'EST PAS dans la commande : il passe par /model (slash).
+        assert 'opus' not in out
+
+    def test_codex_command_carries_model_and_billing_locks(self):
+        """La commande codex porte les verrous de facturation (cf.
+        tests/test_codex_billing.py) : sans eux, une OPENAI_API_KEY résiduelle
+        ferait basculer en facturation au token, sans le dire."""
+        out = sh(
+            'engine_launch_cmd codex /opt/ma/login codex1a gpt-5.6-sol',
+            check_rc=True,
+        ).stdout.strip()
+        assert out == (
+            'env -u OPENAI_API_KEY -u CODEX_API_KEY '
+            'CODEX_HOME=/opt/ma/login/codex1a codex '
+            '--dangerously-bypass-approvals-and-sandbox '
+            '-c forced_login_method=chatgpt'
+        )
+
+    def test_codex_command_with_effort(self):
+        out = sh(
+            'engine_launch_cmd codex /opt/ma/login codex1a gpt-5.6-sol H',
+            check_rc=True,
+        ).stdout.strip()
+        assert '--model' not in out
+
+    def test_no_login_means_no_env_prefix(self):
+        out = sh('engine_launch_cmd claude /opt/ma/login "" ""', check_rc=True).stdout.strip()
+        assert out == 'claude --dangerously-skip-permissions'
+
+    def test_rejects_incompatible_model(self):
+        r = sh('engine_launch_cmd claude /opt/ma/login claude1a gpt-5.6-sol')
+        assert r.returncode != 0
+        assert r.stdout.strip() == ''
+
+    def test_rejects_unknown_engine(self):
+        r = sh('engine_launch_cmd gemini /opt/ma/login x claude-opus-4-8')
+        assert r.returncode != 0
+
+    @pytest.mark.parametrize('login', ['../../etc', 'a;rm -rf /', 'a b', '$(id)'])
+    def test_rejects_injected_login(self, login):
+        """Le profil finit dans une commande tmux send-keys : pas d'injection."""
+        r = sh(f'engine_launch_cmd claude /opt/ma/login "{login}" ""')
+        assert r.returncode != 0, f"login accepté à tort : {login!r}"
+
+    @pytest.mark.parametrize('model', ['claude-x; id', 'claude-x$(id)', 'claude x'])
+    def test_rejects_injected_model(self, model):
+        r = sh(f'engine_launch_cmd claude /opt/ma/login claude1a "{model}"')
+        assert r.returncode != 0, f"modèle accepté à tort : {model!r}"
+
+
+class TestNoHardcodedClaudeLaunch:
+    """Aucun script ne doit plus construire « claude --dangerously-skip-… »
+    en dur : la commande vient d'engine_launch_cmd, sinon un agent codex
+    lancerait quand même claude."""
+
+    @pytest.mark.parametrize('script', ['scripts/agent.sh', 'scripts/infra.sh'])
+    def test_no_inline_claude_bypass_flag(self, script):
+        content = open(os.path.join(BASE_DIR, script)).read()
+        assert 'claude --dangerously-skip-permissions' not in content, (
+            f"{script} construit encore la commande claude en dur"
+        )
+
+    @pytest.mark.parametrize('script', ['scripts/agent.sh', 'scripts/infra.sh'])
+    def test_uses_engine_launch_cmd(self, script):
+        content = open(os.path.join(BASE_DIR, script)).read()
+        assert 'engine_launch_cmd' in content or 'build_launch_cmd' in content
+
+    def test_agent_sh_exports_agent_cli_to_bridge(self):
+        """Le bridge choisit ses marqueurs via AGENT_CLI — s'il ne le reçoit
+        pas, un agent codex serait parsé avec les marqueurs de Claude Code.
+        A8 : le lancement du bridge est factorisé dans start_bridge_window ;
+        l'export doit vivre sur ce chemin unique."""
+        content = open(AGENT_SH).read()
+        window_body = content.split("start_bridge_window() {", 1)[1]
+        window_body = window_body.split("\n}", 1)[0]
+        assert "AGENT_CLI='$CLI'" in window_body, (
+            "AGENT_CLI doit être exporté par start_bridge_window (chemin "
+            "unique de lancement du bridge)"
+        )
+
+    def test_infra_sh_exports_agent_cli_to_bridge(self):
+        assert 'AGENT_CLI=' in open(INFRA_SH).read()

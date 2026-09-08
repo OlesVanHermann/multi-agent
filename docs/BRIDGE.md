@@ -1,0 +1,377 @@
+# Bridge Agent — Documentation technique
+
+`scripts/agent-bridge/agent.py` est le pont entre Redis et un Claude Code
+**interactif tournant dans tmux**. Il n'exécute pas `claude` lui-même : il
+suppose qu'une session tmux nommée `agent-{id}` existe déjà
+(créée par `./scripts/agent.sh start <id>`) et dialogue avec elle via
+`tmux send-keys` / `tmux capture-pane`.
+
+```
+Redis Streams                    tmux session "agent-{id}"
+agent:{id}:inbox ──► agent.py ──send-keys──► Claude Code (CLI)
+agent:{id}:outbox ◄─ agent.py ◄─capture-pane─┘
+```
+
+```bash
+python3 scripts/agent-bridge/agent.py 300
+# Prérequis : session tmux "agent-300" avec Claude lancé
+# (sinon le bridge sort immédiatement avec une erreur)
+```
+
+---
+
+## Architecture interne
+
+Quatre threads démons + un serveur health HTTP :
+
+| Thread | Rôle |
+|--------|------|
+| `redis_listener` | Lit l'inbox Streams via consumer group (XREADGROUP) et alimente la queue |
+| `legacy_listener` | Lit l'inbox legacy (List `inject:{id}`, BLPOP) — best-effort, sans ack |
+| `queue_processor` | Dépile la queue, envoie à Claude (tmux), publie la réponse, XACK |
+| `heartbeat` | Publie toutes les 10 s sur `agent:{id}:heartbeat` + `pane_state` (B6) |
+| `health_server` | HTTP `GET /health` sur un port libre publié dans `agent:<id>.health_port` (token `HEALTH_TOKEN` requis) |
+
+Le thread principal (`run()`) lit stdin : lignes normales = prompts locaux,
+lignes `/commande` = commandes interactives. **EOF sur stdin arrête le bridge.**
+
+### Consumer groups (A4)
+
+L'inbox est consommée via le groupe `bridge` (consumer `agent-{id}`), créé
+de façon idempotente avec `id='$'` et `mkstream=True` :
+
+- Au démarrage, les messages **lus mais non acquittés** lors d'un run
+  précédent (crash) sont rejoués d'abord (lecture avec id `'0'`), puis les
+  nouveaux messages sont consommés (id `'>'`).
+- Le bridge ne réclame qu'**un prompt Redis à la fois**. Tant que sa réponse
+  n'est pas publiée puis acquittée, les messages suivants restent dans le
+  Stream Redis ; ils ne sont pas préchargés dans une seconde FIFO volatile.
+- Un prompt n'est **XACK qu'après publication de la réponse** dans l'outbox :
+  un crash en cours de traitement ⇒ rejeu au redémarrage, pas de perte.
+- Les messages de type `response` / `reload_prompt` (et entrées inconnues ou
+  élaguées) sont acquittés immédiatement.
+- L'inbox legacy (List) reste destructive (BLPOP) : préférer les Streams.
+
+### Bornage des streams (A3)
+
+Tous les `XADD` métier (inbox/outbox) sont bornés à `IO_STREAM_MAXLEN`
+(défaut 10000, `approximate=True`) ; les streams monitoring à 1000.
+Un lint de test (`tests/test_stream_bounds.py`) vérifie qu'aucun `xadd`
+sans `maxlen` n'est introduit.
+
+### Publication atomique et décisions uniques (`ma.bus.v1`)
+
+`report-master.sh`, `done.sh` et `send.sh` publient des enveloppes versionnées
+avec `event_id`, `source_turn_id` et, lorsqu'une décision est attendue,
+`decision_id`. Les IDs sont construits depuis l'enveloppe structurée ; le texte
+du prompt n'est jamais utilisé pour décider qu'un événement est identique.
+
+Le publisher atomique prévalide les types de toutes les clés Redis avant la
+première écriture. Il groupe ensuite rapport, éventuel réveil, index de rejeu et
+état agent dans une seule exécution serveur. Même ID et même payload est un
+rejeu sans `XADD`; même ID et payload différent est un conflit sans effet
+partiel. Un timeout client après commit se répare donc en rejouant exactement
+la même commande.
+
+Un rapport `BLOCKED` ou `INFO_REQUIRED` crée directement un
+`DECISION_REQUIRED`. `done.sh` et le rapport partagent le même slot de décision
+par Master, émetteur et tour : un seul événement ouvre un tour modèle, quel que
+soit leur ordre. L'audit peut garder rapport et terminal canonique, mais
+`_attach_pending_reports()` élimine toute seconde représentation portant le
+même `decision_id`, `source_report_id` ou `event_id`.
+
+`STORED`/`QUEUED` décrivent une persistance transport ; ils ne prouvent jamais
+que le modèle destinataire a consommé l'événement. `ORPHANED` indique que la
+session cible n'était pas active au moment du contrôle, sans autoriser une
+réémission.
+
+---
+
+## Détection de fin de réponse (A1 / E1)
+
+Le bridge ne lit pas un flux structuré : il **parse le rendu du terminal**
+(`tmux capture-pane -S -200`). Tous les marqueurs UI sont externalisés dans
+`scripts/agent-bridge/markers.<moteur>.yaml` — si un libellé du CLI change,
+c'est ce fichier qu'on corrige, pas le code.
+
+**E1 — un fichier de marqueurs par moteur.** Le moteur du bridge est choisi par
+la variable d'environnement `AGENT_CLI`, posée par `agent.sh` / `infra.sh`
+après inférence depuis le modèle effectif (`claude-*` ou `gpt-*`) :
+
+| `AGENT_CLI` | Fichier chargé |
+|---|---|
+| absent / `claude` (défaut) | `markers.claude.yaml` |
+| `codex` | `markers.codex.yaml` |
+
+`markers.yaml` est un lien symbolique vers `markers.claude.yaml`
+(rétro-compatibilité). Le chargement et la validation passent par
+`engines.load_markers()`, qui **échoue immédiatement** si un marqueur porte
+encore le sentinelle `__A_RENSEIGNER__` : des marqueurs devinés casseraient la
+détection busy/ready **sans aucune erreur visible**. Voir
+[ENGINES.md](ENGINES.md).
+
+Logique de `_wait_for_response` :
+
+1. Capture une baseline du pane avant la réponse.
+2. Boucle de scrutation **adaptative** (A2) : intervalle `POLL_MIN` tant que
+   le pane change, allongé ×1.5 jusqu'à `POLL_MAX` dès stabilité.
+3. La réponse est considérée terminée quand la zone de prompt (3 dernières
+   lignes non vides) contient la ligne de statut (`status_line`), qu'un
+   marqueur de prompt (`prompt_markers` : `❯`, `>`, …) est visible, et que
+   cette zone est stable depuis `STABLE_READY_SECS` (fallback sans marqueur :
+   `STABLE_FALLBACK_SECS` ; mode plan : `STABLE_PLAN_SECS`).
+
+### Cas particuliers gérés pendant l'attente
+
+| Détection (markers.<moteur>.yaml) | Réaction du bridge |
+|--------------------------|--------------------|
+| `Conversation compacted` (nouvelle occurrence) | Re-met en queue : msg 1 `deviens agent <prompt>` (ré-injection identité) + msg 2 rappel du contexte (dernière ligne `.history` + prompt d'origine), qui porte l'`ack_id` et le `correlation_id` d'origine. Statut transitoire `context_compacted`. |
+| `API Error:` / `rate_limit` / `overloaded_error`… (`api_error_patterns`) | Re-queue du prompt avec backoff `RETRY_BACKOFF_SECS` (max 2 retries). Événement `api_error_retry` dans `events.jsonl`, statut transitoire `api_error_retry`. |
+| `How is Claude doing` + option `0 … Dismiss` | Auto-rejet permanent : envoi atomique de `0 Enter`, pendant un tour ou depuis le heartbeat si l'agent est idle. |
+| `Would you like to proceed` + option positive + footer de sélection | Auto-approbation permanente : `1 Enter` pour Claude, `Enter` pour Codex lorsque l'option positive est déjà sélectionnée. |
+| Question Claude avec option sélectionnée portant `(Recommended)` + footer de sélection | Validation de l'option recommandée par `Enter`. Une recommandation non sélectionnée ou un menu ambigu reste en attente. Codex limite l'auto-réponse à ses overlays d'approbation structurés. |
+| `Press up to edit queued messages` | Le prompt reste pending ; le bridge attend l'idle sans réinjection ni faux acquittement. |
+
+*(Les libellés ci-dessus sont ceux du moteur `claude`. Pour un autre moteur, ce
+sont les valeurs de son propre `markers.<moteur>.yaml`.)*
+
+### Auto-réponse permanente aux dialogues
+
+L'auto-réponse appartient au **backend du bridge**, pas au frontend. Elle reste
+donc active quand aucun navigateur n'est connecté et ne dépend pas d'un reload
+du dashboard :
+
+- pendant un tour `BUSY`, `_wait_for_response()` est l'unique propriétaire du
+  TUI ;
+- quand la queue est vide et l'agent `IDLE`, le heartbeat inspecte le viewport
+  et prend `_tui_lock` sans jamais attendre ;
+- le dialogue est recapturé et reclassé immédiatement avant la frappe afin de
+  ne pas répondre par-dessus une action web ou opérateur ;
+- les touches partent dans un unique `tmux send-keys`, sans `C-u`, collage ou
+  retry d'`Enter` ;
+- une empreinte empêche tout double envoi après succès ; un échec tmux peut
+  être retenté au maximum trois fois, avec cooldown ;
+- seuls les 30 derniers rangs actifs sont classés, le process du pane doit être
+  celui du moteur et un marqueur isolé dans l'historique ne suffit jamais.
+
+Les règles et touches sont externalisées sous `auto_response` dans
+`markers.claude.yaml` et `markers.codex.yaml`. Un dialogue incomplet, ambigu ou
+dont le marqueur, l'option positive sélectionnée et le footer n'appartiennent
+pas au même bloc courant n'est pas validé automatiquement.
+
+#### Garde-fou irréversible — jamais une suppression
+
+Règle opérateur : **jamais `rm` & co, toujours `mv` vers `removed/`**
+(`safe_rm`). Le problème n'est pas l'auto-validation, c'est la commande : un
+déplacement est rattrapable, une suppression ne l'est pas.
+
+`autoresponder.irreversible_marker()` inspecte donc le dialogue actif avant
+toute classification. Si un motif irréversible y est visible — `rm`, `rmdir`,
+`unlink`, `shred`, `truncate`, `mkfs`, `dd if=`, `DROP TABLE`,
+`DELETE FROM`, `git clean`, `git reset --hard`, `git push --force`,
+`find … -delete`, `kill -9`, `chmod -R`, un `curl`/`wget` tubé vers un
+shell — **aucune touche n'est calculée**, quel que soit le type de dialogue.
+Cela couvre aussi une option explicitement marquée « (Recommended) » : ce mot
+n'a jamais accordé d'autorité destructive. L'écran reste `waiting_approval` et
+la décision revient à l'opérateur.
+
+Cette liste est volontairement **hors des fichiers de marqueurs** : ce ne sont
+pas des chaînes d'UI de CLI, et cette frontière de sécurité ne doit pas
+pouvoir être affaiblie en éditant un marqueur. Elle s'applique identiquement à
+tous les moteurs.
+
+Effet recherché : l'ergonomie pousse vers la bonne pratique. Un agent qui écrit
+`mv`/`safe_rm` voit son approbation passer seule ; un agent qui écrit `rm -f`
+reste bloqué à attendre un humain.
+
+### Une seule implémentation du parsing de pane (E1)
+
+Trois composants déduisent l'état d'un agent depuis son pane : le bridge
+(`agent.py`), le dashboard (`cache.py`) et l'outil de diagnostic
+(`debug-color.py`). Les deux derniers portaient une **copie manuelle** du même
+parsing, en bash, avec les chaînes d'UI en dur — et ces copies avaient dérivé.
+
+Le corps du parsing est désormais **généré** depuis les marqueurs :
+
+```python
+engines.build_pane_eval(markers)              # $out, $pane_cmd → 14 champs
+engines.build_pane_scan(markers)   # + capture tmux, 1 fork pour N agents
+```
+
+`tests/test_pane_scan.py` exécute le bash généré **et** `_parse_pane_state()` sur
+17 panes réels × 3 process, et compare les 14 champs un à un. Toute divergence
+future casse le test.
+
+Le scan tmux du dashboard n'est qu'un **repli** (quand le `pane_state` publié par
+le bridge est absent ou périmé dans Redis). Un agent dont les marqueurs ne sont
+pas relevés y est **ignoré** : son état viendra de Redis. Un état absent est
+rafraîchi ; un état faux est simplement affiché.
+
+---
+
+## Format des messages
+
+### Envoyer un prompt (inbox)
+
+```bash
+./scripts/send.sh 300 "Analyse le README"
+# ou
+redis-cli XADD "agent:300:inbox" MAXLEN '~' 10000 '*' \
+  prompt "Analyse le README" from_agent "cli" \
+  correlation_id "$(uuidgen)" timestamp "$(date +%s)"
+```
+
+Champs : `prompt` (requis), `from_agent`, `correlation_id` (F2, optionnel),
+`timestamp`. Un `from_agent` invalide (ni ID d'agent ni valeur réservée
+`cli|manual|legacy|auto_init|…`) est remplacé par `unknown`.
+
+### Réponse (outbox)
+
+```
+agent:{id}:outbox
+  response, from_agent, to_agent, timestamp, chars
+  correlation_id   # F2 : écho du correlation_id de la requête
+```
+
+La réponse canonique reste dans l'outbox et porte le `correlation_id` de la
+requête. Elle n'est pas recopiée automatiquement dans l'inbox de l'émetteur :
+une transcription TUI est un artefact de diagnostic, pas un événement métier.
+Les signaux actionnables (`DONE`, `SCORE`, `BLOCKED`, etc.) sont envoyés
+explicitement comme prompts courts via `send.sh` / `done.sh`.
+
+### Autres types inbox
+
+- `type=response` : transcription historique acquittée sans injection TUI
+  (compatibilité avec les anciennes entrées encore présentes dans Redis).
+- `type=reload_prompt` : ré-injection du prompt agent (après compaction).
+
+---
+
+## Auto-chargement du prompt agent
+
+Au démarrage, le bridge cherche le prompt de l'agent dans `prompts/` :
+
+- Pipeline standard : `prompts/{id}-*.md` → envoie `deviens agent <chemin>` ;
+- x45 : répertoire `prompts/{id}*/` avec `system.md` + `memory.md` +
+  `methodology.md` → envoie la liste des fichiers à lire ;
+- puis, si `{id}.history` existe, un rappel de la dernière entrée.
+
+Chaque prompt traité est ajouté à `prompts/…/{id}.history` (horodaté).
+
+---
+
+## Commandes interactives (stdin)
+
+```
+/status            État + taille de queue + tâches accomplies
+/queue             Taille de la queue
+/send <id> <msg>   Envoyer à un autre agent (broadcast : /send all <msg>)
+/help              Aide
+```
+
+Toute autre ligne stdin est traitée comme un prompt local (`from_agent=manual`).
+
+---
+
+## Variables d'environnement
+
+| Variable | Défaut | Rôle |
+|----------|--------|------|
+| `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` | `localhost` / `6379` / vide | Connexion Redis |
+| `LOG_DIR` | `logs/` | Logs : `{LOG_DIR}/{id}/bridge_{ts}.log` + `events.jsonl` |
+| `RESPONSE_STALL_THRESHOLD` | valeur de `RESPONSE_TIMEOUT`, sinon `300` | Silence du pane avant diagnostic `stalled` ; ne termine ni n'acquitte la tâche |
+| `RESPONSE_TIMEOUT` | `300` | Alias de compatibilité du seuil de stall ; ce n'est plus une deadline de complétion |
+| `POLL_MIN` / `POLL_MAX` | `0.2` / `2.0` | Scrutation adaptative du pane (A2) |
+| `STABLE_READY_SECS` | `5` | Stabilité requise avec marqueur de prompt |
+| `STABLE_FALLBACK_SECS` | `10` | Stabilité requise sans marqueur |
+| `STABLE_PLAN_SECS` | `15` | Stabilité requise en mode plan |
+| `RETRY_BACKOFF_SECS` | `10` | Backoff entre retries après erreur API |
+| `IO_STREAM_MAXLEN` | `10000` | Borne des streams inbox/outbox (A3) |
+| `AGENT_HEALTH_PORT_BASE` | `9100` | Compatibilité historique ; les nouveaux bridges publient leur port dynamique dans Redis |
+
+Le timeout peut être réglé par agent avec `prompts/<agent>.timeout` (ou dans
+son répertoire mono/x45/z21), puis `prompts/default.timeout` en fallback.
+Valeur acceptée : entier de 30 à 86400 secondes ; absence = défaut bridge 300 s.
+| `HEALTH_TOKEN` | vide | Token du endpoint `/health` (vide = tout refusé) |
+| `VERIFY_MAX_RETRIES` | `3` | V3 : budget de retries verify par tâche |
+| `VERIFY_TIMEOUT` | `600` | V3 : timeout (s) d'un `verify_cmd` |
+| `PROJECT_DIR` | `$BASE/project` | V3 : cwd du verify + règles anti-hacking |
+| `WAL_MAXLEN` | `100000` | V3 : borne du stream `wal` |
+| `WATCHDOG_STALL_THRESHOLD` | `600` | V3 : silence WAL (s) avant nudge watchdog |
+
+Boucle verify, WAL et détection de stall : voir `docs/V3.md`.
+
+---
+
+## Keepalive des logins (crontab-scheduler)
+
+Le scheduler (`scripts/crontab-scheduler.py`, session tmux
+`agent-001`) balaie tous les profils `login/claude*` :
+
+- **Sweep** toutes les `MA_KEEPALIVE_SWEEP_MIN` minutes (défaut `720` = 12 h,
+  `0` = désactivé) : pour chaque profil, démarre (ou réutilise) la session
+  tmux `agent-002-{profil}`, envoie un « hello » (vrai appel API
+  → la session OAuth ne s'endort pas), scrape `/status` (usage + identité)
+  et écrit `keepalive/usage_{profil}.json`, `info_{profil}.json` et un
+  récapitulatif `keepalive/sweep_report.json`.
+- **Collecte immédiate** : `Start` attend le TUI puis exécute une collecte
+  ciblée avant de répondre. À l'ouverture du panneau, toute session déjà active
+  sans snapshot attribuable est également sondée, sans attendre le sweep.
+- Chaque snapshot porte `source_session`, `last_scan`, `engine` et
+  `collection_status`. Le dashboard masque un ancien cache sans provenance
+  plutôt que de l'attribuer au mauvais profil.
+- Claude Code est parcouru par contenu d'onglet, pas par un nombre fixe de
+  flèches : `Status` fournit l'identité, `Usage` les limites du plan et `Stats`
+  les métriques de la session keepalive. Codex fournit compte, modèle, effort,
+  permissions et limites dans sa boîte `/status` unique.
+- **États** par profil : `ok`, `no_bars`, `login_required` (re-login à
+  faire), `timeout`. Visible dans le panneau « Login Keep Alive » du
+  dashboard et dans `logs/crontab-scheduler.log`.
+- Le sweep est horodaté (`keepalive/last_sweep.txt`), pas aligné sur
+  l'horloge : au (re)démarrage, si le dernier sweep date de plus de 12 h,
+  il part immédiatement.
+- `{profil}.suspended` dans `keepalive/` exclut un profil du sweep ;
+  `LOGIN_DIR` change le répertoire des profils.
+- Le sweep arrête les anciennes sessions keepalive
+  `A-agent-002-{claude|codex}N[a-z]` avant d'utiliser les sessions canoniques
+  `agent-002-*`. Il ne touche pas aux autres sessions historiques.
+- Deux profils portant le même refresh token sont marqués
+  `cloned_refresh_token` et ne sont pas utilisés. Réauthentifier chaque profil
+  séparément, puis relancer explicitement :
+  `python3 scripts/crontab-scheduler.py --keepalive-sweep-once`.
+- L'ancien round-robin `/status` (10 min) est désactivé par défaut ;
+  `MA_KEEPALIVE_RR_MIN=10` le réactive.
+
+---
+
+## Monitoring
+
+- **Heartbeat** : `agent:{id}:heartbeat` toutes les 10 s (statut, mémoire,
+  CPU via psutil, compteurs de messages), borné à 1000 entrées.
+- **État dashboard (B6)** : le bridge dérive l'état du pane (`pane_state`)
+  et le publie dans le hash `agent:{id}` — le dashboard lit
+  Redis, sans re-scanner tmux.
+- **Statuts** dans `agent:{id}` (`status`) : `idle`, `busy`,
+  `waiting_approval`, `api_error_retry`, `context_compacted`, `has_bashes`,
+  `stopped`.
+- **Health HTTP** : `GET http://127.0.0.1:{base+id}/health?token=…` →
+  `status`, `agent_id`, `uptime_seconds`, `last_heartbeat_ts`,
+  `redis_connected`, `pty_active`.
+- **Healthcheck global** : `python3 scripts/agent-bridge/healthcheck.py`.
+
+---
+
+## Tests
+
+- `tests/test_e2e_bridge.py` (G1) : chaîne complète Redis → agent.py → tmux
+  avec un faux Claude (`tests/fixtures/fake_claude.sh`) — nominal,
+  compaction, erreur API, sondage, plan mode. Skippés si `tmux` ou
+  `redis-server` manquent ; exécutés en CI (`.github/workflows/e2e.yml`).
+- `tests/test_consumer_groups.py` (A4/G2) : routage inbox, ack après
+  publication, reprise après crash sur un vrai Redis.
+- `tests/test_stream_bounds.py` (A3), `tests/test_markers_externalized.py` (A1),
+  `tests/test_adaptive_poll.py` (A2).
+
+```bash
+python3 -m pytest tests/test_e2e_bridge.py -v
+```

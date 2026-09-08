@@ -1,0 +1,13 @@
+# Compétence partagée : __ID__
+
+## Règle
+
+__REGLE__
+
+## Preuves indépendantes
+
+- Triangle : __TRIANGLE_1__ — helpful: __HELPFUL_1__ — harmful: __HARMFUL_1__
+- Triangle : __TRIANGLE_2__ — helpful: __HELPFUL_2__ — harmful: __HARMFUL_2__
+
+Promotion uniquement après un gate positif sur deux triangles indépendants.
+Toute hausse de `harmful` déclenche une réévaluation et peut rétrograder la règle.

@@ -1,0 +1,28 @@
+# PR-TEST-{AGENT}-{Classe}_{Methode}
+
+## Ref
+PR-SPEC-{AGENT}-{Classe}_{Methode}
+
+## Spec file
+SPEC-{DOMAIN}-{lot}.md
+
+## Fonction
+{function_prefix}_{classe}_{methode}
+
+## Commit
+{commit_hash}
+
+## Agent cible
+501 (Test Creator)
+
+## Date
+{YYYY-MM-DD}
+
+---
+
+## COMPLETED (ajouté par 501)
+
+**Script:** test_{function_prefix}_{classe}_{methode}.py
+**Manifest:** TEST-{AGENT}-{Classe}_{Methode}.json
+**Tests:** 3
+**Completed:** {YYYY-MM-DD HH:MM}

@@ -1,0 +1,24 @@
+{
+  "model": "claude-opus-4-6",
+  "effortLevel": "high",
+  "skipDangerousModePermissionPrompt": true,
+  "env": { "CLAUDE_CODE_DISABLE_MOUSE": "1" },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR:-$PWD}/scripts/claude-stop-guard.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": { "deny": [
+    "Read(./setup/secrets.cfg)", "Edit(./setup/secrets.cfg)",
+    "Edit(./login/**)", "Edit(./pool-requests/tests/**)",
+    "Read(./bench/oracle/**)", "Edit(./bench/oracle/**)"
+  ] }
+}

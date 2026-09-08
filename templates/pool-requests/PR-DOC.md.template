@@ -1,0 +1,13 @@
+# PR-DOC-{AGENT}-{Classe}_{Methode}
+
+## Source
+{chemin/vers/documentation/source.md}
+
+## Description
+{Description courte de la fonctionnalité à documenter}
+
+## Créé par
+{agent_id} ({agent_name})
+
+## Date
+{YYYY-MM-DD}

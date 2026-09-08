@@ -1,0 +1,803 @@
+#!/bin/bash
+# agent.sh - Start/stop agents
+# Usage: ./scripts/agent.sh start <agent_id|all>
+#        ./scripts/agent.sh stop <agent_id|all>
+
+set -e
+
+# Raise open files limit (each agent = tmux session + claude + bridge)
+ulimit -n 10240 2>/dev/null || true
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [ -f "$BASE_DIR/setup/secrets.cfg" ]; then
+    set -a
+    eval "$(grep -E '^[A-Z_]+=' "$BASE_DIR/setup/secrets.cfg" | grep -v '^#')"
+    set +a
+fi
+source "$SCRIPT_DIR/redis.sh"
+source "$SCRIPT_DIR/lib.sh"
+source "$SCRIPT_DIR/engines.sh"   # E1 : moteurs CLI (claude | codex)
+BRIDGE_SCRIPT="$BASE_DIR/scripts/agent-bridge/agent.py"
+LOG_DIR="$BASE_DIR/logs"
+PROMPTS_DIR="$BASE_DIR/prompts"
+PROFILES_DIR="$BASE_DIR/login"
+
+# Read tmux width from prompts/tmux.width if present
+if [ -f "$PROMPTS_DIR/tmux.width" ]; then
+    TMUX_COLS=$(cat "$PROMPTS_DIR/tmux.width" | tr -d '[:space:]')
+fi
+
+# Colors
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+BLUE='\033[0;34m'; NC='\033[0m'
+
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_ok() { echo -e "${GREEN}[OK]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+validate_agent_id() {
+    local id="$1"
+    if ! is_valid_agent_id "$id"; then
+        log_error "Invalid agent ID format: $id"
+        return 1
+    fi
+}
+
+# ── Helpers ──
+
+is_protected() {
+    # Protected: only 000 and its satellites (000-500, 000-900, etc.)
+    local base="${1%%-*}"  # 345-500 → 345, 000-900 → 000
+    [[ "$base" == "000" ]]
+}
+
+# Resolve x45 directory (plain, verbose, or sub-agent ID)
+find_x45_dir() {
+    local id="$1"
+    # Exact match
+    [ -d "$PROMPTS_DIR/$id" ] && echo "$PROMPTS_DIR/$id" && return 0
+    # Verbose match: 341-analyse-archi-...
+    for d in "$PROMPTS_DIR"/${id}-*/; do
+        [ -d "$d" ] && echo "${d%/}" && return 0
+    done
+    # Sub-agent fallback: 300-100 → look up parent 300 (or 300-*)
+    if [[ "$id" == *-* ]]; then
+        local base="${id%%-*}"
+        [ -d "$PROMPTS_DIR/$base" ] && echo "$PROMPTS_DIR/$base" && return 0
+        for d in "$PROMPTS_DIR"/${base}-*/; do
+            [ -d "$d" ] && echo "${d%/}" && return 0
+        done
+    fi
+    return 1
+}
+
+# Migre à la volée un mono NNN historique vers la paire canonique NNN-1XX/2XX.
+# L'opération est idempotente et le prompt/config historiques sont archivés par
+# scaffold-mono-pair.py avant d'être recopiés sur l'agent principal.
+ensure_mono_pair() {
+    local id="${1%%-*}" dir type_target
+    [[ "$id" =~ ^[0-9][0-9][0-9]$ ]] || return 0
+    [ "$id" = "000" ] && return 0
+    dir=$(find_x45_dir "$id") || return 0
+    [ -f "$dir/mono-pair.json" ] && return 0
+    [ -L "$dir/agent.type" ] || return 0
+    type_target=$(basename "$(readlink "$dir/agent.type")")
+    [ "$type_target" = "agent_mono.type" ] || return 0
+
+    log_info "Migration mono $id -> $id-1${id:1:2} + $id-2${id:1:2}" >&2
+    python3 "$SCRIPT_DIR/scaffold-mono-pair.py" "$id" \
+        --base "$BASE_DIR" --directory-name "$(basename "$dir")" >&2
+}
+
+# Get all agent IDs for an x45 triangle (main + satellites)
+get_triangle_ids() {
+    local id="$1"
+    ensure_mono_pair "$id" || return 1
+    local dir
+    dir=$(find_x45_dir "$id") || return 1
+    local ids=()
+    if [ ! -f "$dir/mono-pair.json" ]; then
+        ids=("$id")
+    fi
+    # Local satellites (.md)
+    for sat_link in "$dir"/${id}-[0-9][0-9][0-9].md; do
+        [ -f "$sat_link" ] || continue
+        ids+=("$(basename "$sat_link" .md)")
+    done
+    # Remote satellites (.remote)
+    for rf in "$dir"/${id}-[0-9][0-9][0-9].remote; do
+        [ -f "$rf" ] || continue
+        local sat_id=$(basename "$rf" .remote)
+        [[ " ${ids[*]} " == *" $sat_id "* ]] || ids+=("$sat_id")
+    done
+    echo "${ids[@]}"
+}
+
+# Resolve config file: x45 subdir > prompts root > default
+# Usage: resolve_config "324-124" "login" → prints file content or empty
+resolve_config() {
+    local agent_id="$1" ext="$2"
+    # 1. prompts/{dir_name}/{agent_id}.ext (x45 subdir — most specific).
+    # Plusieurs répertoires portant le même préfixe peuvent coexister après
+    # migration (ex. 000-hub-master + 000-super-master). Ne jamais prendre
+    # aveuglément le premier : chercher celui qui porte réellement l'override.
+    local base="${agent_id%%-*}"  # 324-124 → 324, 324 → 324
+    local dir candidate found=""
+    for dir in "$PROMPTS_DIR/$base" "$PROMPTS_DIR"/${base}-*/; do
+        [ -d "$dir" ] || continue
+        candidate="${dir%/}/${agent_id}.${ext}"
+        if [ -f "$candidate" ] || [ -L "$candidate" ]; then
+            if [ -n "$found" ] && [ "$found" != "$candidate" ]; then
+                # stderr obligatoire : les appelants capturent stdout via
+                # $( ) — sans redirection le diagnostic serait englouti.
+                log_error "$agent_id: plusieurs overrides .$ext: $found et $candidate" >&2
+                return 1
+            fi
+            found="$candidate"
+        fi
+    done
+    if [ -n "$found" ]; then
+        tr -d '[:space:]' < "$found"
+        return
+    fi
+    # 2. prompts/{agent_id}.ext (flat)
+    if [ -f "$PROMPTS_DIR/${agent_id}.${ext}" ]; then
+        cat "$PROMPTS_DIR/${agent_id}.${ext}" | tr -d '[:space:]'
+        return
+    fi
+    # 3. Override du groupe pour un satellite.
+    if [[ "$agent_id" == *-* ]] && [ -f "$PROMPTS_DIR/${base}.${ext}" ]; then
+        cat "$PROMPTS_DIR/${base}.${ext}" | tr -d '[:space:]'
+        return
+    fi
+    # 4. prompts/default.ext (fallback)
+    if [ -f "$PROMPTS_DIR/default.${ext}" ]; then
+        cat "$PROMPTS_DIR/default.${ext}" | tr -d '[:space:]'
+        return
+    fi
+}
+
+# The engine is inferred from the effective model; users only change .model.
+resolve_engine() {
+    local agent_id="$1"
+    engine_for_model "$(resolve_config "$agent_id" "model")"
+}
+
+# Timeout bridge optionnel : entier en secondes, borné pour éviter qu'un
+# fichier projet invalide fasse mourir agent.py au parse de l'environnement.
+resolve_agent_timeout() {
+    local agent_id="$1" value
+    value=$(resolve_config "$agent_id" "timeout")
+    [ -z "$value" ] && return 0
+    if [[ ! "$value" =~ ^[0-9]+$ ]] || [ "$value" -lt 30 ] || [ "$value" -gt 86400 ]; then
+        log_error "$agent_id: timeout invalide '$value' (attendu: 30..86400 secondes)"
+        return 1
+    fi
+    printf '%s\n' "$value"
+}
+
+# A8 : fenêtre bridge d'un agent — source unique (start_single, start_all,
+# reload-bridge). La fenêtre moteur (:0) n'est jamais touchée ici.
+start_bridge_window() {
+    local agent_id=$1 CLI=$2
+    local SESSION_NAME="agent-$agent_id"
+    local AGENT_TIMEOUT
+    AGENT_TIMEOUT=$(resolve_agent_timeout "$agent_id") || return 1
+    mkdir -p "$LOG_DIR/$agent_id"
+    tmux new-window -t "$SESSION_NAME" -n bridge
+    tmux send-keys -t "$SESSION_NAME:bridge" "cd '$BASE_DIR' && sleep 3 && AGENT_CLI='$CLI' ${AGENT_TIMEOUT:+RESPONSE_TIMEOUT='$AGENT_TIMEOUT' }REDIS_PASSWORD='${REDIS_PASSWORD:-}' REDIS_PORT='${REDIS_PORT:-6379}' HEALTH_TOKEN='${HEALTH_TOKEN:-}' python3 '$BRIDGE_SCRIPT' '$agent_id' 2>&1 | tee -a '$LOG_DIR/$agent_id/bridge.log'" Enter
+    tmux select-window -t "$SESSION_NAME:0"
+}
+
+# E1 : construit la commande de lancement du CLI pour un agent.
+# Écrit la commande sur stdout, ou logue l'erreur et retourne 1.
+build_launch_cmd() {
+    local agent_id="$1"
+    local cli model login effort cmd
+    cli=$(resolve_engine "$agent_id")
+
+    if ! engine_is_valid "$cli"; then
+        log_error "$agent_id: moteur inconnu '$cli' (attendu: ${ENGINES[*]})"
+        return 1
+    fi
+
+    model=$(resolve_config "$agent_id" "model")
+    login=$(resolve_config "$agent_id" "login")
+    effort=$(resolve_config "$agent_id" "effort")
+
+    if [ -n "$login" ]; then
+        if ! engine_from_profile "$login" >/dev/null; then
+            log_error "$agent_id: profil '$login' — moteur indéterminable (préfixe attendu: ${ENGINES[*]})"
+            return 1
+        fi
+        login=$(engine_effective_profile "$cli" "$login")
+    fi
+
+    if ! engine_model_is_compatible "$cli" "$model"; then
+        log_error "$agent_id: modèle '$model' incompatible avec le moteur '$cli'"
+        log_error "  (attendu: identifiant préfixé '$(engine_model_prefix "$cli")')"
+        return 1
+    fi
+
+    # VERROU a — facturation. Un profil Codex authentifié par CLÉ API facturerait
+    # au token, hors forfait. Sur un parc d'agents en continu, la note grimpe
+    # avant qu'on s'en aperçoive : on refuse de démarrer.
+    if [ "$cli" = "codex" ] && ! engine_codex_preflight "$PROFILES_DIR" "$login"; then
+        log_error "$agent_id: préflight Codex refusé (voir ci-dessus)"
+        return 1
+    fi
+
+    if ! cmd=$(engine_launch_cmd "$cli" "$PROFILES_DIR" "$login" "$model" "$effort"); then
+        log_error "$agent_id: paramètres invalides (cli=$cli login=$login model=$model)"
+        return 1
+    fi
+    printf '%s\n' "$cmd"
+}
+
+# ── Remote ──
+
+start_remote() {
+    # Start ONE remote session for agent_id. The triangle expansion loop
+    # in do_start/start_all calls us once per member — do not iterate here.
+    local agent_id=$1
+    validate_agent_id "$agent_id" || return 1
+    local agent_dir
+    agent_dir=$(find_x45_dir "$agent_id") || return 1
+
+    local rf="$agent_dir/${agent_id}.remote"
+    if [ ! -f "$rf" ]; then
+        log_warn "No .remote file for $agent_id in $(basename "$agent_dir")"
+        return 1
+    fi
+
+    local ssh_cmd
+    ssh_cmd=$(cat "$agent_dir/remote.ssh")
+    if [[ ! "$ssh_cmd" =~ ^ssh[[:space:]] ]]; then
+        log_error "Invalid remote.ssh content for $agent_id (must start with 'ssh ')"
+        return 1
+    fi
+    local remote_session
+    remote_session=$(cat "$rf" | tr -d '[:space:]')
+    local SESSION_NAME="agent-${agent_id}"
+
+    if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+        log_warn "$SESSION_NAME already exists, skipping"
+        return 0
+    fi
+
+    log_info "Remote $agent_id → $remote_session"
+    mkdir -p "$LOG_DIR/$agent_id"
+
+    # Local: -y 49 + status off → pane = 49 lines
+    # Remote: status on + window 50 → pane = 49 (50 - status bar)
+    # On attach: set status off → pane stays 49 (no resize, no SIGWINCH)
+    tmux new-session -d -s "$SESSION_NAME" -x "${TMUX_COLS:-220}" -y 49
+    tmux set-option -t "$SESSION_NAME" status off
+    tmux set-option -t "$SESSION_NAME" history-limit 10000
+    tmux send-keys -t "$SESSION_NAME" "$ssh_cmd -t \"tmux attach -t $remote_session \\; set status off\"" Enter
+
+    log_ok "$SESSION_NAME → $remote_session"
+}
+
+# ── Start ──
+
+start_single() {
+    local agent_id=$1
+    validate_agent_id "$agent_id" || return 1
+    local SESSION_NAME="agent-$agent_id"
+
+    if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+        log_warn "$SESSION_NAME already exists, skipping"
+        return
+    fi
+
+    if is_protected "$agent_id" && [ "${ALLOW_PROTECTED_000:-0}" != "1" ]; then
+        log_warn "Skipping $agent_id (use ./scripts/infra.sh start for Architect)"
+        return
+    fi
+
+    # Remote agent? Delegate to start_remote
+    local agent_dir
+    if agent_dir=$(find_x45_dir "$agent_id" 2>/dev/null) && [ -f "$agent_dir/remote.ssh" ]; then
+        start_remote "$agent_id"
+        return
+    fi
+
+    log_info "Starting agent $agent_id..."
+    mkdir -p "$LOG_DIR/$agent_id"
+
+    # E1 : moteur + modèle + login (résolution: subdir agent → prompts/ → default)
+    local CLI=$(resolve_engine "$agent_id")
+    local MODEL=$(resolve_config "$agent_id" "model")
+    local EFFORT=$(resolve_config "$agent_id" "effort")
+    local LAUNCH_CMD
+    LAUNCH_CMD=$(build_launch_cmd "$agent_id") || return 1
+
+    tmux new-session -d -s "$SESSION_NAME" -x "${TMUX_COLS:-110}" -y 54
+    tmux set-option -t "$SESSION_NAME" history-limit 10000
+    # CLAUDE_WRAPPER (optional): isolation prefix, e.g. "sudo -u agent-worker" or "firejail --profile=..."
+    tmux send-keys -t "$SESSION_NAME" "cd '$BASE_DIR' && unset CLAUDECODE && ${CLAUDE_WRAPPER:-} $LAUNCH_CMD" Enter
+
+    if ! wait_cli_ready "$SESSION_NAME" "$CLI" 30; then
+        log_error "Agent $agent_id: $CLI did not start within 30s"
+        tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
+        return 1
+    fi
+
+    # Modèle + effort via la commande du CLI (modifiables en cours de session).
+    # codex : picker /model piloté (les arguments seraient avalés comme prompt).
+    engine_apply_model_effort "$SESSION_NAME" "$CLI" "$MODEL" "$EFFORT" || \
+        log_warn "$agent_id: application modèle/effort incomplète (voir ci-dessus)"
+
+    # Prompt injection is handled by the bridge (agent.py auto-init)
+
+    # Timeout de réponse par agent : prompts/{dir}/{id}.timeout > prompts/{id}.timeout
+    # > défaut bridge (300 s). Les devs codex sur tâches longues dépassent 300 s :
+    # le bridge renvoyait alors un pane tronqué comme « réponse » au master.
+    start_bridge_window "$agent_id" "$CLI" || return 1
+
+    log_ok "Agent $agent_id started: $SESSION_NAME ($CLI)"
+}
+
+# E1 : marqueurs de « CLI démarré et prêt », lus dans markers.<cli>.yaml
+# (clé ready_markers) — jamais codés en dur ici. Le cache évite un fork python3
+# par tour de boucle de scrutation.
+declare -A _READY_MARKERS_CACHE
+
+cli_ready_markers() {
+    local cli="$1"
+    if [ -z "${_READY_MARKERS_CACHE[$cli]:-}" ]; then
+        local m
+        m=$(engine_marker_get "$cli" ready_markers) || return 1
+        [ -z "$m" ] && return 1
+        _READY_MARKERS_CACHE[$cli]="$m"
+    fi
+    printf '%s\n' "${_READY_MARKERS_CACHE[$cli]}"
+}
+
+wait_cli_ready() {
+    # Wait until the CLI has finished booting in a tmux session.
+    local session=$1
+    local cli=${2:-$ENGINE_DEFAULT}
+    local max_wait=${3:-30}  # max seconds to wait
+    local elapsed=0
+
+    # grep -F -e <m1> -e <m2> …  : équivaut au motif historique '❯|Try "'
+    local -a grep_args=(-q -F)
+    local marker found=0
+    while IFS= read -r marker; do
+        [ -n "$marker" ] || continue
+        grep_args+=(-e "$marker")
+        found=1
+    done < <(cli_ready_markers "$cli")
+
+    if [ "$found" -eq 0 ]; then
+        log_error "Aucun ready_marker pour le moteur '$cli' — marqueurs non relevés ?"
+        log_error "  → ./scripts/agent-bridge/capture-markers.sh $cli"
+        return 1
+    fi
+
+    while [ $elapsed -lt $max_wait ]; do
+        local pane_content
+        pane_content=$(tmux capture-pane -t "$session:0" -p 2>/dev/null)
+        if printf '%s' "$pane_content" | grep "${grep_args[@]}"; then
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    return 1  # timeout
+}
+
+# Rétro-compat : ancien nom conservé (appelants externes éventuels)
+wait_claude_ready() {
+    wait_cli_ready "$1" "$ENGINE_DEFAULT" "${2:-30}"
+}
+
+start_all() {
+    log_info "Auto-detecting agents from prompts/..."
+
+    # Les installations mises à niveau peuvent encore contenir des monos
+    # historiques. Les matérialiser avant le scan garantit deux sessions.
+    local legacy_dir legacy_id
+    for legacy_dir in "$PROMPTS_DIR"/[0-9][0-9][0-9] "$PROMPTS_DIR"/[0-9][0-9][0-9]-*; do
+        [ -d "$legacy_dir" ] || continue
+        legacy_id="$(basename "$legacy_dir")"
+        ensure_mono_pair "${legacy_id:0:3}"
+    done
+
+    # Collect all agent IDs
+    local agents=()
+
+    # Format 1: flat prompts (pipeline standard) — prompts/XXX-*.md
+    for prompt_file in "$PROMPTS_DIR"/[0-9][0-9][0-9]-*.md; do
+        [ -f "$prompt_file" ] || continue
+        local filename=$(basename "$prompt_file" .md)
+        local agent_id="${filename%%-*}"
+        is_protected "$agent_id" && continue
+        # Skip duplicates (e.g. 390-rapport.md + 390-PLAN-MAXIMAL.md)
+        [[ " ${agents[*]} " == *" $agent_id "* ]] && continue
+        # Skip already running
+        local SESSION_NAME="agent-$agent_id"
+        if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+            log_warn "$SESSION_NAME already exists, skipping"
+            continue
+        fi
+        agents+=("$agent_id")
+    done
+
+    # Format 2: x45 directory prompts — prompts/XXX/ or prompts/XXX-name/
+    for agent_dir in "$PROMPTS_DIR"/[0-9][0-9][0-9] "$PROMPTS_DIR"/[0-9][0-9][0-9]-*; do
+        [ -d "$agent_dir" ] || continue
+        local dir_name=$(basename "$agent_dir")
+        # Extract numeric prefix (341 from 341-analyse-archi-...)
+        local agent_id="${dir_name:0:3}"
+        { [ -f "$agent_dir/${agent_id}-system.md" ] || [ -f "$agent_dir/system.md" ] || [ -f "$agent_dir/${dir_name}.md" ] || [ -f "$agent_dir/mono-pair.json" ] || ls "$agent_dir"/${agent_id}-*-system.md &>/dev/null || [ -f "$agent_dir/remote.ssh" ]; } || continue
+        is_protected "$agent_id" && continue
+        # Skip duplicates (already found in flat format or verbose duplicate)
+        if [ ! -f "$agent_dir/mono-pair.json" ] && ! [[ " ${agents[*]} " == *" $agent_id "* ]]; then
+            # Skip already running
+            local SESSION_NAME="agent-$agent_id"
+            if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+                log_warn "$SESSION_NAME already exists, skipping"
+            else
+                agents+=("$agent_id")
+            fi
+        fi
+
+        # x45 satellites: find XXX-{suffix}.md symlinks (e.g. 345-500.md, 345-700.md)
+        # Always scan satellites even if worker is already running
+        for sat_link in "$agent_dir"/${agent_id}-[0-9][0-9][0-9].md; do
+            [ -f "$sat_link" ] || continue
+            local sat_name=$(basename "$sat_link" .md)  # e.g. 345-500
+            is_protected "$sat_name" && continue
+            [[ " ${agents[*]} " == *" $sat_name "* ]] && continue
+            local SAT_SESSION="agent-$sat_name"
+            if tmux has-session -t "$SAT_SESSION" 2>/dev/null; then
+                log_warn "$SAT_SESSION already exists, skipping"
+                continue
+            fi
+            agents+=("$sat_name")
+        done
+    done
+
+    local total=${#agents[@]}
+    if [ "$total" -eq 0 ]; then
+        log_warn "No agents to start"
+        return
+    fi
+
+    local BATCH_SIZE=6
+    local AGENT_DELAY=1  # seconds between each agent start
+    local batch_num=0
+
+    for ((i=0; i<total; i+=BATCH_SIZE)); do
+        local batch=("${agents[@]:i:BATCH_SIZE}")
+        batch_num=$((batch_num + 1))
+        log_info "Batch $batch_num: ${batch[*]}"
+
+        # Sequential start: launch each agent, wait for ready, configure, then next
+        local agent_count=0
+        for agent_id in "${batch[@]}"; do
+            # Remote agent? Handle separately (no Claude, no bridge)
+            local agent_dir_check
+            if agent_dir_check=$(find_x45_dir "$agent_id" 2>/dev/null) && [ -f "$agent_dir_check/remote.ssh" ]; then
+                start_remote "$agent_id"
+                agent_count=$((agent_count + 1))
+                continue
+            fi
+
+            local SESSION="agent-$agent_id"
+            mkdir -p "$LOG_DIR/$agent_id"
+
+            # E1 : moteur + commande de lancement (cf. build_launch_cmd)
+            local CLI=$(resolve_engine "$agent_id")
+            local LAUNCH_CMD
+            if ! LAUNCH_CMD=$(build_launch_cmd "$agent_id"); then
+                log_error "  Agent $agent_id: configuration invalide, non démarré"
+                agent_count=$((agent_count + 1))
+                continue
+            fi
+
+            # Launch CLI (CLAUDE_WRAPPER: optional isolation prefix, cf. README Sécurité)
+            tmux new-session -d -s "$SESSION" -x "${TMUX_COLS:-110}" -y 54
+            tmux set-option -t "$SESSION" history-limit 10000
+            tmux send-keys -t "$SESSION" "cd '$BASE_DIR' && unset CLAUDECODE && ${CLAUDE_WRAPPER:-} $LAUNCH_CMD" Enter
+
+            # Wait for the CLI to be ready
+            if wait_cli_ready "$SESSION" "$CLI" 30; then
+                local MODEL=$(resolve_config "$agent_id" "model")
+                local EFFORT=$(resolve_config "$agent_id" "effort")
+
+                # Modèle + effort via la commande du CLI (picker piloté pour codex)
+                engine_apply_model_effort "$SESSION" "$CLI" "$MODEL" "$EFFORT" || \
+                    log_warn "  $agent_id: application modèle/effort incomplète"
+
+                # Start bridge in second window
+                if ! start_bridge_window "$agent_id" "$CLI"; then
+                    log_error "  Agent $agent_id: bridge non démarré"
+                    continue
+                fi
+
+                log_ok "  Agent $agent_id ready ($CLI)"
+            else
+                log_error "  Agent $agent_id: $CLI did not start within 30s"
+            fi
+
+            # Delay between agents (skip after last in batch)
+            agent_count=$((agent_count + 1))
+            if [ $agent_count -lt ${#batch[@]} ]; then
+                sleep $AGENT_DELAY
+            fi
+        done
+
+        log_ok "Batch $batch_num done: ${#batch[@]} agents"
+    done
+
+    echo ""
+    log_ok "Started $total agents ($batch_num batches of max $BATCH_SIZE)"
+}
+
+ensure_infra() {
+    # Check-only: verify infra is up, start ONLY what's missing. Never stop/restart.
+    local ok=true
+
+    # Redis
+    if ! $REDIS_CLI ping &>/dev/null 2>&1; then
+        log_error "Redis not running. Start infra first: ./scripts/infra.sh start"
+        ok=false
+    fi
+
+    # Dashboard
+    if ! lsof -iTCP:8050 -sTCP:LISTEN &>/dev/null 2>&1; then
+        log_info "Dashboard not running, starting..."
+        "$SCRIPT_DIR/web.sh" start
+    fi
+
+    # Agent 000
+    if ! tmux has-session -t "agent-000" 2>/dev/null; then
+        log_warn "Agent 000 not running. Start infra first: ./scripts/infra.sh start"
+    fi
+
+    if [ "$ok" = false ]; then
+        exit 1
+    fi
+}
+
+do_start() {
+    # Check infra is up (no stop/restart, no flush)
+    ensure_infra
+
+    local target=$1
+    if [ -z "$target" ]; then
+        show_help; exit 1
+    elif [ "$target" = "all" ]; then
+        start_all
+    else
+        shift
+        for agent_id in "$target" "$@"; do
+            # x45 triangle? expand to all satellites
+            local tri_ids
+            tri_ids=$(get_triangle_ids "$agent_id" 2>/dev/null)
+            if [ -n "$tri_ids" ] && [ "$(echo $tri_ids | wc -w)" -gt 1 ]; then
+                local group_dir group_kind="x45 triangle"
+                group_dir=$(find_x45_dir "$agent_id" 2>/dev/null || true)
+                [ -n "$group_dir" ] && [ -f "$group_dir/mono-pair.json" ] && group_kind="mono pair"
+                log_info "$group_kind $agent_id: $tri_ids"
+                for tid in $tri_ids; do
+                    start_single "$tid"
+                done
+            else
+                start_single "$agent_id"
+            fi
+        done
+    fi
+    echo ""
+    echo "  List:   tmux ls | grep agent"
+    echo "  Attach: tmux attach -t agent-<id>"
+}
+
+# ── Stop ──
+
+stop_single() {
+    local agent_id=$1
+    local SESSION="agent-$agent_id"
+
+    if is_protected "$agent_id" && [ "${ALLOW_PROTECTED_000:-0}" != "1" ]; then
+        log_warn "Cannot stop $agent_id (use ./scripts/infra.sh stop)"
+        return 1
+    fi
+
+    if tmux kill-session -t "$SESSION" 2>/dev/null; then
+        log_ok "Killed $SESSION"
+    else
+        log_warn "$SESSION not found"
+    fi
+}
+
+stop_all() {
+    log_info "Stopping agents (000 is NEVER stopped)..."
+    tmux ls 2>/dev/null | grep "^agent-" | cut -d: -f1 | while read session; do
+        local agent_id="${session#agent-}"
+        if is_protected "$agent_id"; then
+            log_warn "Skipping $session (protected)"
+            continue
+        fi
+        tmux kill-session -t "$session" 2>/dev/null && log_ok "Killed $session"
+    done
+
+    # Update Redis status
+    for key in $($REDIS_CLI KEYS "agent:*" 2>/dev/null | grep -E "^agent:[0-9]+(-[0-9]+)?$"); do
+        $REDIS_CLI HSET "$key" status "stopped" > /dev/null 2>&1
+    done
+}
+
+do_stop() {
+    local target=$1
+    if [ -z "$target" ]; then
+        show_help; exit 1
+    elif [ "$target" = "all" ]; then
+        stop_all
+    else
+        shift
+        for agent_id in "$target" "$@"; do
+            # x45 triangle? expand to all satellites
+            local tri_ids
+            tri_ids=$(get_triangle_ids "$agent_id" 2>/dev/null)
+            if [ -n "$tri_ids" ] && [ "$(echo $tri_ids | wc -w)" -gt 1 ]; then
+                log_info "x45 triangle $agent_id: $tri_ids"
+                for tid in $tri_ids; do
+                    stop_single "$tid"
+                done
+            else
+                stop_single "$agent_id"
+            fi
+        done
+    fi
+    log_ok "Done"
+}
+
+# ── Restart ──
+
+do_restart() {
+    local target=$1
+    if [ -z "$target" ]; then
+        show_help; exit 1
+    elif [ "$target" = "all" ]; then
+        stop_all
+        log_info "Waiting 5s before restarting..."
+        sleep 5
+        start_all
+    else
+        shift
+        for agent_id in "$target" "$@"; do
+            # x45 triangle? expand to all satellites
+            local tri_ids
+            tri_ids=$(get_triangle_ids "$agent_id" 2>/dev/null) || true
+            if [ -n "$tri_ids" ] && [ "$(echo $tri_ids | wc -w)" -gt 1 ]; then
+                log_info "x45 triangle $agent_id: $tri_ids"
+                for tid in $tri_ids; do
+                    stop_single "$tid"
+                done
+                log_info "Waiting 5s before restarting..."
+                sleep 5
+                for tid in $tri_ids; do
+                    start_single "$tid"
+                done
+            else
+                stop_single "$agent_id"
+                log_info "Waiting 5s before restarting $agent_id..."
+                sleep 5
+                start_single "$agent_id"
+            fi
+        done
+    fi
+    log_ok "Restart done"
+}
+
+# ── Reload bridge (A8) ──
+# Recharge UNIQUEMENT le process bridge (fenêtre :bridge) sans toucher la
+# fenêtre moteur (:0). Sûr par construction : le consumer group + le WAL
+# rejouent tout message pending au redémarrage. Refuse un agent busy sauf
+# FORCE_RELOAD=1 — tuer le bridge en plein tour ferait rejouer le prompt.
+
+reload_bridge_single() {
+    local agent_id=$1
+    validate_agent_id "$agent_id" || return 1
+    local SESSION_NAME="agent-$agent_id"
+
+    if ! tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+        log_warn "$SESSION_NAME not running — nothing to reload"
+        return 1
+    fi
+
+    local status
+    status=$($REDIS_CLI HGET "agent:$agent_id" status 2>/dev/null || true)
+    if [ "$status" = "busy" ] && [ "${FORCE_RELOAD:-0}" != "1" ]; then
+        log_warn "$agent_id est busy — reload refusé (FORCE_RELOAD=1 pour forcer)"
+        return 1
+    fi
+
+    local CLI
+    CLI=$(resolve_engine "$agent_id")
+    if ! engine_is_valid "$CLI"; then
+        log_error "$agent_id: moteur inconnu '$CLI'"
+        return 1
+    fi
+
+    if tmux list-windows -t "$SESSION_NAME" -F '#{window_name}' 2>/dev/null \
+            | grep -qx bridge; then
+        tmux send-keys -t "$SESSION_NAME:bridge" C-c 2>/dev/null || true
+        sleep 1
+        tmux kill-window -t "$SESSION_NAME:bridge" 2>/dev/null || true
+    fi
+
+    start_bridge_window "$agent_id" "$CLI" || return 1
+    log_ok "Bridge reloaded for $agent_id (engine window untouched)"
+}
+
+do_reload_bridge() {
+    local target=$1
+    if [ -z "$target" ]; then
+        show_help; exit 1
+    elif [ "$target" = "all" ]; then
+        tmux ls 2>/dev/null | grep "^agent-" | cut -d: -f1 | while read session; do
+            local agent_id="${session#agent-}"
+            if is_protected "$agent_id" && [ "${ALLOW_PROTECTED_000:-0}" != "1" ]; then
+                log_warn "Skipping $agent_id (protected)"
+                continue
+            fi
+            reload_bridge_single "$agent_id" || true
+        done
+    else
+        shift
+        for agent_id in "$target" "$@"; do
+            local tri_ids
+            tri_ids=$(get_triangle_ids "$agent_id" 2>/dev/null) || true
+            if [ -n "$tri_ids" ] && [ "$(echo $tri_ids | wc -w)" -gt 1 ]; then
+                log_info "x45 triangle $agent_id: $tri_ids"
+                for tid in $tri_ids; do
+                    reload_bridge_single "$tid" || true
+                done
+            else
+                reload_bridge_single "$agent_id" || true
+            fi
+        done
+    fi
+    log_ok "Done"
+}
+
+# ── Help ──
+
+show_help() {
+    echo "Usage: $0 <start|stop|restart|reload-bridge> <agent_id|all>"
+    echo ""
+    echo "  $0 start 300       Start agent 300"
+    echo "  $0 start 300 301   Start agents 300 and 301"
+    echo "  $0 start all       Start all agents from prompts/"
+    echo "  $0 stop 300        Stop agent 300"
+    echo "  $0 stop all        Stop all (except 000)"
+    echo "  $0 restart 300     Restart agent 300 (stop + 5s + start)"
+    echo "  $0 restart all     Restart all (except 000)"
+    echo "  $0 reload-bridge 300   Reload ONLY the bridge process (engine untouched)"
+    echo "  $0 reload-bridge all   Reload all bridges (refuses busy agents)"
+    echo ""
+    echo "  000 is protected — use infra.sh start / infra.sh stop"
+    echo "  FORCE_RELOAD=1 reload-bridge <id> : reload even if agent is busy"
+}
+
+# ── Main ──
+
+ACTION=$1
+shift 2>/dev/null || true
+
+case "$ACTION" in
+    start)   do_start "$@" ;;
+    stop)    do_stop "$@" ;;
+    restart) do_restart "$@" ;;
+    reload-bridge) do_reload_bridge "$@" ;;
+    -h|--help|help|"") show_help ;;
+    *)       log_error "Unknown action: $ACTION"; show_help; exit 1 ;;
+esac

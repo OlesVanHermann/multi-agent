@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": ["Write(./pool-requests/knowledge/echo/**)"],
+    "deny": [
+      "Edit(./**)", "Write(./**)", "Bash(git commit*)", "Bash(git push*)", "Bash(mv*)",
+      "Bash(rm*)", "Bash(*send.sh*)", "Bash(*done.sh*)", "Bash(*XADD*)",
+      "Read(./setup/secrets.cfg)", "Read(./login/**)",
+      "Read(./bench/oracle/**)", "Read(./bench/heldout.txt)",
+      "Read(./pool-requests/tests/**)"
+    ]
+  }
+}

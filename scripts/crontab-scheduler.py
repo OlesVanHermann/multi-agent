@@ -1,0 +1,1211 @@
+#!/usr/bin/env python3
+"""
+Crontab Scheduler — sends prompts to agents at aligned time intervals.
+
+Scans crontab/*.prompt files, parses {agent}-{period}.prompt filenames,
+and sends the prompt content via Redis XADD at aligned clock boundaries.
+
+Periods and their alignment:
+  10  -> :00, :10, :20, :30, :40, :50
+  30  -> :00, :30
+  60  -> :00
+  120 -> even hours (00:00, 02:00, 04:00, ...)
+  360 -> 00:00, 06:00, 12:00, 18:00 (revise-prompt-1XX des Contradictors 2XX)
+
+Launch in tmux:
+  tmux new-session -d -s agent-001-crontab \
+    "python3 $BASE/scripts/crontab-scheduler.py"
+"""
+
+import os
+import re
+import sys
+import json
+import time
+import glob
+import hashlib
+import subprocess
+import threading
+import concurrent.futures
+import redis
+from pathlib import Path
+
+BRIDGE_DIR = Path(__file__).resolve().parent / "agent-bridge"
+sys.path.insert(0, str(BRIDGE_DIR))
+import engines  # noqa: E402
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+CRONTAB_DIR = os.environ.get("CRONTAB_DIR", os.path.join(os.path.dirname(__file__), "..", "crontab"))
+KEEPALIVE_DIR = os.environ.get("KEEPALIVE_DIR", os.path.join(os.path.dirname(__file__), "..", "keepalive"))
+REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
+REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
+
+# Miroir de cfg.VALID_CRONTAB_PERIODS (web/backend/multi_agent/config.py) —
+# un fichier accepté par l'API mais refusé ici serait ignoré en silence.
+VALID_PERIODS = {10, 30, 60, 120, 360}
+KEEPALIVE_PERIOD = 1440  # 24 hours (unused — kept for reference)
+USAGE_PERIOD = 30  # minutes
+CLAUDE_PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
+TICK_INTERVAL = 10  # seconds
+
+# Track last execution to avoid double-fire within same aligned window
+# Key: filename, Value: (minute_of_day or hour) when last fired
+_last_fired = {}
+_last_crontab_sent = {}  # agent_id -> timestamp of last crontab send
+
+# Round-robin index for usage scraping (one profile every 1h)
+_usage_rr_idx = 0
+
+
+def is_aligned(minute, hour, period):
+    """Check if current time is aligned with the given period."""
+    if period == 5:
+        return minute % 5 == 0
+    elif period == 10:
+        return minute % 10 == 0
+    elif period == 30:
+        return minute % 30 == 0
+    elif period == 60:
+        return minute == 0
+    elif period == 120:
+        return minute == 0 and hour % 2 == 0
+    elif period == 360:
+        return minute == 0 and hour % 6 == 0
+    elif period == 720:
+        return minute == 0 and hour % 12 == 0
+    elif period == 1440:
+        return minute == 0 and hour == 0
+    return False
+
+
+def fire_key(hour, minute, period):
+    """Return a unique key for the current aligned window to prevent double-fire."""
+    if period in (120, 360):
+        return hour
+    return hour * 60 + minute
+
+
+def _agent_is_busy(agent_id):
+    """Return the engine-specific busy state read from the interactive TUI."""
+    session = f"agent-{agent_id}"
+    try:
+        check = subprocess.run(
+            ["tmux", "has-session", "-t", session],
+            capture_output=True, timeout=5
+        )
+        if check.returncode != 0:
+            return False  # session doesn't exist = not busy
+        cap = subprocess.run(
+            ["tmux", "capture-pane", "-t", f"{session}:0", "-p", "-S", "-20"],
+            capture_output=True, text=True, timeout=5
+        )
+        pane_cmd = subprocess.run(
+            ["tmux", "display-message", "-t", f"{session}:0", "-p",
+             "#{pane_current_command}"], capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+        cli = engines.agent_engine(BASE_DIR / "prompts", agent_id)
+        markers = engines.load_markers(cli)
+        if pane_cmd not in markers["process_names"]:
+            return False
+        lines = cap.stdout.splitlines()
+        status_line = next(
+            (line for line in reversed(lines) if markers["status_line"] in line), ""
+        )
+        haystack = status_line if markers["busy_scope"] == "status_line" \
+            else "\n".join(lines[-20:])
+        return any(marker in haystack for marker in markers["busy_markers"])
+    except Exception:
+        return True
+
+
+def _count_pending_crontab(r, agent_id, max_check=10):
+    """Count how many of the last messages in inbox are from crontab."""
+    stream = f"agent:{agent_id}:inbox"
+    try:
+        # Read last max_check messages
+        msgs = r.xrevrange(stream, '+', '-', count=max_check)
+        count = 0
+        for msg_id, fields in msgs:
+            if fields.get("from_agent") == "crontab":
+                count += 1
+            else:
+                break  # stop at first non-crontab message
+        return count
+    except Exception:
+        return 0
+
+
+def scan_and_execute(r):
+    """Scan crontab dir and execute aligned prompts.
+    Guards: skip if agent busy, skip if 3+ pending crontab messages.
+    """
+    now = time.localtime()
+    minute = now.tm_min
+    hour = now.tm_hour
+
+    pattern = os.path.join(CRONTAB_DIR, "*.prompt")
+    for filepath in glob.glob(pattern):
+        filename = os.path.basename(filepath)
+
+        # Skip suspended files (they end with .suspended, not matched by *.prompt)
+        # Parse: {agent}-{period}.prompt
+        m = re.match(r'^(\d{3}(?:-\d{3})?)_(\d+)\.prompt$', filename)
+        if not m:
+            continue
+
+        agent_id = m.group(1)
+        period = int(m.group(2))
+
+        if period not in VALID_PERIODS:
+            print(f"SKIP {filename}: invalid period {period}")
+            continue
+
+        if not is_aligned(minute, hour, period):
+            continue
+
+        # Check if already fired in this window
+        key = fire_key(hour, minute, period)
+        if _last_fired.get(filename) == key:
+            continue
+
+        # Guard 1: agent is busy (generating response)
+        if _agent_is_busy(agent_id):
+            ts = time.strftime("%H:%M:%S")
+            print(f"{ts} SKIP {agent_id}: agent busy (generating)")
+            _last_fired[filename] = key  # don't retry this window
+            continue
+
+        # Guard 2: already 3+ crontab messages pending in inbox
+        pending = _count_pending_crontab(r, agent_id)
+        if pending >= 3:
+            ts = time.strftime("%H:%M:%S")
+            print(f"{ts} SKIP {agent_id}: {pending} crontab messages already pending")
+            _last_fired[filename] = key
+            continue
+
+        # Guard 3: last crontab was sent recently (agent may still be processing or waiting for user)
+        last_crontab_ts = _last_crontab_sent.get(agent_id, 0)
+        cooldown = max(period * 60 - 30, 120)  # at least 2min, or period minus 30s
+        if time.time() - last_crontab_ts < cooldown:
+            ts = time.strftime("%H:%M:%S")
+            print(f"{ts} SKIP {agent_id}: cooldown ({int(time.time() - last_crontab_ts)}s since last send)")
+            _last_fired[filename] = key
+            continue
+
+        # Read prompt content
+        try:
+            with open(filepath, 'r') as f:
+                prompt = f.read().strip()
+        except Exception as e:
+            print(f"ERROR reading {filename}: {e}")
+            continue
+
+        if not prompt:
+            print(f"SKIP {filename}: empty prompt")
+            continue
+
+        # Send via Redis XADD
+        stream = f"agent:{agent_id}:inbox"
+        try:
+            r.xadd(stream, {
+                "prompt": prompt,
+                "from_agent": "crontab",
+                "timestamp": str(int(time.time())),
+            })
+            _last_fired[filename] = key
+            _last_crontab_sent[agent_id] = time.time()
+            ts = time.strftime("%H:%M:%S")
+            print(f"{ts} SENT agent={agent_id} period={period}min prompt={prompt[:40]}")
+        except Exception as e:
+            print(f"ERROR sending to {agent_id}: {e}")
+
+
+# Round-robin /status : 0 = désactivé (remplacé par le sweep 12h ci-dessous).
+# Réactivable via MA_KEEPALIVE_RR_MIN=10 pour l'ancien comportement.
+KEEPALIVE_USAGE_PERIOD = int(os.environ.get("MA_KEEPALIVE_RR_MIN", "0"))
+
+# Sweep keepalive : toutes les MA_KEEPALIVE_SWEEP_MIN minutes (défaut 12h),
+# lance/réutilise une session tmux par profil login/claude*, envoie un hello
+# (vrai appel API → la session OAuth ne s'endort pas), scrape /status et
+# écrit l'état de chaque login dans keepalive/. 0 = désactivé.
+KEEPALIVE_SWEEP_MIN = int(os.environ.get("MA_KEEPALIVE_SWEEP_MIN", "720"))
+LOGIN_DIR = os.environ.get("LOGIN_DIR", os.path.join(os.path.dirname(__file__), "..", "login"))
+
+# E1 : la couche moteur est IMPORTÉE, pas recopiée.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent-bridge"))
+import engines  # noqa: E402
+
+ENGINES = engines.ENGINES
+ENGINE_CONFIG_ENV = engines.ENGINE_CONFIG_ENV
+ENGINE_BYPASS_FLAG = engines.ENGINE_BYPASS_FLAG
+PROFILE_RE = re.compile(engines.PROFILE_RE)
+_profile_engine = engines.profile_engine
+
+
+def _ready_markers(profile):
+    """Marqueurs de prompt du moteur du profil (prompt_markers)."""
+    cli = _profile_engine(profile)
+    if not cli:
+        return ()
+    try:
+        return tuple(engines.load_markers(cli)["prompt_markers"][:1])
+    except RuntimeError:
+        return ()
+
+
+def _login_expired_markers(profile):
+    """Libellés de session expirée, propres au moteur du profil.
+
+    Étaient codés en dur pour Claude Code. Sans les pendants Codex, une session
+    OAuth morte n'est pas détectée par le sweep — d'où le repli sur une liste
+    VIDE (aucune détection) plutôt que sur celle de Claude Code, qui donnerait
+    des faux négatifs silencieux.
+    """
+    cli = _profile_engine(profile)
+    if not cli:
+        return ()
+    try:
+        return tuple(engines.load_markers(cli)["login_expired_markers"])
+    except RuntimeError:
+        return ()
+
+
+# LOGIN_EXPIRED_MARKERS : voir _login_expired_markers(profile) ci-dessus.
+_sweep_thread = None
+
+# Fichier de credentials par moteur : la présence du fichier distingue un
+# profil connecté d'un template jamais loggé. `.credentials.json` est un
+# artefact Claude Code — le chercher sur un profil codex marquait TOUS les
+# profils codex `no_credentials`, même authentifiés (auth.json présent).
+ENGINE_CRED_FILE = {"claude": ".credentials.json", "codex": "auth.json"}
+
+
+def _refresh_token_fingerprint(profile):
+    """Empreinte non réversible du refresh token, jamais le secret lui-même."""
+    engine = _profile_engine(profile)
+    cred_name = ENGINE_CRED_FILE.get(engine)
+    if not cred_name:
+        return None
+    path = Path(LOGIN_DIR) / profile / cred_name
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError, TypeError):
+        return None
+
+    def find_refresh(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                normalized = re.sub(r"[^a-z]", "", str(key).lower())
+                if normalized == "refreshtoken" and isinstance(child, str) and child:
+                    return child
+                found = find_refresh(child)
+                if found:
+                    return found
+        elif isinstance(value, list):
+            for child in value:
+                found = find_refresh(child)
+                if found:
+                    return found
+        return None
+
+    token = find_refresh(data)
+    return hashlib.sha256(token.encode()).hexdigest() if token else None
+
+
+def _cloned_refresh_token_profiles(profiles):
+    by_fingerprint = {}
+    for profile in profiles:
+        fingerprint = _refresh_token_fingerprint(profile)
+        if fingerprint:
+            by_fingerprint.setdefault(fingerprint, []).append(profile)
+    return {
+        profile
+        for group in by_fingerprint.values() if len(group) > 1
+        for profile in group
+    }
+
+
+def _cleanup_legacy_keepalive_sessions():
+    """Arrête uniquement les anciennes sessions keepalive A-agent-002-* ."""
+    try:
+        listed = subprocess.run(
+            ["tmux", "list-sessions", "-F", "#{session_name}"],
+            capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if listed.returncode != 0:
+        return []
+    pattern = re.compile(r"^A-agent-002-(?:claude|codex)\d[a-z]$")
+    legacy = [name for name in listed.stdout.splitlines() if pattern.fullmatch(name)]
+    stopped = []
+    for session in legacy:
+        result = subprocess.run(
+            ["tmux", "kill-session", "-t", f"={session}"],
+            capture_output=True, timeout=5
+        )
+        if result.returncode == 0:
+            stopped.append(session)
+    return stopped
+
+
+def _parse_status_info(text, engine):
+    """Parse ``/status`` pour l'usage et le modèle, sans sonde ``/model``."""
+    info = {}
+    if engine == "codex":
+        am = re.search(r'Account:\s+(\S+)(?:\s+\(([^)\n│]*)\)?)?', text)
+        if am:
+            info["email"] = am.group(1)
+            info["login_method"] = "ChatGPT account"
+            info["organization"] = (am.group(2) or "ChatGPT").strip().rstrip("… ") or "ChatGPT"
+        dm = re.search(r'Directory:\s+(\S+)', text)
+        if dm:
+            info["cwd"] = dm.group(1)
+        version = re.search(r'OpenAI Codex \(v([^)]+)\)', text)
+        if version:
+            info["cli_version"] = version.group(1)
+        effort = re.search(r'Model:\s+\S+.*?\(reasoning\s+([^,\s)]+)', text)
+        if effort:
+            info["effort"] = effort.group(1)
+        permissions = re.search(r'Permissions:\s+([^\n│]+)', text)
+        if permissions:
+            info["permissions"] = permissions.group(1).strip()
+        agents_md = re.search(r'Agents\.md:\s+([^\n│]+)', text)
+        if agents_md:
+            info["agents_md"] = agents_md.group(1).strip()
+    else:
+        for line in text.split('\n'):
+            line = line.strip()
+            for field in ["Login method", "Organization", "Email", "Model", "cwd", "Memory"]:
+                if line.startswith(f"{field}:"):
+                    info[field.lower().replace(" ", "_")] = line.split(":", 1)[1].strip()
+
+    # Garder la carte la plus récente si le scrollback en contient plusieurs.
+    models = re.findall(r'\bModel:\s+(\S+)', text)
+    if models:
+        info["model"] = models[-1]
+    return info
+
+
+def _scrape_codex_status(session_name):
+    """/status codex : UNE boîte — compte, répertoire, limites d'usage.
+
+    Rendu réel (codex-cli 0.144.4) :
+        Account:      user@example.com (Pro)
+        Directory:    ~/multi-agent
+        Weekly limit:                       [████████] 99% left
+                                            (resets 22:20 on 21 Jul)
+        GPT-5.3-Codex-Spark Weekly limit:   [████████] 100% left
+
+    Pas d'onglet Usage à naviguer (contrairement à Claude Code). Codex affiche
+    « N% left » : converti en « % utilisé » (100-N) pour rester homogène avec
+    les barres Claude du panneau. Returns (bars, info).
+    """
+    try:
+        # PAS d'Escape ici : contrairement à Claude Code, la boîte /status de
+        # codex n'est pas modale, et Esc sur un composer vide déclenche le
+        # « rewind » de la conversation. C-u suffit à nettoyer le composer.
+        subprocess.run(["tmux", "send-keys", "-t", session_name, "C-u"], timeout=5)
+        time.sleep(0.5)
+        subprocess.run(["tmux", "send-keys", "-t", session_name, "-l", "/status"], timeout=5)
+        time.sleep(0.8)
+        subprocess.run(["tmux", "send-keys", "-t", session_name, "Enter"], timeout=5)
+
+        text = ""
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            time.sleep(1)
+            # La boîte Codex dépasse couramment 30 lignes : Account et Model
+            # peuvent se trouver de part et d'autre de cette limite.
+            text = _pane_text(session_name, lines=80)
+            if "Account:" in text or "limit:" in text:
+                break
+
+        bars = []
+        # Libellé + pourcentage sur une ligne ; le « (resets …) » est rendu sur
+        # la ligne SUIVANTE de la boîte — apparié par ordre d'apparition.
+        for m in re.finditer(
+            r'([A-Za-z0-9][A-Za-z0-9 .\-]*?limit):\s*\[[^\]]*\]\s*(\d+)%\s*left',
+            text,
+        ):
+            bars.append({
+                "label": m.group(1).strip(),
+                "percent": max(0, 100 - int(m.group(2))),
+                "resets": "",
+            })
+        resets = re.findall(r'\(resets ([^)]+)\)', text)
+        for bar, rst in zip(bars, resets):
+            bar["resets"] = rst.strip()
+        # Le pane peut contenir PLUSIEURS boîtes /status (scrapes successifs
+        # dans le scrollback visible) : garder la dernière occurrence de
+        # chaque libellé — la boîte la plus récente est en bas.
+        uniq = {}
+        for b in bars:
+            uniq[b["label"]] = b
+        bars = list(uniq.values())
+
+        info = _parse_status_info(text, "codex")
+
+        return (bars or None), info
+    except Exception as e:
+        print(f"{time.strftime('%H:%M:%S')} KEEPALIVE codex scrape error ({session_name}): {e}")
+        return None, {}
+
+
+def _scrape_usage_tab(session_name):
+    """Send /status to a tmux session, capture info, navigate to Usage tab, scrape, Escape.
+
+    Process: Escape (cleanup) → /status Enter → verify dialog open → capture info →
+             Right Right → poll for usage data → Escape
+
+    Returns (bars, info) tuple. bars is list of dicts or None, info is dict.
+    """
+    try:
+        # Cleanup: close any stale dialog, then clear residual text
+        subprocess.run(
+            ["tmux", "send-keys", "-t", session_name, "Escape"],
+            timeout=5
+        )
+        time.sleep(1)
+        # Ctrl-U to clear any leftover input (no Ctrl-C — would interrupt Claude)
+        subprocess.run(
+            ["tmux", "send-keys", "-t", session_name, "C-u"],
+            timeout=5
+        )
+        time.sleep(1)
+
+        # Wait for clean prompt (❯) before sending /status
+        for _ in range(5):
+            cap_wait = subprocess.run(
+                ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-5"],
+                capture_output=True, text=True, timeout=5
+            )
+            # Check the last few lines for a clean prompt
+            last_lines = cap_wait.stdout.strip().split('\n')[-3:]
+            if any('❯' in l and 'Status' not in l and 'Loading' not in l for l in last_lines):
+                break
+            subprocess.run(
+                ["tmux", "send-keys", "-t", session_name, "Escape"],
+                timeout=5
+            )
+            time.sleep(1)
+
+        # Open /status fresh
+        subprocess.run(
+            ["tmux", "send-keys", "-t", session_name, "/status", "Enter"],
+            timeout=5
+        )
+        time.sleep(3)
+
+        # Vérifier la barre d'onglets réelle. Claude 2.1.220 rend
+        # « Settings  Status  Config  Usage  Stats » sans deux-points.
+        cap_check = subprocess.run(
+            ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-15"],
+            capture_output=True, text=True, timeout=5
+        )
+        tabs_open = all(
+            label in cap_check.stdout
+            for label in ("Settings", "Status", "Config", "Usage", "Stats")
+        )
+        if not tabs_open:
+            # Dialog didn't open or was dismissed — try once more
+            subprocess.run(
+                ["tmux", "send-keys", "-t", session_name, "Escape"],
+                timeout=5
+            )
+            time.sleep(2)
+            subprocess.run(
+                ["tmux", "send-keys", "-t", session_name, "/status", "Enter"],
+                timeout=5
+            )
+            time.sleep(3)
+
+        # Les onglets bouclent : compter les flèches ne permet pas d'ancrer la
+        # navigation. Tourner jusqu'au contenu réel de Status.
+        status_output = ""
+        for _ in range(4):
+            cap_info = subprocess.run(
+                ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-35"],
+                capture_output=True, text=True, timeout=5,
+            )
+            status_output = cap_info.stdout
+            if any(field in status_output for field in (
+                "Login method:", "Organization:", "Email:",
+            )):
+                break
+            subprocess.run(
+                ["tmux", "send-keys", "-t", session_name, "Left"],
+                timeout=5,
+            )
+            time.sleep(1)
+        info = _parse_status_info(status_output, "claude")
+
+        # Tourner jusqu'au contenu réel de Usage.
+        output = ""
+        for _ in range(4):
+            subprocess.run(
+                ["tmux", "send-keys", "-t", session_name, "Right"],
+                timeout=5,
+            )
+            time.sleep(3)
+            cap = subprocess.run(
+                ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-25"],
+                capture_output=True, text=True, timeout=5
+            )
+            output = cap.stdout
+            if "% used" in output:
+                break
+
+        # Tourner jusqu'au contenu réel de Stats.
+        stats_output = ""
+        for _ in range(4):
+            subprocess.run(
+                ["tmux", "send-keys", "-t", session_name, "Right"],
+                timeout=5,
+            )
+            time.sleep(1)
+            cap_stats = subprocess.run(
+                ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-25"],
+                capture_output=True, text=True, timeout=5,
+            )
+            stats_output = cap_stats.stdout
+            if "Total cost:" in stats_output:
+                break
+        session_stats = _parse_claude_session_stats(stats_output)
+        if session_stats:
+            info["session_stats"] = session_stats
+
+        # Close settings
+        subprocess.run(
+            ["tmux", "send-keys", "-t", session_name, "Escape"],
+            timeout=5
+        )
+
+        # Parse bars: "Current session\n  ██████▌   15% used\n  Resets ..."
+        bars = []
+        lines = output.split("\n")
+        for i, line in enumerate(lines):
+            pct_match = re.search(r'(\d+)%\s+used', line)
+            if not pct_match:
+                continue
+            pct = int(pct_match.group(1))
+            label = ""
+            for j in range(i - 1, max(i - 7, -1), -1):
+                stripped = lines[j].strip()
+                if stripped.startswith(("Current", "Daily", "Weekly", "Extra")):
+                    label = stripped
+                    break
+            resets = ""
+            spent = ""
+            for j in range(i + 1, min(i + 6, len(lines))):
+                reset_match = re.search(r'Resets\s+(.+)', lines[j])
+                if reset_match:
+                    resets = reset_match.group(1).strip()
+                spent_match = re.search(r'\$([0-9,.]+)\s*/\s*\$([0-9,.]+)\s*spent', lines[j])
+                if spent_match:
+                    spent = f"${spent_match.group(1)} / ${spent_match.group(2)}"
+                if resets:
+                    break
+            bar = {"label": label, "percent": pct, "resets": resets}
+            if spent:
+                bar["spent"] = spent
+            bars.append(bar)
+
+        # Un resize ou un ancien rendu encore présent dans le scrollback peut
+        # faire apparaître deux fois une carte. La plus basse est la plus
+        # récente, comme pour le parseur Codex.
+        unique_bars = {}
+        for bar in bars:
+            unique_bars[bar["label"] or "Quota"] = bar
+        bars = list(unique_bars.values())
+
+        return (bars if bars else None, info)
+
+    except Exception as e:
+        # Try to close settings on error
+        try:
+            subprocess.run(
+                ["tmux", "send-keys", "-t", session_name, "Escape"],
+                timeout=5
+            )
+        except Exception:
+            pass
+        ts = time.strftime("%H:%M:%S")
+        print(f"{ts} KEEPALIVE usage scrape error [{session_name}]: {e}")
+        return (None, {})
+
+
+def _write_profile_snapshot(profile, session, bars, info, status):
+    """Publie un snapshot attribuable à la session tmux courante."""
+    now = int(time.time())
+    enriched_info = dict(info or {})
+    enriched_info.update({
+        "engine": _profile_engine(profile),
+        "collection_status": status,
+        "source_session": session,
+        "last_scan": now,
+    })
+    if enriched_info:
+        with open(os.path.join(KEEPALIVE_DIR, f"info_{profile}.json"), "w") as f:
+            json.dump(enriched_info, f, indent=2)
+    usage_data = {
+        "profile": profile,
+        "bars": bars or [],
+        "info": enriched_info,
+        "source_session": session,
+        "status": status,
+        "last_scan": now,
+    }
+    with open(os.path.join(KEEPALIVE_DIR, f"usage_{profile}.json"), "w") as f:
+        json.dump(usage_data, f, indent=2)
+    return usage_data
+
+
+def _parse_runtime_banner(text, engine):
+    """Extrait les données locales disponibles même sans authentification."""
+    info = {}
+    if engine == "claude":
+        version = re.search(r"Claude Code v([^\s]+)", text)
+        banner = re.search(
+            r"^\s*[▝▐]?[▜█████▛▘\s]*"
+            r"(.+?)\s+with\s+([A-Za-z]+)\s+effort\s+·\s+(.+?)\s*$",
+            text,
+            re.MULTILINE,
+        )
+        cwd = re.search(r"^[^~\n]*(~/\S+)\s*$", text, re.MULTILINE)
+        if version:
+            info["cli_version"] = version.group(1)
+        if banner:
+            info["model"] = banner.group(1).strip()
+            info["effort"] = banner.group(2).lower()
+            info["billing"] = banner.group(3).strip()
+        if cwd:
+            info["cwd"] = cwd.group(1)
+    else:
+        version = re.search(r"OpenAI Codex \(v([^)]+)\)", text)
+        model = re.search(r"model:\s+(\S+)\s+(\S+)", text, re.IGNORECASE)
+        cwd = re.search(r"(?:directory|Directory):\s+(\S+)", text)
+        if version:
+            info["cli_version"] = version.group(1)
+        if model:
+            info["model"], info["effort"] = model.group(1), model.group(2)
+        if cwd:
+            info["cwd"] = cwd.group(1)
+    return info
+
+
+def _parse_claude_session_stats(text):
+    """Parse l'onglet Stats sans confondre usage session et quotas du plan."""
+    stats = {}
+    for field, pattern in {
+        "total_cost": r"Total cost:\s+(\S+)",
+        "duration_api": r"Total duration \(API\):\s+(.+?)\s*$",
+        "duration_wall": r"Total duration \(wall\):\s+(.+?)\s*$",
+    }.items():
+        match = re.search(pattern, text, re.MULTILINE)
+        if match:
+            stats[field] = match.group(1).strip()
+    changes = re.search(
+        r"Total code changes:\s+(\d+)\s+lines added,\s+(\d+)\s+lines removed",
+        text,
+    )
+    if changes:
+        stats["lines_added"] = int(changes.group(1))
+        stats["lines_removed"] = int(changes.group(2))
+    usage = re.search(
+        r"Usage:\s+(\d+)\s+input,\s+(\d+)\s+output,\s+"
+        r"(\d+)\s+cache read,\s+(\d+)\s+cache write",
+        text,
+    )
+    if usage:
+        stats.update({
+            "input_tokens": int(usage.group(1)),
+            "output_tokens": int(usage.group(2)),
+            "cache_read_tokens": int(usage.group(3)),
+            "cache_write_tokens": int(usage.group(4)),
+        })
+    return stats
+
+
+def _collect_profile_status(profile, wait_timeout=90):
+    """Attend le TUI puis collecte immédiatement identité, modèle, CWD et quotas."""
+    if not PROFILE_RE.fullmatch(profile):
+        raise ValueError(f"profil invalide : {profile!r}")
+    session = f"agent-002-{profile}"
+    check = subprocess.run(
+        ["tmux", "has-session", "-t", session],
+        capture_output=True, timeout=5,
+    )
+    if check.returncode != 0:
+        raise RuntimeError(f"session absente : {session}")
+    state = _wait_prompt(session, timeout_s=wait_timeout, profile=profile)
+    if state != "ready":
+        runtime_info = _parse_runtime_banner(
+            _pane_text(session, lines=50), _profile_engine(profile),
+        )
+        return _write_profile_snapshot(
+            profile, session, None, runtime_info, state,
+        )
+    engine = _profile_engine(profile)
+    if engine == "codex":
+        bars, info = _scrape_codex_status(session)
+    else:
+        bars, info = _scrape_usage_tab(session)
+    return _write_profile_snapshot(
+        profile, session, bars, info, "ok" if bars else "no_bars",
+    )
+
+
+def scan_keepalive():
+    """Scan keepalive dir: usage scraping every 10min, one profile at a time (round-robin).
+
+    The /status scrape also serves as keepalive — no separate heartbeat needed.
+    With 8 profiles, each is scraped every 80 minutes.
+    """
+    if KEEPALIVE_USAGE_PERIOD <= 0:
+        return
+
+    now = time.localtime()
+    minute = now.tm_min
+    hour = now.tm_hour
+
+    if not is_aligned(minute, hour, KEEPALIVE_USAGE_PERIOD):
+        return
+
+    pattern = os.path.join(KEEPALIVE_DIR, "*.active")
+
+    # --- Usage scraping (every 1h) — ONE profile at a time, round-robin ---
+    global _usage_rr_idx
+    usage_key = fire_key(hour, minute, KEEPALIVE_USAGE_PERIOD)
+    if _last_fired.get("keepalive_usage_rr") == usage_key:
+        return
+
+    # Build sorted list of active profiles with valid tmux sessions
+    all_profiles = []
+    for filepath in sorted(glob.glob(pattern)):
+        filename = os.path.basename(filepath)
+        profile = filename.replace(".active", "")
+        session = f"agent-002-{profile}"
+        check = subprocess.run(
+            ["tmux", "has-session", "-t", session],
+            capture_output=True, timeout=5
+        )
+        if check.returncode == 0:
+            all_profiles.append((profile, session))
+
+    if all_profiles:
+        # Pick one profile by round-robin
+        idx = _usage_rr_idx % len(all_profiles)
+        profile, session = all_profiles[idx]
+        _usage_rr_idx = idx + 1
+
+        ts = time.strftime("%H:%M:%S")
+        print(f"{ts} KEEPALIVE usage scraping {profile} ({idx+1}/{len(all_profiles)})")
+
+        try:
+            usage_data = _collect_profile_status(profile, wait_timeout=30)
+        except Exception as e:
+            print(f"{ts} KEEPALIVE usage scrape error {profile}: {e}")
+            usage_data = {"bars": []}
+
+        if usage_data["bars"]:
+            bar_summary = " | ".join(f"{b['percent']}%" for b in usage_data["bars"])
+            print(f"{ts} KEEPALIVE usage {profile}: {bar_summary}")
+        else:
+            print(f"{ts} KEEPALIVE usage {profile}: no bars")
+
+    _last_fired["keepalive_usage_rr"] = usage_key
+
+
+# --- Sweep keepalive 12h : hello + état de chaque login ---
+
+def _pane_text(session, lines=30):
+    cap = subprocess.run(
+        ["tmux", "capture-pane", "-t", session, "-p", "-S", f"-{lines}"],
+        capture_output=True, text=True, timeout=5
+    )
+    return cap.stdout
+
+
+def _ensure_profile_session(profile):
+    """Return (session, created). Start Claude with the profile if not running."""
+    session = f"agent-002-{profile}"
+    check = subprocess.run(
+        ["tmux", "has-session", "-t", session],
+        capture_output=True, timeout=5
+    )
+    if check.returncode == 0:
+        return session, False
+    base = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    profile_dir = os.path.join(os.path.abspath(LOGIN_DIR), profile)
+    # E1 : le moteur vient du préfixe du profil (claude1a → claude, codex1a → codex).
+    engine = _profile_engine(profile)
+    if not engine:
+        raise ValueError(f"profil sans moteur identifiable : {profile!r}")
+    cmd = (f"cd '{base}' && {ENGINE_CONFIG_ENV[engine]}='{profile_dir}' "
+           f"{engine} {ENGINE_BYPASS_FLAG[engine]}")
+    subprocess.run(["tmux", "new-session", "-d", "-s", session, cmd], timeout=10)
+    return session, True
+
+
+def _wait_prompt(session, timeout_s=90, profile=None):
+    """Wait for a clean prompt. Returns 'ready', 'login_required' or 'timeout'.
+
+    E1 : les libellés (« session expirée », prompt de saisie) sont propres au
+    moteur du profil. Un profil dont les marqueurs ne sont pas relevés ne peut
+    pas être sondé : on renvoie 'timeout' plutôt qu'un état inventé.
+    """
+    expired = _login_expired_markers(profile) if profile else ()
+    ready = _ready_markers(profile) if profile else ()
+    if not ready:
+        return "timeout"
+
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        try:
+            text = _pane_text(session)
+        except Exception:
+            text = ""
+        low = text.lower()
+        if any(m.lower() in low for m in expired):
+            return "login_required"
+        # Écrans d'onboarding (thème, notes) : valider le défaut et continuer
+        if "choose the text style" in low or "press enter to continue" in low:
+            subprocess.run(["tmux", "send-keys", "-t", session, "Enter"], timeout=5)
+            time.sleep(2)
+            continue
+        # Claude peut ajouter sous le composer une barre de statut puis
+        # « Now using usage credits » : le prompt est alors la 4e ligne non
+        # vide en partant du bas. Garder une petite fenêtre tolérante.
+        last_lines = [l for l in text.strip().split("\n") if l.strip()][-8:]
+        if any(any(m in l for m in ready) for l in last_lines):
+            return "ready"
+        time.sleep(3)
+    return "timeout"
+
+
+def _sweep_profile(profile):
+    """Hello + /status scrape for one profile. Returns a status dict."""
+    # Profil template jamais loggé : ne pas démarrer de session pour rien.
+    # E1 : le fichier de credentials dépend du moteur (claude ≠ codex).
+    engine = _profile_engine(profile)
+    cred_file = ENGINE_CRED_FILE.get(engine, ".credentials.json")
+    creds = os.path.join(os.path.abspath(LOGIN_DIR), profile, cred_file)
+    if not os.path.exists(creds):
+        usage_data = {"profile": profile, "bars": [], "status": "no_credentials",
+                      "last_scan": int(time.time())}
+        with open(os.path.join(KEEPALIVE_DIR, f"usage_{profile}.json"), "w") as f:
+            json.dump(usage_data, f, indent=2)
+        return {"profile": profile, "status": "no_credentials", "ts": int(time.time())}
+    session, created = _ensure_profile_session(profile)
+    if created:
+        time.sleep(5)
+    state = _wait_prompt(session, profile=profile)
+    result = {"profile": profile, "session": session, "status": state,
+              "created": created, "ts": int(time.time())}
+    if state != "ready":
+        # Publie quand même l'état pour le dashboard (bars vides + status)
+        usage_data = {"profile": profile, "bars": [], "status": state,
+                      "source_session": session,
+                      "last_scan": int(time.time())}
+        with open(os.path.join(KEEPALIVE_DIR, f"usage_{profile}.json"), "w") as f:
+            json.dump(usage_data, f, indent=2)
+        return result
+
+    # Hello : un vrai échange API rafraîchit la session OAuth.
+    # Enter envoyé SÉPARÉMENT après une pause : collé à la frappe, le TUI
+    # codex l'absorbe dans sa détection de collage (paste burst) et le
+    # prompt n'est jamais soumis.
+    subprocess.run(
+        ["tmux", "send-keys", "-t", session, "-l", "hello (keepalive) - reponds en un mot"],
+        timeout=5
+    )
+    time.sleep(1)
+    subprocess.run(["tmux", "send-keys", "-t", session, "Enter"], timeout=5)
+    time.sleep(30)
+    _wait_prompt(session, timeout_s=60, profile=profile)
+
+    # E1 : le scrape d'usage est propre au moteur (boîtes /status différentes)
+    if engine == "codex":
+        bars, info = _scrape_codex_status(session)
+    else:
+        bars, info = _scrape_usage_tab(session)
+    result["status"] = "ok" if bars else "no_bars"
+    result["bars"] = len(bars) if bars else 0
+    if info:
+        result["email"] = info.get("email", "")
+    _write_profile_snapshot(
+        profile, session, bars, info, "ok" if bars else "no_bars",
+    )
+    # .active : la session reste vivante entre deux sweeps (modèle existant)
+    active = os.path.join(KEEPALIVE_DIR, f"{profile}.active")
+    if not os.path.exists(active):
+        with open(active, "w") as f:
+            f.write("keepalive sweep\n")
+    return result
+
+
+def _run_sweep():
+    """Sequential sweep over all login/<moteur>N[a-z] profiles (E1)."""
+    report = {"started": int(time.time()), "profiles": {}}
+    stopped = _cleanup_legacy_keepalive_sessions()
+    report["legacy_sessions_stopped"] = stopped
+    if stopped:
+        print(f"{time.strftime('%H:%M:%S')} KEEPALIVE anciennes sessions arrêtées: "
+              + ", ".join(stopped))
+    try:
+        profiles = sorted(
+            d for d in os.listdir(LOGIN_DIR)
+            if PROFILE_RE.match(d)
+            and os.path.isdir(os.path.join(LOGIN_DIR, d))
+            and not os.path.exists(os.path.join(KEEPALIVE_DIR, f"{d}.suspended"))
+        )
+    except OSError as e:
+        print(f"{time.strftime('%H:%M:%S')} KEEPALIVE sweep: login dir error: {e}")
+        return
+    cloned = _cloned_refresh_token_profiles(profiles)
+    if cloned:
+        print(f"{time.strftime('%H:%M:%S')} KEEPALIVE profils avec refresh token cloné: "
+              + ", ".join(sorted(cloned)))
+    print(f"{time.strftime('%H:%M:%S')} KEEPALIVE sweep start: {', '.join(profiles) or 'aucun profil'}")
+    for profile in profiles:
+        if profile in cloned:
+            result = {
+                "profile": profile, "status": "cloned_refresh_token",
+                "ts": int(time.time())}
+            report["profiles"][profile] = result
+            with open(os.path.join(KEEPALIVE_DIR, f"usage_{profile}.json"), "w") as f:
+                json.dump({**result, "bars": [], "last_scan": result["ts"]}, f, indent=2)
+            continue
+        try:
+            res = _sweep_profile(profile)
+        except Exception as e:
+            res = {"profile": profile, "status": f"error: {e}", "ts": int(time.time())}
+        report["profiles"][profile] = res
+        ts = time.strftime("%H:%M:%S")
+        print(f"{ts} KEEPALIVE sweep {profile}: {res.get('status')}"
+              + (f" ({res.get('bars')} bars)" if res.get('bars') else ""))
+    report["finished"] = int(time.time())
+    try:
+        with open(os.path.join(KEEPALIVE_DIR, "sweep_report.json"), "w") as f:
+            json.dump(report, f, indent=2)
+    except Exception as e:
+        print(f"KEEPALIVE sweep report write error: {e}")
+    bad = [p for p, r in report["profiles"].items() if r.get("status") != "ok"]
+    print(f"{time.strftime('%H:%M:%S')} KEEPALIVE sweep done: "
+          f"{len(report['profiles']) - len(bad)}/{len(report['profiles'])} ok"
+          + (f" — à vérifier: {', '.join(bad)}" if bad else ""))
+
+
+def scan_keepalive_sweep():
+    """Fire the sweep in a background thread when the last one is older
+    than KEEPALIVE_SWEEP_MIN. Timestamp-based (reboot-safe), not clock-aligned.
+    The stamp is written at start so a crashing sweep doesn't refire each tick."""
+    global _sweep_thread
+    if KEEPALIVE_SWEEP_MIN <= 0:
+        return
+    if _sweep_thread and _sweep_thread.is_alive():
+        return
+    os.makedirs(KEEPALIVE_DIR, exist_ok=True)
+    stamp = os.path.join(KEEPALIVE_DIR, "last_sweep.txt")
+    last = 0
+    try:
+        with open(stamp) as f:
+            last = int(f.read().strip())
+    except (OSError, ValueError):
+        pass
+    if time.time() - last < KEEPALIVE_SWEEP_MIN * 60:
+        return
+    with open(stamp, "w") as f:
+        f.write(str(int(time.time())))
+    _sweep_thread = threading.Thread(target=_run_sweep, daemon=True)
+    _sweep_thread.start()
+
+
+def scan_usage(r):
+    """Scan Claude Code JSONL sessions and publish usage to Redis."""
+    now = time.localtime()
+    if not is_aligned(now.tm_min, now.tm_hour, USAGE_PERIOD):
+        return
+
+    key = fire_key(now.tm_hour, now.tm_min, USAGE_PERIOD)
+    if _last_fired.get("usage_scan") == key:
+        return
+
+    cutoff = time.time() - 86400  # 24h
+
+    global_totals = {
+        "input_tokens": 0, "output_tokens": 0,
+        "cache_read": 0, "cache_creation": 0,
+        "total_sessions": 0, "total_messages": 0,
+    }
+    active_sessions = []
+
+    try:
+        project_dirs = glob.glob(CLAUDE_PROJECTS_DIR + "/*/")
+    except Exception:
+        project_dirs = []
+
+    for project_dir in project_dirs:
+        project_name = os.path.basename(project_dir.rstrip("/"))
+
+        for jsonl_path in glob.glob(project_dir + "*.jsonl"):
+            try:
+                if os.path.getmtime(jsonl_path) < cutoff:
+                    continue
+            except OSError:
+                continue
+
+            session_file = os.path.basename(jsonl_path)
+            session_id = session_file.replace(".jsonl", "")[:8]
+
+            # Parse JSONL: deduplicate by message ID (streaming sends multiple chunks)
+            msg_usage = {}  # msg_id -> {usage dict}
+            model = ""
+            last_activity = 0
+
+            try:
+                with open(jsonl_path, "r") as f:
+                    for line in f:
+                        try:
+                            obj = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        msg = obj.get("message")
+                        if not isinstance(msg, dict):
+                            continue
+                        usage = msg.get("usage")
+                        if not usage:
+                            continue
+                        mid = msg.get("id", "")
+                        if not mid:
+                            continue
+                        msg_usage[mid] = usage
+                        if msg.get("model"):
+                            model = msg["model"]
+            except Exception:
+                continue
+
+            if not msg_usage:
+                continue
+
+            # Sum usage across deduplicated messages
+            s_input = 0
+            s_output = 0
+            s_cache_read = 0
+            s_cache_creation = 0
+
+            for usage in msg_usage.values():
+                s_input += usage.get("input_tokens", 0)
+                s_output += usage.get("output_tokens", 0)
+                s_cache_read += usage.get("cache_read_input_tokens", 0)
+                s_cache_creation += usage.get("cache_creation_input_tokens", 0)
+
+            msg_count = len(msg_usage)
+
+            try:
+                last_activity = int(os.path.getmtime(jsonl_path))
+            except OSError:
+                last_activity = 0
+
+            # Publish per-session
+            session_key = f"usage:session:{session_id}"
+            try:
+                r.hset(session_key, mapping={
+                    "project": project_name,
+                    "model": model,
+                    "input_tokens": s_input,
+                    "output_tokens": s_output,
+                    "cache_read": s_cache_read,
+                    "cache_creation": s_cache_creation,
+                    "messages": msg_count,
+                    "last_activity": last_activity,
+                })
+                r.expire(session_key, 86400)
+            except Exception:
+                pass
+
+            active_sessions.append(session_id)
+
+            global_totals["input_tokens"] += s_input
+            global_totals["output_tokens"] += s_output
+            global_totals["cache_read"] += s_cache_read
+            global_totals["cache_creation"] += s_cache_creation
+            global_totals["total_sessions"] += 1
+            global_totals["total_messages"] += msg_count
+
+    # Publish global totals
+    global_totals["last_scan"] = int(time.time())
+    try:
+        r.hset(f"usage:global", mapping=global_totals)
+        # Update active sessions set
+        if active_sessions:
+            r.delete(f"usage:sessions")
+            r.sadd(f"usage:sessions", *active_sessions)
+        else:
+            r.delete(f"usage:sessions")
+    except Exception:
+        pass
+
+    _last_fired["usage_scan"] = key
+    ts = time.strftime("%H:%M:%S")
+    print(f"{ts} USAGE sessions={global_totals['total_sessions']} "
+          f"messages={global_totals['total_messages']} "
+          f"input={global_totals['input_tokens']} "
+          f"output={global_totals['output_tokens']} "
+          f"cache_read={global_totals['cache_read']} "
+          f"cache_creation={global_totals['cache_creation']}")
+
+
+
+def main():
+    # Derrière un pipe (tee), stdout est bufferisé à 8K : les lignes de log
+    # arriveraient avec des heures de retard. Flush à chaque ligne.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+    if "--keepalive-sweep-once" in sys.argv[1:]:
+        os.makedirs(KEEPALIVE_DIR, exist_ok=True)
+        _run_sweep()
+        return
+    if "--keepalive-profile" in sys.argv[1:]:
+        index = sys.argv.index("--keepalive-profile")
+        if index + 1 >= len(sys.argv):
+            raise SystemExit("--keepalive-profile exige un profil")
+        os.makedirs(KEEPALIVE_DIR, exist_ok=True)
+        snapshot = _collect_profile_status(sys.argv[index + 1])
+        print(json.dumps(snapshot))
+        return
+
+    print(f"Starting scheduler (tick={TICK_INTERVAL}s, dir={CRONTAB_DIR})")
+    print(f"Keepalive dir: {KEEPALIVE_DIR}")
+    print(f"Redis: {REDIS_HOST}:{REDIS_PORT}")
+
+    r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, password=REDIS_PASSWORD or None, decode_responses=True)
+
+    # Verify Redis connection
+    try:
+        r.ping()
+        print("Redis connected OK")
+    except Exception as e:
+        print(f"WARNING: Redis not available yet: {e}")
+
+    while True:
+        try:
+            scan_and_execute(r)
+            scan_keepalive()
+            scan_keepalive_sweep()
+            scan_usage(r)
+        except redis.ConnectionError as e:
+            print(f"Redis connection lost: {e}, retrying...")
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+
+        time.sleep(TICK_INTERVAL)
+
+
+if __name__ == "__main__":
+    main()
