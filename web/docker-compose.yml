@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  # Reverse proxy
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend/dist:/usr/share/nginx/html:ro
+    depends_on:
+      - backend
+      - keycloak
+    restart: unless-stopped
+
+  # FastAPI backend
+  backend:
+    build: ./backend
+    environment:
+      - REDIS_HOST=host.docker.internal
+      - REDIS_PORT=6379
+      - KEYCLOAK_URL=http://keycloak:8080
+      # Optionnel : issuer public quand le dashboard est derrière un proxy TLS
+      - KEYCLOAK_PUBLIC_URL=${KEYCLOAK_PUBLIC_URL:-}
+      - KEYCLOAK_ISSUER=${KEYCLOAK_ISSUER:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # Keycloak for authentication
+  # C2 : version épinglée (tag + digest) — garder identique à scripts/infra.sh
+  # et setup/install_keycloak.sh ; cadence : voir patch/HOW_TO_UPGRADE.md.
+  keycloak:
+    image: quay.io/keycloak/keycloak:23.0.7@sha256:14e99d6f5dd0516a5bdc82537b732cb85469ecdb15ad7fe5f11ff67521544db8
+    environment:
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD requis (pas de valeur par defaut) - voir setup/secrets.cfg}
+      - KC_HEALTH_ENABLED=true
+      - KC_HTTP_ENABLED=true
+      # Issuer epingle (verification stricte backend) : KEYCLOAK_PUBLIC_URL
+      # si le dashboard est derriere un proxy TLS public, sinon URL interne
+      - KC_HOSTNAME_URL=${KEYCLOAK_PUBLIC_URL:-http://keycloak:8080}
+    command: start --import-realm
+    volumes:
+      - ./keycloak/realm-multi-agent.json:/opt/keycloak/data/import/realm-multi-agent.json:ro
+      - keycloak_data:/opt/keycloak/data
+    restart: unless-stopped
+
+volumes:
+  keycloak_data:

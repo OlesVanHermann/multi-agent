@@ -1,0 +1,62 @@
+Model Context Protocol (MCP) — Tool Definition Specification
+
+A tool is defined by a JSON object with:
+{
+  "name": "tool_name",
+  "description": "What the tool does",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "param1": { "type": "string", "description": "..." },
+      "param2": { "type": "integer", "description": "..." }
+    },
+    "required": ["param1"]
+  }
+}
+
+Server implementation (Python SDK):
+  from mcp.server import Server
+  from mcp.types import Tool, TextContent
+
+  app = Server("my-server")
+
+  @app.list_tools()
+  async def list_tools() -> list[Tool]:
+      return [
+          Tool(
+              name="my_tool",
+              description="Does something",
+              inputSchema={ ... }
+          )
+      ]
+
+  @app.call_tool()
+  async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+      if name == "my_tool":
+          result = do_something(arguments["param1"])
+          return [TextContent(type="text", text=str(result))]
+
+Running the server:
+  import asyncio
+  from mcp.server.stdio import stdio_server
+
+  async def main():
+      async with stdio_server() as (read, write):
+          await app.run(read, write, app.create_initialization_options())
+
+  asyncio.run(main())
+
+Error handling:
+  - Raise McpError for tool-level errors
+  - Return TextContent with error description for soft errors
+  - Server crashes are caught by the MCP runtime
+
+Tool naming conventions:
+  - snake_case
+  - verb_noun pattern: get_cell, set_color, list_sheets
+  - Prefix with service name for multi-service: calc_set_cell_color
+
+Input validation:
+  - Use inputSchema for type checking
+  - Server-side validation for business rules
+  - Return clear error messages

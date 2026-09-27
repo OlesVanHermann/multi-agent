@@ -1,0 +1,438 @@
+#!/bin/bash
+# infra.sh - Start/stop infrastructure + Architect (agent 000)
+# Usage: ./scripts/infra.sh start    # Docker, Redis, Keycloak, Dashboard, Agent 000
+#        ./scripts/infra.sh stop     # Stop everything
+
+set -e
+
+# Raise open files limit (each agent = tmux session + claude + bridge)
+ulimit -n 10240 2>/dev/null || true
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [ -f "$BASE_DIR/setup/secrets.cfg" ]; then
+    chmod 600 "$BASE_DIR/setup/secrets.cfg" 2>/dev/null || true
+    set -a
+    eval "$(grep -E '^[A-Z_]+=' "$BASE_DIR/setup/secrets.cfg" | grep -v '^#')"
+    set +a
+fi
+source "$SCRIPT_DIR/engines.sh"   # E1 : moteurs CLI (claude | codex)
+source "$SCRIPT_DIR/lib.sh"       # watchdog_pid_matches, IDs agents
+BRIDGE_SCRIPT="$BASE_DIR/scripts/agent-bridge/agent.py"
+LOG_DIR="$BASE_DIR/logs/000"
+WEB_DIR="$BASE_DIR/web"
+PROFILES_DIR="$BASE_DIR/login"
+WATCHDOG_PID_FILE="$BASE_DIR/logs/watchdog.pid"
+WATCHDOG_LOG="$BASE_DIR/logs/watchdog.log"
+
+# C2 : version Keycloak épinglée (tag complet + digest) — garder identique
+# à web/docker-compose.yml et setup/install_keycloak.sh.
+# Cadence de mise à jour : voir patch/HOW_TO_UPGRADE.md.
+KEYCLOAK_IMAGE="${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:23.0.7@sha256:14e99d6f5dd0516a5bdc82537b732cb85469ecdb15ad7fe5f11ff67521544db8}"
+
+SESSION_NAME="agent-000"
+
+# Colors
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+BLUE='\033[0;34m'; NC='\033[0m'
+
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_ok() { echo -e "${GREEN}[OK]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+# Même cascade que le dashboard pour l'Architect : chercher l'override dans
+# tous les répertoires 000-* existants, puis à plat, puis le défaut global.
+resolve_000_config() {
+    local ext="$1" candidate found=""
+    for candidate in "$BASE_DIR"/prompts/000-*/000."$ext"; do
+        [ -f "$candidate" ] || [ -L "$candidate" ] || continue
+        if [ -n "$found" ]; then
+            # stderr obligatoire : l'appelant capture stdout via $( ) et
+            # set -e stoppe le script — sans redirection l'arrêt serait muet.
+            log_error "000: plusieurs overrides .$ext: $found et $candidate" >&2
+            return 1
+        fi
+        found="$candidate"
+    done
+    if [ -n "$found" ]; then
+        tr -d '[:space:]' < "$found"
+    elif [ -f "$BASE_DIR/prompts/000.$ext" ] || [ -L "$BASE_DIR/prompts/000.$ext" ]; then
+        tr -d '[:space:]' < "$BASE_DIR/prompts/000.$ext"
+    elif [ -f "$BASE_DIR/prompts/default.$ext" ] || [ -L "$BASE_DIR/prompts/default.$ext" ]; then
+        tr -d '[:space:]' < "$BASE_DIR/prompts/default.$ext"
+    fi
+}
+
+# ── Redis CLI helper (native or docker exec fallback) ──
+
+redis_cli() {
+    local port="${REDIS_PORT:-6379}"
+    if command -v redis-cli &>/dev/null; then
+        REDISCLI_AUTH="${REDIS_PASSWORD:-}" redis-cli -p "$port" "$@"
+    else
+        ${DOCKER:-docker} exec -e REDISCLI_AUTH="${REDIS_PASSWORD:-}" ma-redis redis-cli -p 6379 "$@"
+    fi
+}
+
+start_watchdog() {
+    local existing=""
+    [ -f "$WATCHDOG_PID_FILE" ] && existing=$(cat "$WATCHDOG_PID_FILE" 2>/dev/null || true)
+    if [ -n "$existing" ] && kill -0 "$existing" 2>/dev/null; then
+        log_ok "Watchdog already running (PID: $existing)"
+        return
+    fi
+    mkdir -p "$BASE_DIR/logs"
+    nohup env \
+        REDIS_HOST="${REDIS_HOST:-localhost}" \
+        REDIS_PORT="${REDIS_PORT:-6379}" \
+        REDIS_PASSWORD="${REDIS_PASSWORD:-}" \
+        python3 "$BASE_DIR/scripts/agent-bridge/healthcheck.py" --watchdog \
+        >>"$WATCHDOG_LOG" 2>&1 &
+    local watchdog_pid=$!
+    printf '%s\n' "$watchdog_pid" >"$WATCHDOG_PID_FILE"
+    log_ok "Watchdog started (PID: $watchdog_pid)"
+}
+
+stop_watchdog() {
+    local watchdog_pid=""
+    [ -f "$WATCHDOG_PID_FILE" ] && watchdog_pid=$(cat "$WATCHDOG_PID_FILE" 2>/dev/null || true)
+    if [ -n "$watchdog_pid" ] && kill -0 "$watchdog_pid" 2>/dev/null; then
+        kill "$watchdog_pid"
+        log_ok "Watchdog stopped (PID: $watchdog_pid)"
+    else
+        log_warn "Watchdog not running"
+    fi
+}
+
+# Recharge UNIQUEMENT le watchdog (ex. après upgrade, pour charger le
+# nouveau healthcheck.py). Redis, Keycloak, le dashboard, l'agent 000 et
+# tous les agents ne sont pas touchés. Idempotent : watchdog absent ou PID
+# périmé = démarrage propre. Durée mesurée (horloge monotone) et affichée.
+do_restart_watchdog() {
+    local t0 t1 pid="" new_pid="" i
+    t0=$(cut -d' ' -f1 /proc/uptime)
+    [ -f "$WATCHDOG_PID_FILE" ] && pid=$(cat "$WATCHDOG_PID_FILE" 2>/dev/null || true)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        if ! watchdog_pid_matches "$pid"; then
+            log_error "PID $pid (logs/watchdog.pid) n'est pas healthcheck.py --watchdog — aucun kill" >&2
+            return 1
+        fi
+        kill "$pid"
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.3
+        done
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+        log_ok "Watchdog stopped (PID: $pid)"
+    else
+        log_warn "Watchdog not running — restart = démarrage propre"
+    fi
+    : >"$WATCHDOG_PID_FILE" 2>/dev/null || true
+    start_watchdog
+    [ -f "$WATCHDOG_PID_FILE" ] && new_pid=$(cat "$WATCHDOG_PID_FILE" 2>/dev/null || true)
+    if [ -z "$new_pid" ] || ! kill -0 "$new_pid" 2>/dev/null; then
+        log_error "Watchdog non démarré après restart" >&2
+        return 1
+    fi
+    t1=$(cut -d' ' -f1 /proc/uptime)
+    log_ok "restart-watchdog terminé en $(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.1f", b-a}')s (PID: $new_pid)"
+}
+
+# ── Docker helper ──
+
+setup_docker() {
+    log_info "Checking Docker..."
+    if ! command -v docker &>/dev/null; then
+        log_info "Docker not found. Installing..."
+        if command -v brew &>/dev/null; then
+            brew install --cask docker
+            log_info "Docker Desktop installed. Please launch it from Applications, then re-run."
+            exit 1
+        elif command -v apt-get &>/dev/null; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq docker.io docker-compose-plugin
+            sudo systemctl start docker
+            sudo usermod -aG docker "$USER"
+            log_ok "Docker installed"
+        else
+            log_error "Cannot install Docker automatically. Install Docker manually."
+            exit 1
+        fi
+    fi
+
+    DOCKER="docker"
+    if ! docker info &>/dev/null 2>&1; then
+        if sudo docker info &>/dev/null 2>&1; then
+            DOCKER="sudo docker"
+            log_warn "Using sudo for Docker (add user to docker group: sudo usermod -aG docker \$USER)"
+        else
+            log_error "Docker not running. Start Docker Desktop (Mac) or 'sudo systemctl start docker' (Linux)."
+            exit 1
+        fi
+    fi
+    log_ok "Docker ready"
+}
+
+# ── Start ──
+
+do_start() {
+    mkdir -p "$LOG_DIR"
+    setup_docker
+
+    # Redis
+    log_info "Starting Redis..."
+    if redis_cli ping &>/dev/null 2>&1; then
+        log_ok "Redis already running"
+    else
+        REDIS_PASS="${REDIS_PASSWORD:-}"
+        REDIS_EXTRA=""
+        [ -n "$REDIS_PASS" ] && REDIS_EXTRA="--requirepass $REDIS_PASS"
+        $DOCKER run -d --name ma-redis -p "127.0.0.1:${REDIS_PORT:-6379}:6379" \
+            -v ma-redis-data:/data --restart unless-stopped \
+            redis:7-alpine redis-server --appendonly yes $REDIS_EXTRA 2>/dev/null \
+            || $DOCKER start ma-redis 2>/dev/null || true
+        sleep 2
+        if redis_cli ping &>/dev/null 2>&1; then
+            log_ok "Redis started (Docker)"
+            # Flush only on fresh start (not when already running)
+            log_info "Flushing Redis database..."
+            redis_cli FLUSHALL &>/dev/null && log_ok "Redis database cleared"
+        else
+            log_error "Failed to start Redis"
+            exit 1
+        fi
+    fi
+
+    # Keycloak
+    log_info "Starting Keycloak..."
+    if $DOCKER ps --format '{{.Names}}' | grep -q ma-keycloak; then
+        log_ok "Keycloak already running"
+    else
+        case "${KEYCLOAK_ADMIN_PASSWORD:-}" in
+            ""|admin|changeme)
+                log_error "KEYCLOAK_ADMIN_PASSWORD absent ou valeur par défaut (admin/changeme)."
+                log_error "Définir un mot de passe fort dans setup/secrets.cfg avant de démarrer Keycloak."
+                exit 1
+                ;;
+        esac
+        REALM_FILE="$WEB_DIR/keycloak/realm-multi-agent.json"
+        REALM_MOUNT=""
+        if [ -f "$REALM_FILE" ]; then
+            REALM_MOUNT="-v $REALM_FILE:/opt/keycloak/data/import/realm-multi-agent.json:ro"
+        fi
+        # Production mode (start): HTTP allowed because bound to 127.0.0.1 only;
+        # KC_HOSTNAME_URL pins the token issuer (strict check in backend) to
+        # KEYCLOAK_PUBLIC_URL (dashboard behind a public reverse proxy) or
+        # KEYCLOAK_URL. KC_PROXY=edge only when behind a public proxy.
+        $DOCKER run -d --name ma-keycloak -p 127.0.0.1:8080:8080 \
+            -e KEYCLOAK_ADMIN="${KEYCLOAK_ADMIN:-admin}" -e KEYCLOAK_ADMIN_PASSWORD="$KEYCLOAK_ADMIN_PASSWORD" \
+            -e KC_HEALTH_ENABLED=true \
+            -e KC_HTTP_ENABLED=true \
+            -e KC_HOSTNAME_URL="${KEYCLOAK_PUBLIC_URL:-${KEYCLOAK_URL:-http://localhost:8080}}" \
+            ${KEYCLOAK_PUBLIC_URL:+-e KC_PROXY=edge} \
+            $REALM_MOUNT \
+            -v ma-keycloak-data:/opt/keycloak/data \
+            --restart unless-stopped \
+            "$KEYCLOAK_IMAGE" start --import-realm 2>/dev/null \
+            || $DOCKER start ma-keycloak 2>/dev/null || true
+        log_ok "Keycloak starting on ${KEYCLOAK_URL:-http://localhost:8080} (production mode)"
+    fi
+
+    # CDP Bridge (Chrome Extension + Native Host)
+    log_info "Checking CDP Bridge..."
+    if curl -s http://127.0.0.1:9222/health &>/dev/null; then
+        local BRIDGE_STATUS=$(curl -s http://127.0.0.1:9222/health)
+        local BRIDGE_EXT=$(echo "$BRIDGE_STATUS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('extensionConnected','?'))" 2>/dev/null || echo "?")
+        log_ok "CDP Bridge running (extension=$BRIDGE_EXT)"
+    else
+        log_warn "CDP Bridge not running on port 9222"
+        # Check if node is installed
+        if ! command -v node &>/dev/null; then
+            log_info "Installing Node.js..."
+            if command -v brew &>/dev/null; then
+                brew install node
+            elif command -v apt-get &>/dev/null; then
+                sudo apt-get install -y -qq nodejs npm
+            fi
+        fi
+        # Check if extension is installed
+        local CDP_BRIDGE_DIR="$BASE_DIR/framework/cdp-bridge"
+        if [ -d "$CDP_BRIDGE_DIR" ]; then
+            log_warn "CDP Bridge extension available at: $CDP_BRIDGE_DIR/extension/"
+            log_warn "To install:"
+            log_warn "  1. chrome://extensions → Load unpacked → $CDP_BRIDGE_DIR/extension/"
+            log_warn "  2. Copy extension ID"
+            log_warn "  3. $CDP_BRIDGE_DIR/install.sh <extension-id>"
+            log_warn "  4. Restart Chrome"
+        else
+            log_error "CDP Bridge not found at $CDP_BRIDGE_DIR"
+        fi
+    fi
+
+    # Claude Code update (if installed via npm)
+    log_info "Checking Claude Code installation..."
+    if command -v npm &>/dev/null; then
+        if npm list -g @anthropic-ai/claude-code &>/dev/null 2>&1; then
+            log_info "Claude Code installed via npm - updating..."
+            npm i -g @anthropic-ai/claude-code >/dev/null 2>&1 && log_ok "Claude Code updated" || log_warn "Failed to update Claude Code"
+        else
+            log_info "Claude Code not installed via npm (using brew/curl installer)"
+        fi
+    fi
+
+    # Web Dashboard
+    "$SCRIPT_DIR/web.sh" start
+    start_watchdog
+
+    # Agent 000
+    log_info "Starting agent-000..."
+    if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+        log_warn "Session $SESSION_NAME already exists. Attach with: tmux attach -t $SESSION_NAME"
+    else
+        # E1 : moteur / modèle / login / effort — répertoire 000-* >
+        # prompts/000.<ext> > prompts/default.<ext>.
+        local PROMPTS_DIR="$BASE_DIR/prompts"
+        local CLI="" MODEL="" LOGIN_PROFILE="" EFFORT=""
+        local ext val
+        for ext in cli model login effort; do
+            val=$(resolve_000_config "$ext")
+            case "$ext" in
+                cli)    CLI="$val" ;;
+                model)  MODEL="$val" ;;
+                login)  LOGIN_PROFILE="$val" ;;
+                effort) EFFORT="$val" ;;
+            esac
+        done
+        CLI=$(engine_for_model "$MODEL")
+        LOGIN_PROFILE=$(engine_effective_profile "$CLI" "$LOGIN_PROFILE")
+
+        if ! engine_is_valid "$CLI"; then
+            log_error "000: moteur inconnu '$CLI' (attendu: ${ENGINES[*]})"
+            exit 1
+        fi
+        if ! engine_model_is_compatible "$CLI" "$MODEL"; then
+            log_error "000: modèle '$MODEL' incompatible avec le moteur '$CLI'"
+            exit 1
+        fi
+        if [ "$CLI" = "codex" ] && ! engine_codex_preflight "$PROFILES_DIR" "$LOGIN_PROFILE"; then
+            log_error "000: préflight Codex refusé"
+            exit 1
+        fi
+
+        local LAUNCH_CMD
+        if ! LAUNCH_CMD=$(engine_launch_cmd "$CLI" "$PROFILES_DIR" "$LOGIN_PROFILE" "$MODEL" "$EFFORT"); then
+            log_error "000: paramètres invalides (cli=$CLI login=$LOGIN_PROFILE model=$MODEL)"
+            exit 1
+        fi
+
+        tmux new-session -d -s "$SESSION_NAME"
+        tmux send-keys -t "$SESSION_NAME" "cd '$BASE_DIR' && unset CLAUDECODE && $LAUNCH_CMD" Enter
+        sleep 4
+
+        # Modèle + effort via la commande du CLI (modifiables en cours de session).
+        # codex : picker /model piloté (les arguments seraient avalés comme prompt).
+        engine_apply_model_effort "$SESSION_NAME" "$CLI" "$MODEL" "$EFFORT" || \
+            log_warn "000: application modèle/effort incomplète (voir ci-dessus)"
+
+        # L'effort est déjà appliqué et vérifié par engine_apply_model_effort.
+        # Ne pas ajouter une seconde commande propre à un moteur ici.
+
+        # Prompt injection is handled by the bridge (agent.py auto-init)
+
+        tmux new-window -t "$SESSION_NAME" -n bridge
+        tmux send-keys -t "$SESSION_NAME:bridge" "cd '$BASE_DIR' && sleep 3 && AGENT_CLI='$CLI' REDIS_PASSWORD='${REDIS_PASSWORD:-}' REDIS_PORT='${REDIS_PORT:-6379}' HEALTH_TOKEN='${HEALTH_TOKEN:-}' python3 '$BRIDGE_SCRIPT' 000 2>&1 | tee -a '$LOG_DIR/bridge.log'" Enter
+        tmux select-window -t "$SESSION_NAME:0"
+        log_ok "Agent 000 started in tmux session: $SESSION_NAME ($CLI)"
+    fi
+
+    # Summary
+    echo ""
+    echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}   INFRASTRUCTURE READY${NC}"
+    echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo "  Redis:     $(redis_cli ping 2>/dev/null || echo 'NOT RUNNING')"
+    echo "  CDP Bridge: $(curl -s http://127.0.0.1:9222/health >/dev/null 2>&1 && echo 'OK (port 9222)' || echo 'NOT RUNNING')"
+    echo "  Dashboard: http://localhost:8050"
+    echo "  Agent 000: tmux attach -t $SESSION_NAME"
+    echo ""
+    echo "  Stop:      ./scripts/infra.sh stop"
+    echo "  Agents:    ./scripts/agent.sh start all"
+    echo ""
+    echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
+}
+
+# ── Stop ──
+
+do_stop() {
+    # Le watchdog doit cesser avant les agents et avant toute purge Redis.
+    stop_watchdog
+
+    # Stop all worker agents first
+    "$SCRIPT_DIR/agent.sh" stop all
+
+    # Docker
+    DOCKER="docker"
+    if ! docker info &>/dev/null 2>&1; then
+        if sudo docker info &>/dev/null 2>&1; then
+            DOCKER="sudo docker"
+        fi
+    fi
+
+    # Agent 000
+    log_info "Stopping agent-000..."
+    if tmux kill-session -t "$SESSION_NAME" 2>/dev/null; then
+        log_ok "Killed tmux session $SESSION_NAME"
+    else
+        log_warn "Session $SESSION_NAME not found"
+    fi
+
+    # Dashboard
+    "$SCRIPT_DIR/web.sh" stop
+
+    # Keycloak
+    log_info "Stopping Keycloak..."
+    if $DOCKER ps --format '{{.Names}}' 2>/dev/null | grep -q ma-keycloak; then
+        $DOCKER stop ma-keycloak 2>/dev/null && log_ok "Keycloak stopped"
+    else
+        log_warn "Keycloak not running"
+    fi
+
+    # Redis - Flush all data before stopping
+    if redis_cli ping &>/dev/null 2>&1; then
+        log_info "Flushing Redis database..."
+        redis_cli FLUSHALL &>/dev/null && log_ok "Redis database cleared"
+    fi
+
+    log_info "Stopping Redis..."
+    if $DOCKER ps --format '{{.Names}}' 2>/dev/null | grep -q ma-redis; then
+        $DOCKER stop ma-redis 2>/dev/null && log_ok "Redis stopped"
+    else
+        log_warn "Redis container not running"
+    fi
+
+    echo ""
+    log_ok "Infrastructure stopped."
+}
+
+# ── Help ──
+
+show_help() {
+    echo "Usage: $0 <start|stop|restart-watchdog>"
+    echo ""
+    echo "  $0 start             Start Docker, Redis, Keycloak, Dashboard, Agent 000"
+    echo "  $0 stop              Stop everything"
+    echo "  $0 restart-watchdog  Reload ONLY the watchdog (services et agents intacts)"
+}
+
+# ── Main ──
+
+case "$1" in
+    start)  do_start ;;
+    stop)   do_stop ;;
+    restart-watchdog) do_restart_watchdog ;;
+    -h|--help|help|"") show_help ;;
+    *)      log_error "Unknown action: $1"; show_help; exit 1 ;;
+esac

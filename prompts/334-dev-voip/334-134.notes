@@ -1,0 +1,465 @@
+# Notes produit consolidées — VoIP / Agent vocal
+
+## Objet
+
+Ce document reformule les demandes explicites de l'utilisateur retrouvées dans
+l'historique du 334-134 et les rapproche des spécifications VoIP existantes. Il
+décrit le service attendu du point de vue produit. Une tâche marquée `DONE` dans
+un plan ne vaut pas validation : le comportement doit être visible et vérifié
+sur un appel réel en production.
+
+## 1. Expérience attendue dans Freemium / VoIP
+
+La page VoIP doit être un vrai softphone, et non l'ancienne interface « session
+voix » (dictée, dialogue, traduction, vidéo). En arrivant sur la page,
+l'utilisateur doit voir directement :
+
+- le champ de numéro et le bouton d'appel ;
+- les contacts et l'annuaire téléphonique ;
+- les favoris ou numéros rapides ;
+- l'historique des appels ;
+- les appels entrants et les contrôles d'un appel actif ;
+- les états réseau et téléphonie utiles, formulés clairement.
+
+L'utilisateur ne doit jamais avoir à cliquer sur « Se connecter ». Le backend
+provisionne la ligne et le frontend s'enregistre automatiquement auprès de
+Kamailio. La disponibilité SIP est un état du service, pas une étape manuelle de
+l'interface.
+
+Pour l'instant, aucune limitation Freemium/Premium ne doit bloquer une fonction :
+toutes les fonctions VoIP sont autorisées jusqu'à une nouvelle décision produit.
+
+## 2. Fonctionnement téléphonique obligatoire
+
+### Appels 1:1
+
+Le chemin principal est :
+
+`Navigateur SIP.js ↔ WSS ↔ Kamailio ↔ RTPengine ↔ relais B2BUA ↔ opérateur SIP/PSTN`
+
+Kamailio maintient l'enregistrement SIP et assure le routage. Le frontend passe
+par Kamailio ; il ne se connecte pas directement à l'opérateur. LiveKit ne doit
+pas être introduit dans un appel téléphonique 1:1.
+
+### Visio avec participant téléphonique
+
+LiveKit SIP est réservé au cas où un numéro de téléphone rejoint une salle de
+visio :
+
+`Salle LiveKit ↔ trunk SIP LiveKit ↔ Kamailio ↔ RTPengine/relais ↔ opérateur`
+
+### Entrant et sortant
+
+Le service doit savoir :
+
+- appeler un numéro externe depuis la ligne du service ;
+- recevoir les appels du numéro public ;
+- maintenir `REGISTER` et ses keepalive sans présence de l'utilisateur ;
+- sonner dans l'interface en mode humain ;
+- décrocher automatiquement en mode assistant vocal ;
+- transporter un audio bidirectionnel intelligible ;
+- raccrocher proprement des deux côtés.
+
+## 3. États d'appel et interactions de l'interface
+
+Chaque transition SIP réelle doit produire immédiatement l'état UI correspondant :
+
+1. prêt / enregistré ;
+2. composition ;
+3. sonnerie distante ou appel entrant ;
+4. décroché / connecté ;
+5. appel actif avec durée ;
+6. mise en attente, reprise, transfert et DTMF si utilisés ;
+7. raccrochage local ou distant ;
+8. retour immédiat à l'état prêt ;
+9. erreur actionnable en cas d'échec.
+
+Les problèmes déjà signalés et à considérer comme tests de non-régression sont :
+
+- clic sur « Appeler » sans émission visible ;
+- impossibilité d'arrêter un appel ;
+- absence de changement au décrochage ;
+- fin d'appel mal ou pas signalée ;
+- softphone affiché déconnecté avec bouton inopérant ;
+- SIP annoncé UP alors que WSS/REGISTER est indisponible ;
+- session bloquée en établissement après une réponse SDP ;
+- appel techniquement passé mais interface restée figée.
+
+Un test n'est concluant que si la signalisation, l'audio et l'interface sont
+cohérents pendant un véritable appel entrant et sortant. Un build réussi ou un
+service systemd actif ne suffit pas.
+
+## 4. Mode « Répondre moi-même / Assistant vocal »
+
+Le choix doit être évident dans l'interface :
+
+- **Répondre moi-même** : le navigateur sonne et l'utilisateur décroche ;
+- **Assistant vocal** : le backend décroche automatiquement, joue l'accueil,
+  converse, recherche l'information et termine proprement l'appel.
+
+L'interface doit permettre de suivre en direct un appel pris par l'assistant :
+état, transcription, tours de parole, recherches, réponses, erreurs et fin
+d'appel.
+
+## 5. Comportement conversationnel de l'assistant
+
+### Langue et style
+
+- parler en français ; ne jamais répondre « all right » ;
+- accueil complet, non coupé, indiquant qu'il s'agit du service et que
+  l'assistant est à l'écoute des questions commerciales ;
+- réponses brèves et orales : en général une ou deux phrases, environ 25 mots ;
+- ne pas réciter de listes ou menus non demandés ;
+- pendant une recherche, utiliser de courtes réactions naturelles et variées
+  (par exemple « D'accord », « Je regarde », « Hmm », « Ah oui »,
+  « OK, j'ai ça »), sans répétition mécanique ;
+- ne jamais prononcer le nom d'un outil, sa syntaxe, un JSON ou une trace telle
+  que `search_website(...)` ;
+- accepter l'interruption de l'appelant et interrompre rapidement la synthèse
+  vocale en cours ;
+- ne pas couper les débuts ou fins de phrase, y compris le message d'accueil.
+
+### Vérité des réponses : RAG obligatoire
+
+Toute information factuelle donnée à l'appelant doit provenir des résultats du
+RAG. Le modèle ne doit pas compléter depuis sa mémoire propre ni halluciner.
+
+- résultat RAG suffisant : répondre uniquement avec les éléments retrouvés ;
+- résultat ambigu : demander une précision ou reformuler la recherche ;
+- aucun résultat fiable : dire que l'information n'a pas été trouvée ;
+- prix, durées, remises, modalités et disponibilités doivent être reliés au
+  passage source réellement récupéré ;
+- conserver le contexte des questions de suivi, par exemple « et pour dix ans ? ».
+
+Le corpus doit couvrir autant que nécessaire `ovhcloud.com` et
+`docs.ovhcloud.com`. Le service doit rendre mesurable le nombre de pages
+découvertes, indexées, rejetées, obsolètes et la date du dernier crawl. La
+qualité doit être contrôlée à partir des vraies questions entendues dans les
+conversations, en comparant la réponse aux pages sources.
+
+### Pourquoi les réponses peuvent être mauvaises aujourd'hui
+
+Le code de référence relu fait apparaître des limites qui doivent être mesurées
+sur le runtime réellement déployé avant toute conclusion :
+
+- le crawl a un plafond par défaut de 50 pages ;
+- Firecrawl peut annoncer une pagination, mais le code avertit qu'il indexe
+  seulement le lot déjà retourné au lieu de garantir le parcours de toutes les
+  pages ;
+- une très grande page est limitée à environ 40 chunks, en augmentant
+  dynamiquement leur taille : des passages trop gros peuvent alors mélanger des
+  sujets et dégrader la précision de l'embedding ;
+- la recherche vectorielle récupère une distance, mais la version relue la
+  supprime du résultat transmis à l'outil ; on ne peut donc pas juger la qualité
+  du ranking ni fixer un seuil de pertinence ;
+- les URLs sources sont dédupliquées avec un `set`, ce qui perd leur ordre et
+  rend les traces moins reproductibles ;
+- le log runtime observé résume le résultat par « N chunks » sans montrer les
+  passages, scores, rangs, versions d'index ni le contexte exact donné au
+  modèle ;
+- une question de suivi mal transcrite peut ne déclencher aucune recherche ou
+  produire une requête trop vague ; sans corrélation STT → requête → résultats
+  → réponse, ces cas sont indiscernables ;
+- une page peut être présente mais mal découpée, indexée avec un ancien modèle,
+  dupliquée sous plusieurs URLs, ou obsolète ; compter seulement les lignes de
+  la base ne prouve pas une bonne couverture.
+
+Ces points ne prouvent pas à eux seuls la cause d'une réponse donnée. Ils
+définissent ce que les logs et les tests doivent rendre vérifiable.
+
+## 6. Fetch, crawl et cycle de vie de la connaissance
+
+### Inventaire avant crawl
+
+Pour chaque domaine autorisé, construire un inventaire reproductible à partir
+des sitemaps, liens internes, URLs canoniques et résultats Firecrawl :
+
+- URLs découvertes, fetchées, réussies, redirigées, rejetées et en erreur ;
+- raison du rejet : robots, HTTP, timeout, type MIME, doublon, contenu vide,
+  langue, taille ou politique ;
+- profondeur, parent de découverte, canonical, code HTTP, ETag/Last-Modified et
+  hash du contenu ;
+- distinction stricte entre `ovhcloud.com` et `docs.ovhcloud.com`, avec compteurs
+  par domaine, langue, section et type de page ;
+- comparaison `discovered - fetched - indexed` afin d'expliquer chaque trou de
+  couverture.
+
+La question « combien de pages sont indexées ? » doit produire une réponse
+chiffrée et datée : pages uniques, chunks, doublons, erreurs, pages obsolètes,
+date/ID du crawl et couverture par domaine. Un chiffre global non sourcé comme
+« 1000 » ou « 5000 » est insuffisant.
+
+### Fetch et normalisation
+
+Chaque page doit conserver son URL canonique, titre, langue, section, date de
+fetch, statut, hash brut et hash du texte normalisé. La transformation HTML vers
+Markdown doit être contrôlée pour éviter : menus, navigation, cookies, footer,
+contenu répété, tableaux cassés et prix sortis de leur contexte.
+
+Les logs de fetch doivent montrer le job, la pagination, le curseur, la limite
+demandée, le nombre réellement retourné, les retries et l'erreur finale. Une
+pagination non consommée est un échec de couverture explicite, pas un simple
+warning. Un recrawl doit être incrémental, idempotent et capable de retirer ou
+marquer obsolètes les documents disparus.
+
+### Découpage et embeddings
+
+Le chunking doit préserver titres, sous-titres, tableaux et contexte métier.
+Chaque chunk reçoit un `document_id` et un `chunk_id` stables, sa position, ses
+hashes, son nombre de caractères/tokens et les métadonnées de la page.
+
+Pour chaque index, conserver : modèle d'embedding, dimension, normalisation,
+métrique, version de code, date de construction et corpus source. Un changement
+de modèle/dimension impose un nouvel index ou une migration explicite ; il ne
+faut jamais mélanger silencieusement des vecteurs incompatibles.
+
+Les chunks trop longs, trop courts, identiques ou quasi identiques sont mesurés.
+Les tableaux de prix et conditions d'enregistrement doivent faire partie d'un
+jeu de contrôle dédié, car leur structure est facilement détruite par la
+conversion et le découpage.
+
+## 7. Bases de données et sources de vérité
+
+### Base de connaissance
+
+La version relue utilise SQLite avec `sqlite-vec`, table virtuelle `vec_chunks`,
+embeddings Gemini normalisés et distance cosinus. La base doit permettre de
+relier sans ambiguïté :
+
+`crawl_run → document/page → version de contenu → chunks → embedding/index`
+
+Le schéma d'observabilité doit exposer les identifiants et versions, jamais les
+credentials. Il doit être possible de répondre par requête SQL aux questions :
+
+- combien de documents et chunks existent par domaine et crawl ?
+- quelle version d'une URL est active ?
+- quels chunks ont servi à un appel donné ?
+- quels documents sont dupliqués, sans embedding, en erreur ou obsolètes ?
+- quel modèle et quelle dimension ont produit chaque embedding ?
+
+Une table vectorielle seule ne suffit pas pour cet audit. Si les métadonnées ne
+peuvent pas y être stockées proprement, ajouter des tables relationnelles de
+documents, crawls, chunks et états d'indexation avec clés stables et contraintes
+d'unicité.
+
+### Données d'appel et observabilité
+
+La connaissance et les traces d'appel ont des finalités différentes. Les traces
+doivent référencer les IDs de documents/chunks, rangs, scores et hashes, sans
+dupliquer toute la base ni stocker l'audio brut. Elles sont corrélées par
+`trace_id`, `call_id`, `session_id`, `span_id` et `parent_span_id`, avec rétention,
+rotation et contrôle d'accès.
+
+### Vérification directe de la base
+
+Quand une réponse est mauvaise, reproduire d'abord la question directement
+contre la base d'embeddings, hors appel et hors modèle conversationnel. Comparer :
+
+1. transcription exacte entendue ;
+2. requête outil originale et requête normalisée ;
+3. résultats vectoriels bruts avec distance/rang ;
+4. chunks conservés après filtres/déduplication ;
+5. contexte exact transmis au modèle ;
+6. réponse vocale finale.
+
+Cette comparaison sépare immédiatement quatre familles de panne : connaissance
+absente, retrieval insuffisant, contexte mal construit ou génération fautive.
+
+## 8. Pipeline de réponse et diagnostic causal
+
+Pour chaque tour de parole, la timeline doit permettre de répondre à la question
+« pourquoi l'assistant a dit cela ? » avec les étapes suivantes :
+
+1. **Audio entrant** : frames reçues/perdues, codec, timing et VAD.
+2. **STT** : deltas, transcription finale, langue, confiance et corrections.
+3. **Compréhension du tour** : question autonome ou suivi dépendant du contexte.
+4. **Décision outil** : recherche appelée ou non, avec justification structurée.
+5. **Réécriture de requête** : texte original, contexte de conversation utilisé
+   et requête finale ; ne jamais perdre « .com », « renouvellement » ou « dix
+   ans » lors d'une reformulation.
+6. **Embedding/recherche** : index/version, durée, filtres, top-k, candidats,
+   rangs, distances et scores.
+7. **Sélection** : chunks exclus/inclus et motif ; déduplication et seuil.
+8. **Contexte modèle** : ordre, IDs, hash et texte sanitisé exact effectivement
+   envoyé, distinct des candidats seulement récupérés.
+9. **Génération** : instruction système/version, réponse texte et indicateur
+   permettant de vérifier que chaque affirmation est supportée.
+10. **TTS/playback** : texte réellement synthétisé, TTFB, chunks, queue, drops,
+    interruption et portion effectivement jouée à l'appelant.
+
+### Arbre de décision pour une mauvaise réponse
+
+- La transcription est fausse ou coupée → problème audio/STT/VAD, pas RAG.
+- La transcription est bonne mais aucun outil n'est appelé → orchestration ou
+  prompt du modèle.
+- L'outil est appelé avec une mauvaise requête → reformulation/contexte du tour.
+- La bonne requête ne retourne pas le bon passage → couverture, chunking,
+  embedding, filtre ou ranking.
+- Le bon passage est candidat mais pas envoyé au modèle → sélection, seuil,
+  limite de contexte ou déduplication.
+- Le bon passage est envoyé mais la réponse le contredit → prompt/génération ;
+  appliquer le principe « pas de preuve RAG, pas d'information ».
+- Le texte généré est bon mais l'appelant entend autre chose ou une phrase
+  coupée → TTS, conversion, pacing, queue, clear ou barge-in.
+
+### Cas de régression obligatoire « remise sur dix ans »
+
+Conserver et rejouer la conversation : prix de création/renouvellement `.com`,
+puis « Y a-t-il une remise pour dix ans ? », ainsi que la transcription ambiguë
+observée. La trace doit montrer si l'échec vient du STT, de l'absence d'appel
+outil, d'une requête incomplète, d'un faible recall ou de la décision finale. Si
+aucun passage ne prouve une remise, l'assistant doit le dire sans inventer.
+
+## 9. Audio, STT et TTS
+
+Le service doit rendre observable et robuste toute la chaîne :
+
+`RTP entrant → décodage → STT → tour de dialogue/RAG → TTS → encodage → RTP sortant`
+
+Critères attendus :
+
+- audio bidirectionnel sans longues interruptions ;
+- aucune perte silencieuse de frames ; compteurs de drops visibles ;
+- accueil entièrement joué, sauf interruption volontaire de l'appelant ;
+- microphone ouvert assez tôt pour ne pas perdre la première question ;
+- barge-in effectif pendant l'accueil et les réponses ;
+- réponses TTS non tronquées ;
+- files audio dimensionnées et bornées, avec saturation signalée ;
+- comportement stable avec plusieurs appels simultanés, capacité annoncée sur
+  la base d'un test de charge et non d'une estimation.
+
+## 10. Observabilité demandée
+
+Les logs frontend et backend doivent permettre de reconstruire un appel complet,
+y compris lorsque personne n'a l'interface ouverte et que les services continuent
+à tourner. Ils sont persistés dans l'emplacement de logs Freemium prévu par le
+backend et corrélés par `call_id`, `session_id`, utilisateur et timestamp.
+
+L'interface technique doit afficher, sous une forme lisible :
+
+- réception de l'appel, accueil, décroché et raccrochage ;
+- transitions SIP/WSS/REGISTER et codes de réponse ;
+- flux audio, codec, paquets/frames, files, drops et latences ;
+- appel STT : fournisseur, début/fin, durée, statut et transcription ;
+- appel RAG : requête exacte, filtres, durée, nombre de résultats et extraits
+  effectivement retournés avec leurs sources ;
+- décision de réponse : résultat utilisé ou motif de non-réponse ;
+- appel TTS : texte envoyé, durée, statut, début/fin de lecture et interruption ;
+- erreurs frontend, backend et services, avec composant et étape concernés ;
+- métriques par appel et agrégées pour diagnostiquer les interruptions et la
+  capacité simultanée.
+
+Les logs ne doivent jamais contenir de mot de passe, jeton, cookie,
+`Authorization`, clé API, credential SIP ou secret. Les données personnelles et
+contenus complets sont bornés et expurgés selon le profil d'accès ; un mode de
+diagnostic détaillé reste réservé aux utilisateurs développeurs autorisés.
+
+### Événements minimaux par tour
+
+Les événements doivent suivre un schéma versionné unique, par exemple
+`voip.obs.v1`, et non des JSON improvisés selon les composants. Minimum attendu :
+
+- `call.received|started|ended` ;
+- `media.ws.accepted|closed|error` ;
+- `stt.session.start|complete|error`, `stt.transcript.delta|final` ;
+- `rag.query.received`, `rag.embedding.*`, `rag.search.*`,
+  `rag.context.selected` ;
+- `model.response.start|complete|error` ;
+- `tts.request.*`, `tts.chunk`, `playback.start|complete|clear|drop` ;
+- spans des appels HTTP/API/WS avec provider, opération, endpoint sanitisé,
+  durée, statut, retry, tailles et erreurs.
+
+Chaque span se ferme en `complete` ou `error`. Les reconnexions, retries,
+timeouts, résultats vides, réponses partielles, troncatures, sampling et gaps
+sont explicites. Les écritures de logs et clients lents ne doivent jamais
+bloquer la boucle audio.
+
+### Interface de diagnostic
+
+Le journal plat doit devenir une timeline et un arbre de spans repliables. Une
+vue synthétique affiche :
+
+`Audio input → STT → Search/RAG → modèle → TTS → Audio output`
+
+Pour chaque étape : statut, durée, provider, entrée/résultat sanitises, erreur et
+lien vers le span détaillé. La vue RAG expose la requête, les candidats ordonnés,
+scores, chunks et le contexte modèle sélectionné. La vue STT/TTS expose formats,
+chunks, latences et playback. Le live doit supporter reconnexion et replay sans
+doublon ; toute perte doit apparaître comme un gap.
+
+### Rapport qualité continu
+
+Construire un jeu de questions à partir des appels réels, avec transcription,
+réponse attendue, pages sources et critères factuels. À chaque recrawl, changement
+d'embedding, chunking, ranking ou prompt :
+
+- mesurer recall@k/MRR ou métriques équivalentes du retrieval ;
+- vérifier que la source attendue est retrouvée ;
+- vérifier que chaque affirmation de la réponse est supportée ;
+- classer les échecs selon l'arbre causal ci-dessus ;
+- comparer avec la version précédente pour détecter les régressions ;
+- conserver des replays « prix .com », « dix ans », GPU/pays, CDN/points de
+  présence et autres questions réellement mal traitées.
+
+## 11. Exploitation et production
+
+- tous les composants nécessaires disposent d'un démarrage et d'un redémarrage
+  propres ;
+- Kamailio, RTPengine, relais SIP, API VoIP et agent vocal sont supervisés ;
+- les journaux persistent et tournent correctement ;
+- la configuration déployée et ses templates restent synchronisés sans embarquer
+  de credentials ;
+- les endpoints de santé distinguent disponibilité du processus, enregistrement
+  SIP, connectivité opérateur et capacité média ;
+- toute correction est validée en production par le scénario réel concerné.
+
+## 12. Définition de « terminé »
+
+Le service n'est terminé que lorsque les scénarios suivants passent de bout en
+bout et que les preuves sont visibles dans les logs corrélés :
+
+- appel sortant réel : composition → sonnerie → décroché → audio dans les deux
+  sens → raccrochage distant/local → UI prête ;
+- appel entrant en mode humain : sonnerie UI → décroché → audio → fin propre ;
+- appel entrant en mode assistant : auto-décroché → accueil complet → question
+  en français → recherche RAG traçable → réponse sourcée et concise → barge-in
+  → fin propre ;
+- contacts, annuaire, favoris, historique, DTMF, attente et transfert utilisables ;
+- redémarrage des services sans intervention manuelle « Se connecter » ;
+- indisponibilité d'un composant traduite par un état exact et une erreur
+  exploitable, jamais par une interface figée ;
+- test de concurrence documentant la capacité supportée ;
+- audit des logs confirmant l'absence de secrets.
+
+Pour l'assistant vocal, « terminé » exige en plus qu'une personne puisse prendre
+une mauvaise réponse issue d'un appel, ouvrir une seule trace et déterminer sans
+supposition : ce qui a été entendu, recherché, trouvé, sélectionné, envoyé au
+modèle, généré, synthétisé et réellement joué.
+
+## 13. Sources relues
+
+- `prompts/334-dev-voip/334-134.history` — demandes utilisateur historiques ;
+- `prompts/334-dev-voip/334-134-memory.md` — état et leçons de production ;
+- `prompts/334-dev-voip/architecture.md` — architecture SIP/RTP/WebRTC ;
+- `plans/voip/01-USAGES.md` — usages voix et vidéo ;
+- `plans/voip/02-ARCHITECTURE.md` — pipeline temps réel et post-traitement ;
+- `plans/voip/03-SPEC-TECHNIQUE.md` — backend, API et données ;
+- `plans/voip/06-FRONTEND.md` — composants et hooks frontend ;
+- plans SIP.js, Kamailio, agent vocal, qualité d'appel et observabilité sous
+  `plans/voip/plan-DONE/` et `plans/voip/plan-TODO/`.
+
+## 14. Demandes historiques majeures reformulées
+
+- 28 mars : remplacer l'interface session voix par un vrai softphone ; rendre
+  appels entrants/sortants, contacts et historique réellement utilisables ;
+- 28 mars : supprimer temporairement les limitations Freemium/Premium ;
+- 28 mars : faire maintenir SIP par Kamailio et réserver LiveKit à la visio ;
+- 28 mars : corriger la signalisation du décrochage et de la fin d'appel ;
+- 11–13 juillet : corriger interruptions audio, accueil coupé, réponses trop
+  longues ou en anglais, barge-in et qualité du corpus RAG ;
+- 12–13 juillet : indexer `ovhcloud.com` et `docs.ovhcloud.com`, mesurer la
+  couverture et interdire toute information non issue du RAG ;
+- 12 et 17 juillet : fournir des logs très détaillés des appels API STT, RAG et
+  TTS, de leurs entrées/résultats et de toute la chaîne média ;
+- 18 juillet : expliquer et corriger les échecs de recherche sur les questions
+  de suivi et finir toutes les tâches ouvertes avant d'annoncer le produit DONE.
