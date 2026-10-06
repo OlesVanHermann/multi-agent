@@ -1,0 +1,5 @@
+# V3/C0 — Split held-out du banc (~1/3 des tâches).
+# Une ligne = un task_id. Règle anti-contamination (plan §C0) : ces tâches ne
+# sont JAMAIS lues par les agents 8XX / le retrieval, ne sont jamais citées
+# dans prompts/ ni templates/ — vérifié par tests/test_no_heldout_leak.py.
+s03-config-parse

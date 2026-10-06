@@ -1,0 +1,295 @@
+# E1 — Marqueurs UI du MOTEUR `codex` (OpenAI Codex CLI).
+# Sélectionné via AGENT_CLI=codex (déduit par agent.sh depuis le modèle).
+#
+# ┌───────────────────────────────────────────────────────────────────────────┐
+# │  PROVENANCE — aucune valeur n'est devinée.                                 │
+# │                                                                           │
+# │  Codex CLI est open source : github.com/openai/codex (Rust, crate `tui`). │
+# │  Chaque marqueur ci-dessous est relevé soit dans le code de rendu, soit   │
+# │  dans un SNAPSHOT de test (`*.snap`) — c'est-à-dire le pane RÉELLEMENT    │
+# │  rendu par le TUI. Un snapshot est exactement ce que produirait           │
+# │  `tmux capture-pane` : c'est la même preuve que capture-markers.sh.       │
+# │                                                                           │
+# │  Chaque valeur porte sa source. Vérifier avec :                            │
+# │      git clone --depth 1 https://github.com/openai/codex                   │
+# │      grep -rn "<chaîne>" codex/codex-rs/tui/src                            │
+# └───────────────────────────────────────────────────────────────────────────┘
+#
+# Statut : [D] Documenté (source citée) · [NA] Signal inexistant dans ce TUI
+#
+# ⚠ Le source évolue. Après une mise à jour majeure de Codex CLI, revalider
+#   avec ./scripts/agent-bridge/capture-markers.sh codex
+
+# ── [D] Noms de process ─────────────────────────────────────────────────────
+# Binaire natif (installeur standalone). 'node' conservé si l'installation
+# passe par npm (@openai/codex).
+# [Source: codex-cli/package.json — bin: { codex }]
+# [Source: docs/install.md — standalone installer + npm]
+process_names: ['codex', 'node']
+
+# ── [D] Portée de la détection « occupé » — DIFFÉRENCE STRUCTURELLE ─────────
+# Codex affiche son indicateur d'activité dans un widget SÉPARÉ, au-dessus du
+# composer — et le composer « › » reste affiché pendant le travail (on peut y
+# mettre des messages en file d'attente). L'heuristique de Claude Code
+# (« prompt visible = idle ») conclurait donc TOUJOURS idle : agent vu libre en
+# permanence, prompts envoyés par-dessus une réponse en cours.
+# → on cherche les busy_markers dans tout le pane, pas dans la ligne de statut.
+# [Source: tui/src/status_indicator_widget.rs — widget distinct de bottom_pane/footer.rs]
+busy_scope: 'pane'
+
+# ── [D] Portée de la détection des shells en arrière-plan ───────────────────
+# Codex affiche « 123 background terminals running · /ps to view · » sur une
+# LIGNE DISTINCTE du footer, pas dans la ligne de statut.
+# [Snapshot: bottom_pane__unified_exec_footer__tests__render_many_sessions.snap]
+bashes_scope: 'pane'
+
+# ── [D] Indicateur « occupé » ───────────────────────────────────────────────
+# Rendu réel : « • Working (0s • esc to interrupt) »
+# La touche est REMAPPABLE — un snapshot montre « f12 to interrupt ». On ne
+# retient donc que la partie stable, indépendante du keymap.
+# [Source: tui/src/status_indicator_widget.rs:274 — span « to interrupt) »]
+# [Snapshot: status_indicator_widget__tests__renders_with_working_header.snap]
+# [Snapshot: status_indicator_widget__tests__renders_remapped_interrupt_hint.snap]
+busy_markers: ['to interrupt']
+
+# ── [D] Ligne de statut permanente ──────────────────────────────────────────
+# Footer replié, affiché idle ET pendant le travail :
+#   «   gpt-5.6-sol default · ~/multi-agent  »
+# Sert de sonde de vie : ligne absente + process vivant = erreur.
+# [Source: capture-pane sur session réelle codex-cli 0.144.4 — footer
+#  « gpt-5.6-sol default · ~/multi-agent » (scripts/agent-bridge/capture-markers.sh)]
+# [Vérifié: codex-cli 0.144.4, session réelle — « context left » N'APPARAÎT PAS
+#  tant que le compteur de contexte n'est pas rendu ; le footer permanent est
+#  « <model> <effort> · <dir> ». Le séparateur « · » (U+00B7) est l'invariant
+#  des deux états du footer. L'ancien marqueur 'context left' (déduit des
+#  snapshots footer.rs) laissait bp_line vide sur session fraîche → la sonde
+#  de vie concluait api_error=true en permanence.]
+status_line: ' · '
+
+# Modèle réellement actif, lu passivement dans le footer. Groupe 1 = modèle.
+# [Source: capture-pane réel codex-cli 0.144.4]
+runtime_model_pattern: '^\s*(gpt-[A-Za-z0-9._-]+)\s+[^·]+\s+·\s+'
+runtime_effort_pattern: '^\s*gpt-[A-Za-z0-9._-]+\s+([^·\s]+)\s+·\s+'
+
+# Codex expose déjà modèle et effort dans son footer : aucune commande active.
+model_check_command: '__NON_APPLICABLE__'
+effort_check_command: '__NON_APPLICABLE__'
+model_check_history_pattern: '__NON_APPLICABLE__'
+effort_check_history_pattern: '__NON_APPLICABLE__'
+model_check_response_pattern: '__NON_APPLICABLE__'
+effort_check_response_pattern: '__NON_APPLICABLE__'
+
+# ── [D] Composer ────────────────────────────────────────────────────────────
+# Préfixe du composer : « › » (U+203A). Les marqueurs génériques sont conservés
+# comme chez claude : repli quand le pane retombe sur un shell.
+# [Snapshot: bottom_pane__chat_composer__tests__footer_mode_ctrl_c_interrupt.snap
+#            → « › Ask Codex to do anything »]
+prompt_markers: ['›', '>', '$', '%']
+
+# ── [D] CLI démarré et prêt ─────────────────────────────────────────────────
+# La bannière d'accueil et le composer n'apparaissent qu'une fois le TUI monté.
+# [Vérifié: codex-cli 0.144.4, session réelle — les anciens marqueurs issus des
+#  snapshots (« Ask Codex to do anything », « for shortcuts ») N'APPARAISSENT
+#  PLUS : le placeholder du composer est une suggestion tournante (« Find and
+#  fix a bug in @filename »…) et le footer est « <model> <effort> · <dir> ».
+#  Conséquence : wait_cli_ready ne matchait jamais → kill-session à 30 s
+#  (« l'agent démarre puis s'arrête »).]
+# [Source: capture-pane sur session réelle codex-cli 0.144.4 — bannière
+#  « >_ OpenAI Codex (v0.144.4) » + composer « › »]
+ready_markers: ['OpenAI Codex (v', '› ']
+
+# ── [D] Pourcentage de contexte restant ─────────────────────────────────────
+# « 72% context left ». Quand le pourcentage est inconnu, Codex affiche
+# « 123K used » : aucun pourcentage n'est alors extrait (ctx = -1), ce qui est
+# le comportement voulu.
+# [Source: tui/src/bottom_pane/footer.rs:1011-1019 — context_window_line()]
+context_pct_patterns:
+  - '[0-9]+% context left'
+
+# ── [D] Mode plan ───────────────────────────────────────────────────────────
+# Indicateur de mode de collaboration : « Plan mode ».
+# [Source: tui/src/bottom_pane/footer.rs:149 — CollaborationModeIndicator::Plan]
+plan_mode: 'Plan mode'
+# L'indicateur actif est dans le footer courant. La modale de suggestion
+# contient aussi les mots « Plan mode » mais ne représente pas le mode actif.
+plan_mode_tail_lines: 3
+plan_mode_exclusions: ['use Plan mode', 'Create a plan?']
+plan_mode_required: 'context left'
+
+# ── [D] Demande d'approbation ───────────────────────────────────────────────
+# « Would you like to run the following command? »
+# « Would you like to grant these permissions? »
+# En principe jamais atteint avec --dangerously-bypass-approvals-and-sandbox ;
+# renseigné comme filet de sécurité.
+# [Snapshots: bottom_pane__approval_overlay__tests__approval_overlay_*.snap]
+approval: 'Would you like to'
+
+# ── [D] Menu de sélection ouvert (attente d'un choix) ───────────────────────
+# « Press enter to confirm or esc to cancel »
+# [Snapshots: approval_overlay_*.snap ; onboarding__trust_directory__tests__*.snap]
+waiting_select: 'Press enter to confirm'
+
+# ── [D] Compaction de contexte ──────────────────────────────────────────────
+# Codex n'affiche AUCUN marqueur distinct PENDANT la compaction : la tâche
+# tourne, l'indicateur d'activité normal est visible. Seule la FIN est signalée,
+# par un message d'info « Context compacted ».
+#
+# → in_progress est [NA]. Inventer une chaîne ici ferait basculer des agents en
+#   statut « compaction en cours » à tort — rouge permanent au dashboard.
+#
+# [Source: tui/src/chatwidget/replay.rs:176 — add_info_message("Context compacted")]
+# [Source: core/src/tasks/compact.rs — CompactTask n'a pas de header de rendu]
+compaction:
+  in_progress: '__NON_APPLICABLE__'
+  done: 'Context compacted'
+
+# ── [D] Messages en file d'attente ──────────────────────────────────────────
+# Sous l'indicateur d'activité : «  ↳ first » puis «    alt + ↑ edit »
+# [Snapshot: status_indicator_widget__tests__renders_with_queued_messages.snap]
+queued: 'alt + ↑ edit'
+
+# ── [D] Shells / terminaux en arrière-plan ──────────────────────────────────
+# «   123 background terminals running · /ps to view · »
+# [Snapshot: bottom_pane__unified_exec_footer__tests__render_many_sessions.snap]
+bashes_pattern: 'background terminals? running'
+
+# ── [D] Slash-command de changement de modèle ───────────────────────────────
+# Le modèle est passé en option de lancement (--model) par agent.sh ; ce
+# marqueur ne sert qu'à détecter un changement manuel dans le pane.
+# [Source: tui/src/bottom_pane/command_popup.rs — commande /model]
+model_change: '/model '
+
+# ── [D] Erreur rendue dans l'historique ─────────────────────────────────────
+# Les cellules d'erreur sont préfixées « ■ » (U+25A0), en rouge.
+# [Source: tui/src/history_cell/notices.rs:213-218 — format!("■ {message}").red()]
+api_error: '■ '
+
+# ── [D] Motifs d'erreur déclenchant un retry du prompt ──────────────────────
+# Erreurs fournisseur, réseau, authentification ou quota.
+# Sources officielles :
+# - https://help.openai.com/en/articles/1000499
+# - https://help.openai.com/en/articles/5955604
+# - https://help.openai.com/en/articles/10489721-authentication-troubleshooting-faq
+# Le bridge remet le prompt en
+# file avec backoff. Les erreurs NON transitoires ne doivent pas matcher, sinon
+# le bridge boucle sur un prompt condamné.
+# [Source: tui/src/history_cell/notices.rs — new_error_event]
+api_error_patterns:
+  - '■ .*[Rr]ate limit'
+  - '■ .*[Uu]sage limit'
+  - '■ .*stream disconnected'
+  - '■ .*request failed'
+  - '■ .*Service Unavailable'
+  - '■ .*biscuit_baker_service_me_circuit_open'
+  - '■ .*\b4[0-9][0-9]\b'
+  - '■ .*\b429\b'
+  - '■ .*\b5[0-9][0-9]\b'
+  - '■ .*(authentication|permission|rate_limit|invalid_request|not_found)_error'
+  - '■ .*ip_not_authorized'
+  - '■ .*(network error|WebSocket.*error|timed out|timeout)'
+
+# Les cartes d'erreur Codex sont terminales et suffisamment spécifiques pour
+# colorer l'agent dès leur première apparition.
+api_error_immediate_patterns:
+  - '■ .*[Rr]ate limit'
+  - '■ .*[Uu]sage limit'
+  - '■ .*stream disconnected'
+  - '■ .*request failed'
+  - '■ .*Service Unavailable'
+  - '■ .*biscuit_baker_service_me_circuit_open'
+  - '■ .*\b4[0-9][0-9]\b'
+  - '■ .*\b429\b'
+  - '■ .*\b5[0-9][0-9]\b'
+  - '■ .*(authentication|permission|rate_limit|invalid_request|not_found)_error'
+  - '■ .*ip_not_authorized'
+  - '■ .*(network error|WebSocket.*error|timed out|timeout)'
+
+# ── [D] Session d'authentification expirée / absente ────────────────────────
+# Écran d'onboarding d'authentification, et carte de statut.
+# Comparés en minuscules par le sweep keepalive.
+# [Source: tui/src/onboarding/auth.rs:444,460 — « Sign in with ChatGPT »,
+#          « Sign in with Device Code », « Provide your own API key »]
+# [Source: tui/src/status/card.rs:731 — « run codex login to use ChatGPT »]
+# [Relevé: pane réel codex-cli 0.144.x, incident d'authentification mx23
+#          2026-07-27 — « refresh token was revoked »,
+#          « access token could not be refreshed »]
+login_expired_markers:
+  - 'sign in with chatgpt'
+  - 'sign in with device code'
+  - 'provide your own api key'
+  - 'run codex login'
+  - 'refresh token was revoked'
+  - 'access token could not be refreshed'
+
+# ── [NA] Sondage de session ─────────────────────────────────────────────────
+# Claude Code affiche périodiquement « How is Claude doing » ; le bridge
+# l'auto-rejette. Codex n'a pas d'équivalent.
+# Une chaîne VIDE matcherait TOUS les panes — d'où le sentinelle explicite.
+survey: '__NON_APPLICABLE__'
+
+# Réponses automatiques permanentes. Codex n'a pas de sondage de session.
+# Pour une approbation, Enter n'est envoyé que si l'overlay complet affiche
+# l'option positive actuellement sélectionnée. Ceci exclut notamment les
+# écrans d'onboarding/trust qui partagent le même footer.
+auto_response:
+  enabled: true
+  tail_lines: 30
+  cooldown_seconds: 15
+  max_attempts: 3
+  survey_option_patterns: []
+  survey_keys: []
+  approval_option_patterns:
+    - '› 1. Yes, proceed'
+    - '1. Yes, proceed'
+  approval_keys: ['Enter']
+  selected_prefixes: ['›']
+  recommended_marker: '(Recommended)'
+  # Codex réutilise ce type de sélection dans des écrans d'onboarding/trust.
+  # Seules les approvals structurées ci-dessus sont autorisées.
+  # A10 : dialogues déclaratifs (SPEC-OPERATEUR-tui-dialogs-autoresponse).
+  # `require` = conjonction stricte de chaînes RELEVÉES, invite comprise ;
+  # `select_option` = libellé décidé par l'opérateur, numéro résolu
+  # dynamiquement (jamais de rang codé en dur). Invariant : aucune
+  # auto-réponse ne change jamais le modèle d'un agent.
+  dialogs:
+    # [Relevé: codex-cli 0.153.3, mx6, 2026-09-06 — « Approaching rate
+    #  limits … 1. Switch to gpt-5.6-luna / 3. Keep current model (never
+    #  show again) … Press enter to confirm »]
+    - kind: rate_limit
+      require: ["Approaching rate limits", "never show again", "Press enter to confirm"]
+      select_option: "never show again"
+      confirm_selected: "never show again"
+      confirm_key: "Enter"
+    # [Relevé: codex-cli 0.153.3, mx6, 2026-09-06 — menu AUTO-FERMANT
+    #  (« this menu will close when the response is ready ») : la
+    #  post-vérification EF-A2 est la seule protection contre une frappe
+    #  tombant dans le composer à la fermeture spontanée]
+    - kind: slow_response
+      require: ["thinking a bit more about this request", "Dismiss and keep waiting", "Press enter to confirm"]
+      select_option: "Dismiss and keep waiting"
+      confirm_selected: "Dismiss and keep waiting"
+      confirm_key: "Enter"
+    # [Relevé: codex-cli 0.153.3, mx6, 2026-09-06 — approval nue « Do you
+    #  want to proceed? / ❯ 1. Yes / 2. No … Esc to cancel · Tab to amend » ;
+    #  la variante '1. Yes, proceed' reste couverte par approval ci-dessus.
+    #  Le motif '1. Yes' seul ne suffit JAMAIS : conjonction question+écran]
+    - kind: proceed_approval
+      require: ["Do you want to proceed?", "Tab to amend"]
+      select_option: "Yes"
+      confirm_selected: "Yes"
+      confirm_key: "Enter"
+  recommended_keys: []
+
+# ── [NA] Indicateur de scroll dans la ligne de statut ───────────────────────
+# Claude Code affiche « ↓ » dans sa ligne de statut quand le pane est scrollé.
+# Le footer de Codex n'expose pas cet état (« ctrl + t to view transcript » est
+# une action, pas un indicateur d'état).
+scroll_indicator: '__NON_APPLICABLE__'
+
+# ── [NA] Limite de contexte atteinte ────────────────────────────────────────
+# Claude Code affiche « Context limit reached ». Codex compacte automatiquement
+# et n'expose pas de libellé de blocage : le signal utile est « 0% context left »,
+# déjà couvert par context_pct_patterns.
+# [Source: core/src/compact_model_fallback.rs — CompactionReason::ContextLimit
+#          est un code interne, jamais rendu dans le TUI]
+context_limit: '__NON_APPLICABLE__'

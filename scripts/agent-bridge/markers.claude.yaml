@@ -1,0 +1,183 @@
+# A1 — Marqueurs UI du CLI Claude Code, externalisés.
+# E1 — Fichier de marqueurs du MOTEUR `claude` (cf. scripts/agent-bridge/engines.py).
+#      Sélectionné via AGENT_CLI=claude (défaut). markers.yaml est un lien
+#      symbolique vers ce fichier (rétro-compatibilité).
+#
+# La détection de fin de réponse et l'état du pane reposent sur le parsing
+# visuel du terminal. Si un libellé / rendu du CLI change, c'est ICI qu'on
+# corrige — agent.py ne contient plus aucune chaîne d'UI en dur.
+
+# Noms de process attendus dans #{pane_current_command} quand le CLI tourne
+process_names: ['claude', 'node']
+
+# E1 — Portée de la détection « occupé ».
+# Claude Code met l'indice « esc to interrupt » DANS sa ligne de statut
+# (« bypass permissions »). Et le prompt ❯ peut rester visible pendant que des
+# sous-agents tournent : sa présence ne prouve donc PAS que l'agent est libre.
+# Seule la ligne de statut fait foi. (Codex, lui, utilise busy_scope: pane.)
+busy_scope: 'status_line'
+
+# Portée de la détection des shells en arrière-plan : « N bashes » est DANS la
+# ligne de statut. Chercher 'bashes|shell' dans tout le pane ferait des faux
+# positifs sur n'importe quel texte contenant « shell ».
+bashes_scope: 'status_line'
+
+# Marqueurs de prompt (Claude prêt, fin de réponse)
+prompt_markers: ['❯', '>', '$', '%']
+
+# E1 — Marqueurs de « CLI démarré et prêt à recevoir » (agent.sh wait_cli_ready).
+# Distincts de prompt_markers : ici on veut la preuve que le TUI a fini de
+# booter, pas la fin d'une réponse. Reprend à l'identique le motif historique
+# `❯|Try "` de wait_claude_ready.
+ready_markers: ['❯', 'Try "']
+
+# Ligne de statut affichée en mode normal (agent prêt ou occupé)
+status_line: 'bypass permissions'
+
+# Claude Code n'affiche pas le modèle dans son footer normal.
+runtime_model_pattern: '(?!)'
+runtime_effort_pattern: '(?!)'
+
+# Aucun contrôle actif : `/model` et `/effort` sans argument ouvrent des
+# pickers et bloquent le TUI. Seules leurs confirmations déjà affichées sont
+# relevées passivement.
+model_check_command: '__NON_APPLICABLE__'
+effort_check_command: '__NON_APPLICABLE__'
+model_check_history_pattern: '^\s*❯\s*/model\s*$'
+effort_check_history_pattern: '^\s*❯\s*/effort\s*$'
+model_check_response_pattern: 'Set model to ([^\n]+?) and saved as your default'
+effort_check_response_pattern: 'Set effort level to ([A-Za-z]+)'
+
+# Indicateurs "occupé" dans la ligne de statut
+busy_markers: ['esc to interrupt']
+
+# Mode plan actif
+plan_mode: 'plan mode on'
+plan_mode_tail_lines: 3
+plan_mode_exclusions: []
+plan_mode_required: ''
+
+# Compaction de contexte
+compaction:
+  in_progress: 'compacting conversation'   # comparé insensible à la casse
+  done: 'Conversation compacted'
+
+# Demande d'approbation (plan mode)
+approval: 'Would you like to proceed'
+
+# Sondage de session Claude (auto-rejeté par le bridge)
+survey: 'How is Claude doing'
+
+# Réponses automatiques permanentes. Le bridge les applique aussi lorsqu'il
+# est idle : elles ne dépendent donc ni du dashboard ni d'un navigateur.
+# Chaque dialogue exige son marqueur ET une option structurante visible dans
+# les dernières lignes du viewport. Une simple occurrence dans l'historique
+# n'autorise jamais une frappe.
+auto_response:
+  enabled: true
+  tail_lines: 30
+  cooldown_seconds: 15
+  max_attempts: 3
+  survey_option_patterns:
+    - '0: Dismiss'
+    - '0. Dismiss'
+    - '0 Dismiss'
+  survey_keys: ['0', 'Enter']
+  # A10 : dialogues déclaratifs (SPEC-OPERATEUR-tui-dialogs-autoresponse).
+  # `require` = conjonction stricte de chaînes RELEVÉES, invite comprise ;
+  # `select_option` = libellé de l'option décidée par l'opérateur, numéro
+  # résolu dynamiquement dans le pane ; confirmation en deux temps avec
+  # preuve de sélection. Invariant : aucune auto-réponse ne change jamais
+  # le modèle d'un agent.
+  dialogs:
+    # [Relevé: Claude Code, mx6, 2026-09-06 — « You've reached your Fable 5
+    #  limit … 1. Continue with Fable 5 / › 2. Switch to Opus 5 (1M context)
+    #  and continue … Enter to confirm » ; le SURLIGNAGE PAR DÉFAUT est la
+    #  bascule de modèle → jamais d'Enter sans preuve de sélection]
+    - kind: usage_limit
+      require: ["You've reached your", "usage credits", "Continue with", "Enter to confirm"]
+      select_option: "Continue with"
+      confirm_selected: "Continue with"
+      confirm_key: "Enter"
+  approval_option_patterns:
+    - '1. Yes'
+    - '1. Yes, clear context'
+    - '1. Yes, and bypass'
+  approval_keys: ['1', 'Enter']
+  selected_prefixes: ['❯']
+  recommended_marker: '(Recommended)'
+  recommended_keys: ['Enter']
+
+# Message mis en file (prompt non traité, Claude occupé)
+queued: 'Press up to edit queued messages'
+
+# Menu de sélection en attente
+waiting_select: 'Enter to select'
+
+# Limite de contexte atteinte
+context_limit: 'Context limit reached'
+
+# Changement de modèle visible dans le pane
+model_change: '/model '
+
+# Marqueur d'erreur API dans le pane
+api_error: 'API Error:'
+
+# Indicateur de scroll (lignes non affichées) dans la ligne de statut
+scroll_indicator: '↓'
+
+# Bashes/shells actifs dans la ligne de statut (regex)
+bashes_pattern: 'bashes|shell'
+
+# Pourcentage de contexte restant (regex, le nombre est extrait)
+context_pct_patterns:
+  - '[0-9]+% until auto-compact'
+  - 'auto-compact: [0-9]+%'
+
+# Motifs d'erreur API qui déclenchent un retry du prompt.
+# Sources officielles :
+# - https://docs.anthropic.com/en/api/errors
+# - https://support.claude.com/en/articles/14552646-troubleshoot-claude-code-installation-and-authentication
+api_error_patterns:
+  - 'API Error: (400|401|403|404|413|429|500|529)\b'
+  - 'invalid_request_error'
+  - 'API Error: 401'
+  - 'authentication_error'
+  - 'permission_error'
+  - 'not_found_error'
+  - 'request_too_large'
+  - 'rate_limit_error'
+  - 'API error'
+  - 'APIError'
+  - 'rate_limit'
+  - 'overloaded_error'
+  - '5-hour limit reached'
+  - 'organization disabled'
+  - 'model not available'
+
+# Motifs suffisamment spécifiques pour rendre le pane rouge dès la première
+# occurrence. Le générique « API Error: » conserve son seuil historique de 3.
+api_error_immediate_patterns:
+  - 'API Error: (400|401|403|404|413|429|500|529)\b'
+  - 'invalid_request_error'
+  - 'API Error: 401'
+  - 'authentication_error'
+  - 'permission_error'
+  - 'not_found_error'
+  - 'request_too_large'
+  - 'rate_limit_error'
+  - 'rate_limit'
+  - 'overloaded_error'
+  - '5-hour limit reached'
+  - 'organization disabled'
+  - 'model not available'
+
+# E1 — Libellés indiquant une session d'authentification expirée / absente.
+# Consommés par le sweep keepalive (scripts/crontab-scheduler.py). Comparés en
+# minuscules. Étaient codés en dur dans LOGIN_EXPIRED_MARKERS.
+login_expired_markers:
+  - 'select login method'
+  - 'run /login'
+  - 'session has expired'
+  - 'invalid api key'
+  - 'sign in to claude'
