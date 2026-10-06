@@ -1,0 +1,775 @@
+# Guide de Mise à Jour
+
+Ce guide explique comment mettre à jour votre déploiement multi-agent vers une nouvelle version.
+
+---
+
+## Guides par version
+
+Le script de mise à jour est dans `patch/upgrade.sh`. Il préserve automatiquement les fichiers projet et met à jour uniquement le framework.
+
+---
+
+## Statistiques de mise à jour
+
+`upgrade.sh` chronomètre et affiche les phases téléchargement, intégrité,
+inventaire/dry-run, sauvegarde, synchronisation, migrations, dépendances et
+total. Lors d'une application réelle, il ajoute le bilan à
+`logs/action-timings.tsv`; un dry-run affiche les durées sans écrire ce journal.
+Il crée aussi une copie immuable
+`logs/action-timings/<YYYYMMDDTHHMMSSffffffZ>-upgrade.tsv`, comparable aux
+copies `sent/<horodatage>-conclusion.md` des Contradictors.
+Cette convention concerne les logs, rapports d'exécution et plans archivés.
+Les prompts conservent toujours leurs noms canoniques sans horodatage.
+
+Les nouveaux plans suivent `docs/PLAN-LIFECYCLE.md`. L'upgrade ne renomme pas
+les plans existants : cela casserait leurs corrélations. Un ancien plan conserve
+son nom et reçoit `started_at` ou `completed_at` lors de sa prochaine
+transition ; seuls les plans nouvellement créés reçoivent le préfixe UTC.
+
+L'agent chargé de l'upgrade communique les durées après chaque phase et dans son
+compte rendu final. Il sépare temps actif, checks et attente externe. Une phase
+non mesurée est signalée `NON MESURÉ`, jamais estimée.
+
+---
+
+## Persistance Codex pendant l'upgrade
+
+Après synchronisation, `upgrade.sh` exécute
+`scripts/audit-codex-sessions.py --apply --all-profiles`. Les huit slots Codex
+sont traités. Les autres paramètres TOML sont conservés, aucun token n'est affiché
+ou copié, aucun profil Claude n'est touché et aucun service n'est redémarré.
+
+Contrôle manuel équivalent :
+
+```bash
+python3 scripts/audit-codex-sessions.py
+python3 scripts/audit-codex-sessions.py --apply --all-profiles
+```
+
+Un doublon est seulement signalé avec les commandes `--device-auth` ;
+la réauthentification reste humaine.
+
+---
+
+## Migration du contrat de communication
+
+L'upgrade synchronise les scripts puis exécute
+`patch/rebalance-agent-prompts.py`. Cette migration idempotente ajoute aux
+prompts existants le contrat décrit dans `docs/AGENT-COMMUNICATION.md` :
+enveloppe autoritaire, corrélation héritée, terminal unique, états
+`DELIVERED`/`ORPHANED`, preuves durables et hard gates. Les originaux modifiés
+sont sauvegardés sous `removed/rebalance-prompts/<horodatage>/`.
+
+La migration ajoute également l'obligation de rapport après tout travail réel
+aux agents de triangle existants : réponse corrélée au demandeur lorsqu'elle
+est due, puis `MASTER_REPORT` vers le `NNN-1ZZ` calculé. Cette obligation
+couvre les prompts utilisateur directs. Elle exclut explicitement contrôles,
+terminaux reçus, doublons et rapports de supervision.
+Les créateurs `150/160/170`, loaders et templates sont synchronisés avant la
+migration.
+
+Les publications utilisent le schéma `ma.bus.v1`. Un rapport non bloquant
+reste silencieux ; `BLOCKED` et `INFO_REQUIRED` peuvent produire un unique
+`DECISION_REQUIRED` si le même tour n'a pas déjà livré sa décision. Les scripts
+shell prennent cette logique en compte immédiatement après l'upgrade. Le
+filtrage consumer par `decision_id` et la suppression des copies annexées ne
+prennent effet qu'après le redémarrage manuel du bridge concerné.
+
+`merge-communication-hooks.py` fusionne aussi le hook Stop dans chaque
+`login/claude*/settings.json` sans remplacer les autres hooks, paramètres ou
+credentials. Les profils Codex restent inchangés ; leur garde est assuré par
+le bridge.
+
+Le runtime classe les événements avant toute injection : rapports dans
+`agent:<master>:reports`, contrôles dans `agent:<id>:control` et terminaux dans
+`agent:<id>:terminals`. Après upgrade, les bridges doivent être redémarrés
+manuellement pour charger ce routeur (`./scripts/agent.sh restart <triangle>`,
+par triangle, à la fenêtre choisie par l'opérateur). L'upgrade ne les
+redémarre pas. Le watchdog seul se recharge sans toucher aux services ni aux
+agents :
+
+```bash
+./scripts/infra.sh restart-watchdog
+```
+
+La commande vérifie que le PID de `logs/watchdog.pid` appartient bien à
+`healthcheck.py --watchdog` avant tout kill, est idempotente et affiche sa
+durée.
+
+Après l'upgrade :
+
+```bash
+python3 patch/rebalance-agent-prompts.py --check
+```
+
+Le résultat attendu est `updated=0`. Inspecter et corriger manuellement les
+instructions locales qui utilisent encore `FROM:` dans le texte, Redis
+directement ou un score comme gate de livraison.
+
+Vérifier aussi le publisher sans toucher au bus de production :
+
+```bash
+bash -n scripts/report-master.sh scripts/done.sh scripts/send.sh
+python3 -m pytest tests/test_master_report.py tests/test_event_router.py \
+  tests/test_no_silent_parking.py -q
+```
+
+Vérifier aussi :
+
+```bash
+rg -l "Rapport obligatoire au coordinateur du triangle" prompts/AGENT.md \
+  templates/x45/prompts/AGENT.md
+rg -l "report-master.sh" prompts/*/*-system.md
+```
+
+**Ne pas exécuter automatiquement** `./scripts/infra.sh start` ni
+`./scripts/agent.sh start all`. L'opérateur choisit quand relancer, après avoir
+vérifié les profils, les sessions et les migrations.
+
+### Contradictors v3.2.7
+
+La même migration met à jour les `NNN-2XX-system.md` et
+`NNN-2XX-methodology.md` existants. Elle remplace l'ancien scope générique par
+un audit commençant par la demande utilisateur reçue par le `NNN-1XX`, puis
+sépare prompts d'agent, échanges internes et preuves physiques. Les contenus
+locaux restent présents et les originaux sont sauvegardés.
+
+Après l'upgrade, vérifier :
+
+```bash
+python3 patch/rebalance-agent-prompts.py --check
+# updated=0
+rg -l "Audit de l'exécution de la demande utilisateur — v3.2.7" \
+  prompts/*/*-2??-system.md
+rg -l "Méthode d'audit utilisateur — v3.2.7" \
+  prompts/*/*-2??-methodology.md
+```
+
+Ne démarrer aucun service pendant cette vérification.
+
+---
+
+## Structure des fichiers
+
+### Fichiers FRAMEWORK (mis à jour automatiquement)
+
+Ces fichiers viennent du repo officiel et ne doivent **pas** être modifiés localement :
+
+```
+scripts/agent-bridge/     # Bridge Python du framework
+
+scripts/                  # Scripts d'orchestration
+├── *.sh
+└── *.py
+
+patch/                    # Scripts de patch/upgrade
+├── upgrade.sh
+├── hub-release.sh
+└── ...
+
+docs/                     # Documentation framework
+requirements.txt          # Dépendances Python
+UPGRADE.md               # Ce fichier
+```
+
+### Fichiers PROJET (à conserver lors des mises à jour)
+
+Ces fichiers sont spécifiques à votre projet :
+
+```
+prompts/                  # Vos prompts personnalisés (répertoires d'agents,
+                          # *.model, *.login) — SEULS les 5 .md canoniques
+                          # (RULES, CONVENTIONS, PATHS, AGENT, CHROME) sont
+                          # synchronisés. Depuis v3.2.X, une migration
+                          # sémantique idempotente ajoute aussi le contrat
+                          # résultat-first aux system.md existants, avec backup.
+pool-requests/           # Données runtime
+├── knowledge/           # Vos inventaires
+project/                 # Votre code source
+project-config.md        # Votre configuration
+login/                   # Credentials des profils Claude — jamais synchronisé
+                          # (seules les règles permissions.deny sont fusionnées)
+bench/results/           # Résultats de banc locaux — jamais touchés
+bench/heldout.txt        # Split held-out du site — préservé s'il existe
+logs/                    # Logs (peuvent être supprimés)
+sessions/                # Sessions (peuvent être supprimés)
+```
+
+`bench/` est un cas hybride : le squelette (run.sh, collect.py, oracles des
+tâches synthétiques…) est mis à jour en **fusion, jamais de suppression** —
+les tâches importées depuis votre historique et vos résultats survivent.
+
+---
+
+## Processus de mise à jour
+
+> **ARRÊT OBLIGATOIRE APRÈS UPGRADE** — La procédure d'upgrade ne doit jamais
+> lancer `./scripts/infra.sh start` ni `./scripts/agent.sh start all`. Après les
+> contrôles hors ligne, laisser l'infrastructure et les agents arrêtés. Leur
+> démarrage relève d'une opération distincte décidée explicitement par
+> l'opérateur.
+
+### Migration v3.2.3 → v3.2.4 : Opus 5, modèles et effort M
+
+La v3.2.4 ajoute `prompts/opus-5.model`, dont la valeur TUI est
+`claude-opus-5`. Elle applique la translation depuis la configuration
+**antérieure** :
+
+| Avant | Après |
+|---|---|
+| `fable-5.model` | `gpt-5-6-sol.model` |
+| `gpt-5-6-sol.model` | `opus-5.model` |
+| effort `H` | effort `M` |
+| `login2a.login` | `login1a.login` |
+
+Après l'upgrade, laisser l'infrastructure et les agents arrêtés. Pour migrer
+les liens existants sans remplacement en cascade, capturer d'abord les deux
+ensembles, puis modifier leurs cibles :
+
+```bash
+./scripts/infra.sh stop 2>/dev/null || true
+# Bootstrap requis par l'ancien upgrade.sh : le nouveau configurateur utilise
+# ce catalogue pendant la première passe, avant que v3.2.4 ne le synchronise.
+printf 'claude-opus-5\n' > prompts/opus-5.model
+./patch/upgrade.sh v3.2.4
+
+mapfile -t from_fable < <(find prompts -type l -name '*.model' -lname '*fable-5.model' -print)
+mapfile -t from_sol < <(find prompts -type l -name '*.model' -lname '*gpt-5-6-sol.model' -print)
+
+for link in "${from_fable[@]}"; do
+  target=$(readlink "$link")
+  prefix="${target%fable-5.model}"
+  ln -sfn "${prefix}gpt-5-6-sol.model" "$link"
+done
+for link in "${from_sol[@]}"; do
+  target=$(readlink "$link")
+  prefix="${target%gpt-5-6-sol.model}"
+  ln -sfn "${prefix}opus-5.model" "$link"
+done
+
+while IFS= read -r link; do
+  target=$(readlink "$link")
+  prefix="${target%login2a.login}"
+  ln -sfn "${prefix}login1a.login" "$link"
+done < <(find prompts -type l -name '*.login' -lname '*login2a.login' -print)
+
+find prompts -type f -name '*.effort' -exec sed -i 's/^H$/M/' {} +
+python3 scripts/configure-x45-models.py --all --check
+```
+
+La dernière commande doit afficher `updated=0` si les pipelines x45/z21
+correspondent déjà à la matrice v3.2.4. Sinon, appliquer la matrice hors ligne :
+
+```bash
+python3 scripts/configure-x45-models.py --all
+python3 scripts/configure-x45-models.py --all --check
+```
+
+Ne pas exécuter `./scripts/infra.sh start` ni
+`./scripts/agent.sh start all` dans cette procédure d'upgrade.
+
+### Dashboard systemd durci (v3.1.4+)
+
+`upgrade.sh` met à jour le framework, mais ne modifie jamais les unités locales
+dans `/etc/systemd/system`. Après une mise à jour, comparer le drop-in du
+dashboard avec `setup/multiagent-dashboard-hardening.conf.example`, puis lancer :
+
+```bash
+./scripts/check-dashboard-systemd.sh
+sudo systemctl daemon-reload
+sudo systemctl restart multiagent-dashboard.service
+```
+
+Le service ne charge pas le shell interactif ni NVM. Exposer les binaires dans
+un répertoire stable présent dans le `PATH` du drop-in (ne pas inscrire une
+version NVM en dur dans l'unité) :
+
+```bash
+mkdir -p ~/.local/bin
+# NE PAS lier un binaire sur lui-même : si `command -v` résout déjà dans
+# ~/.local/bin (installeurs claude/codex), ln -sfn REMPLACERAIT le binaire
+# par un lien auto-référent cassé.
+for b in node claude codex; do
+  src=$(command -v "$b") || continue
+  [ "$src" = "$HOME/.local/bin/$b" ] || ln -sfn "$src" ~/.local/bin/"$b"
+done
+```
+
+Le backend doit pouvoir écrire dans `logs/`, `uploads/`, `crontab/`,
+`keepalive/` et `prompts/`. Ce dernier contient notamment les sélections
+`*.model`, `*.login` et `*.effort` du panneau web.
+
+Le panneau nomme clairement `Défaut global`. Il ne présente pas de popup
+supplémentaire : sélectionner cette ligne constitue la confirmation explicite ;
+le backend continue d'exiger `confirm_global=true` pour tout autre client.
+Pour empêcher l'architecte d'hériter d'une future bascule globale, créer
+manuellement un override projet (adapter le modèle Claude choisi) :
+
+```bash
+ln -sfn claude-opus-4-8.model prompts/000.model
+```
+
+Les fichiers `prompts/*.model` sont des données projet préservées : cette
+opération reste volontairement manuelle et hors du périmètre d'`upgrade.sh`.
+
+### Étape 1: Identifier votre version actuelle
+
+```bash
+git describe --tags 2>/dev/null || git log --oneline -1
+```
+
+### Étape 2: Sauvegarder vos fichiers projet
+
+```bash
+BACKUP_DIR="../multi-agent-backup-$(date +%Y%m%d)"
+mkdir -p $BACKUP_DIR
+cp -r prompts/ $BACKUP_DIR/
+cp -r pool-requests/knowledge/ $BACKUP_DIR/
+cp project-config.md $BACKUP_DIR/ 2>/dev/null || true
+echo "Backup: $BACKUP_DIR"
+```
+
+### Étape 3: Arrêter les agents
+
+```bash
+./scripts/infra.sh stop 2>/dev/null || true
+tmux kill-server 2>/dev/null || true
+```
+
+### Étape 4: Lancer le script de mise à jour
+
+```bash
+# Simuler d'abord (aucune modification)
+./patch/upgrade.sh --dry-run
+
+# Appliquer la mise à jour
+./patch/upgrade.sh
+```
+
+Pour installer explicitement la ligne 3.1 :
+
+```bash
+./patch/upgrade.sh v3.1.1
+```
+
+### Étape 6: Installer les dépendances
+
+```bash
+pip install -r requirements.txt
+```
+
+### Étape 7: Vérifier hors ligne et s'arrêter
+
+```bash
+python3 patch/migrate-v320-agents.py --check
+python3 patch/rebalance-agent-prompts.py --check
+python3 -m pytest tests/test_v320_upgrade_agents.py -q
+```
+
+Ne démarrer ni l'infrastructure ni les agents à la fin de cette procédure.
+
+---
+
+## Ce que fait upgrade.sh
+
+1. Clone la release depuis GitHub (surchargeable : `MA_UPGRADE_REPO_URL=file:///miroir`).
+2. Vérifie l'intégrité (manifest de checksums + signature GPG du tag, voir C3).
+3. Affiche le plan (répertoires, fichiers, migrations) — `--dry-run` s'arrête là.
+4. Archive l'état courant dans `removed/<horodatage>_upgrade_backup/`.
+5. Synchronise les répertoires framework (`rsync --delete`), en préservant
+   `setup/secrets.cfg`.
+6. **Migrations idempotentes** (v2→v3 comme v3.X→v3.X+1) :
+   - `bench/` en fusion (jamais de suppression ; `results/` et `heldout.txt`
+     locaux préservés) ;
+   - synchronisation des 5 `.md` canoniques de `prompts/` (backup préalable ;
+     les liens symboliques locaux ne sont pas touchés) ;
+   - fusion des règles `permissions.deny` (protection oracle V3) dans les
+     `login/claude*/settings.json` existants via `patch/merge-deny-rules.py`
+     — union des règles uniquement, le reste du fichier ne bouge pas.
+   - migration résultat-first et livraison pilotée par les preuves des prompts agents existants avec
+     `patch/rebalance-agent-prompts.py` : contenus locaux conservés, originaux
+     sous `removed/rebalance-prompts/`, rapport dans l'upgrade backup.
+   - remplacement sauvegardé des créateurs framework `150`, `160` et `170` par
+     leurs versions v3.2 ;
+   - migration topologique par `patch/migrate-v320-agents.py` : ancien mono vers
+     paire `1XX+2XX`, ajout du Contradictor aux x45/z21 existants, sans démarrer
+     de service. Tout cas ambigu produit `MANUAL` et interrompt la passe.
+7. Installe les dépendances Python.
+
+Depuis v3.1.17, les sessions tmux et les clés Redis n'utilisent plus
+`MA_PREFIX` : `agent-300`, `agent:300:inbox`, `wal`, `completion`. Si Redis est
+joignable pendant l'upgrade, `migrate-agent-addresses.sh --apply` déplace les
+anciennes clés automatiquement. Sinon, elles seront recréées sous leur nom
+canonique au redémarrage ; le migrateur reste exécutable manuellement avant ce
+redémarrage.
+
+### Migration des prompts v3.2.X
+
+Voir la référence normative
+[HOW TO WRITE AND REWRITE PROMPTS](../docs/HOW_TO_WRITE_AND_REWRITE_PROMPTS.md).
+
+#### Passage v3.1.17 ou antérieur vers v3.2.0 : deux passes obligatoires
+
+Le premier appel s'exécute encore avec l'ancien `upgrade.sh` chargé en mémoire :
+il installe le nouvel outillage. Le second appel exécute effectivement la
+synchronisation des créateurs et les migrations sémantique/topologique :
+
+```bash
+./patch/upgrade.sh v3.2.0
+./patch/upgrade.sh v3.2.0
+```
+
+Une installation déjà en v3.2.X n'a besoin que d'une passe pour les mises à
+jour suivantes.
+
+Le dry-run compte les prompts concernés et liste chaque conversion topologique
+sans modifier les fichiers ni Redis. La passe réelle
+ajoute la finalité résultat-first et le contrat de décision par hard gates aux
+prompts projet, notamment aux créateurs 150/160/170. Les anciens rôles
+1XX/3XX/5XX/7XX/8XX/9XX reçoivent leur contrat spécialisé ; les futurs
+mono/x45/z21 héritent de la même écriture.
+
+Après la passe :
+
+```bash
+python3 patch/migrate-v320-agents.py --check
+# attendu : {"manual": 0, "migrate": 0}
+```
+
+Contrôle après upgrade :
+
+```bash
+python3 patch/rebalance-agent-prompts.py --check
+```
+
+Le résultat normal est `updated=0`. Opt-out d'urgence :
+
+```bash
+MA_SKIP_PROMPT_REBALANCE=1 ./patch/upgrade.sh
+```
+
+### Authentifications clonées et anciennes sessions keepalive
+
+Après migration depuis une version préfixée, ne pas conserver en parallèle les
+anciennes sessions keepalive `A-agent-002-*` et les nouvelles `agent-002-*`.
+Le sweep v3.2.1 arrête uniquement les anciennes sessions keepalive reconnues.
+
+Chaque profil doit être authentifié séparément. Copier un répertoire de profil
+copie aussi son refresh token : le sweep détecte alors l'empreinte commune,
+marque les profils `cloned_refresh_token` et refuse de les utiliser. Sans
+démarrer l'infrastructure ni les agents, réauthentifier chaque compte concerné,
+puis lancer une seule passe explicite :
+
+```bash
+CODEX_HOME="$PWD/login/codex1a" codex login --device-auth
+# Répéter séparément pour chaque profil concerné.
+python3 scripts/audit-codex-sessions.py
+python3 scripts/crontab-scheduler.py --keepalive-sweep-once
+```
+
+Ne pas lancer `codex logout` sur des profils clonés : il peut révoquer le
+credential encore partagé par les autres profils. La connexion par appareil
+doit être terminée humainement et séparément pour chaque compte avant l'audit
+et le sweep.
+
+Le sweep nettoie les anciennes sessions keepalive, vérifie l'unicité des
+refresh tokens sans jamais les afficher et écrit son diagnostic dans
+`keepalive/sweep_report.json`.
+
+---
+
+## Migration v3.0.x → v3.1.x : Claude Code + Codex CLI
+
+La ligne 3.0.x pilote uniquement Claude Code. La ligne 3.1.x ajoute Codex CLI
+interactif avec le forfait ChatGPT, sans remplacer les prompts, mémoires,
+historiques ou streams Redis des agents.
+
+### Résumé des changements
+
+| Élément | v3.0.x | v3.1.x |
+|---|---|---|
+| Moteur | Claude Code | Déduit du modèle : `claude-*` ou `gpt-*` |
+| Modèles GPT | absents | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` |
+| Slot visible | `claude1a`…`claude4b` | `login1a`…`login4b` |
+| Profil physique | `login/claude1a` | `login/claude1a` ou `login/codex1a` selon le modèle |
+| Instructions projet | `CLAUDE.md` | `CLAUDE.md` et `AGENTS.md → CLAUDE.md` |
+| Interface | modèle Claude + profil Claude | un modèle et un slot neutre ; aucun sélecteur de CLI |
+
+Exemple de résolution :
+
+```text
+login2b + claude-opus-4-8 → CLAUDE_CONFIG_DIR=login/claude2b
+login2b + gpt-5.6-sol     → CODEX_HOME=login/codex2b
+```
+
+Le changement de modèle est atomique : sélectionner un modèle `gpt-*` dans le
+dashboard sélectionne Codex. Il ne faut créer aucun fichier `.cli`.
+
+### Mise à jour automatique recommandée
+
+Depuis une v3.0.x récente, **une seule exécution** suffit :
+
+```bash
+./scripts/infra.sh stop 2>/dev/null || true
+./patch/upgrade.sh v3.1.1
+```
+
+### Ce que `upgrade.sh` fait automatiquement
+
+Le périmètre de `upgrade.sh` ne change pas. Il effectue notamment :
+
+1. met à jour les répertoires framework `scripts/`, `web/`, `docs/`, `patch/`,
+   `setup/`, `tests/`, `templates/`, `examples/`, `framework/` et `.github/` ;
+2. installe donc automatiquement le moteur Codex, ses marqueurs TUI, le bridge,
+   le backend et les sources du dashboard 3.1.x ;
+3. met à jour `CLAUDE.md`, `README.md`, les dépendances et la documentation ;
+4. synchronise uniquement les cinq prompts canoniques ;
+5. fusionne les règles `permissions.deny` des profils Claude ;
+6. conserve volontairement tous les `.model`, `.login`, liens de sélection,
+   prompts d’agents, mémoires et credentials du projet.
+
+Il **ne crée donc pas** `AGENTS.md`, les modèles GPT, les slots neutres, les
+profils Codex ou les nouveaux liens `.login`. Ces opérations sont manuelles
+parce qu’elles appartiennent à la configuration du projet.
+
+### Ce qu’il faut faire manuellement après `upgrade.sh`
+
+Depuis la racine du projet, créer d’abord les fichiers de compatibilité 3.1.x :
+
+```bash
+cd /home/ubuntu/multi-agent
+
+# Codex lit AGENTS.md ; une seule source reste maintenue.
+ln -sfn CLAUDE.md AGENTS.md
+
+# Catalogue des modèles exposés dans l’interface.
+printf 'gpt-5.6-sol\n'   > prompts/gpt-5-6-sol.model
+printf 'gpt-5.6-terra\n' > prompts/gpt-5-6-terra.model
+printf 'gpt-5.6-luna\n'  > prompts/gpt-5-6-luna.model
+
+# Slots neutres visibles dans le dashboard.
+for slot in 1a 1b 2a 2b 3a 3b 4a 4b; do
+  printf 'login%s\n' "$slot" > "prompts/login${slot}.login"
+done
+```
+
+Migrer ensuite les liens explicites existants sans changer le slot choisi :
+
+```bash
+while IFS= read -r link; do
+  target=$(readlink "$link")
+  base=$(basename "$target")
+  if [[ "$base" =~ ^claude([1-4][ab])\.login$ ]]; then
+    prefix="${target%$base}"
+    ln -sfn "${prefix}login${BASH_REMATCH[1]}.login" "$link"
+  fi
+done < <(find prompts -type l -name '*.login' -print)
+```
+
+Si le profil par défaut historique était `claude1a`, le résultat devient :
+
+```bash
+ln -sfn login1a.login prompts/default.login
+```
+
+Adapter `login1a` si un autre slot était le défaut. Ne pas renommer les
+répertoires physiques `login/claude*` : ils restent utilisés par Claude Code.
+
+### Création des profils Codex
+
+Les slots neutres ne contiennent aucun credential. Chaque profil physique
+Codex doit être connecté une fois :
+
+```bash
+source setup/login_create.sh \
+  codex1a codex1b codex2a codex2b \
+  codex3a codex3b codex4a codex4b
+```
+
+Choisir **Sign in with ChatGPT**, jamais une clé API. Il est possible de ne
+créer que les profils réellement utilisés, par exemple :
+
+```bash
+source setup/login_create.sh codex1a codex1b
+```
+
+Contrôle :
+
+```bash
+CODEX_HOME="$PWD/login/codex1a" codex login status
+# attendu : Logged in using ChatGPT
+```
+
+### Vérifications après upgrade
+
+```bash
+grep -m1 'Multi-Agent System' CLAUDE.md
+readlink AGENTS.md
+readlink prompts/default.login
+cat prompts/login1a.login
+for f in prompts/gpt-5-6-{sol,terra,luna}.model; do echo "$f: $(cat "$f")"; done
+```
+
+Résultat attendu :
+
+```text
+# Multi-Agent System v3.1.1
+CLAUDE.md
+login1a.login
+login1a
+prompts/gpt-5-6-sol.model: gpt-5.6-sol
+prompts/gpt-5-6-terra.model: gpt-5.6-terra
+prompts/gpt-5-6-luna.model: gpt-5.6-luna
+```
+
+Après ces vérifications, conserver tous les services et agents arrêtés. Leur
+démarrage ne fait pas partie de l'upgrade et nécessite une décision opérateur
+séparée.
+
+Dans le panneau Login/Model, choisir par exemple `login1a` et
+`gpt-5-6-sol`. Le tmux doit démarrer Codex, saisir `/model gpt-5.6-sol`, puis
+charger le même `deviens agent` et les mêmes fichiers mémoire que Claude.
+
+### Réparation manuelle si une ancienne instance reste incohérente
+
+Cette procédure est idempotente et peut être exécutée par Claude ou Codex :
+
+```bash
+cd /home/ubuntu/multi-agent
+
+# Catalogue minimal attendu
+for slot in 1a 1b 2a 2b 3a 3b 4a 4b; do
+  printf 'login%s\n' "$slot" > "prompts/login${slot}.login"
+done
+
+printf 'gpt-5.6-sol\n'   > prompts/gpt-5-6-sol.model
+printf 'gpt-5.6-terra\n' > prompts/gpt-5-6-terra.model
+printf 'gpt-5.6-luna\n'  > prompts/gpt-5-6-luna.model
+
+# Migration de tous les liens explicites claudeXa.login → loginXa.login
+while IFS= read -r link; do
+  target=$(readlink "$link")
+  base=$(basename "$target")
+  if [[ "$base" =~ ^claude([1-4][ab])\.login$ ]]; then
+    prefix="${target%$base}"
+    ln -sfn "${prefix}login${BASH_REMATCH[1]}.login" "$link"
+  fi
+done < <(find prompts -type l -name '*.login' -print)
+
+ln -sfn CLAUDE.md AGENTS.md
+ln -sfn login1a.login prompts/default.login  # seulement si 1a est votre défaut
+```
+
+Ne pas renommer les répertoires physiques `login/claude*` et `login/codex*` :
+ils stockent des authentifications différentes. Seuls les fichiers/symlinks
+de sélection sous `prompts/` utilisent le préfixe neutre `login`.
+
+Si l’interface affiche encore l’erreur « model incompatible with engine
+claude », le backend 3.0 tourne encore : redémarrer `web.sh` après l’upgrade et
+vérifier que `CLAUDE.md` annonce bien 3.1.1.
+
+---
+
+## Migration v2.X → v3.X : lancer l'upgrade DEUX FOIS
+
+L'upgrade.sh **déjà présent** sur une machine v2 ne connaît pas les
+migrations v3 (bench/, deny, prompts canoniques) :
+
+```bash
+./patch/upgrade.sh          # passe 1 : installe le nouvel outillage (patch/, scripts/, tests/…)
+./patch/upgrade.sh --dry-run   # contrôle : la section Migrations doit apparaître
+./patch/upgrade.sh          # passe 2 : applique les migrations v3
+python3 -m pytest tests/ -q  # 579+ tests attendus verts
+```
+
+Les migrations étant idempotentes, relancer une passe de trop est sans effet.
+
+**Note descendante** : cet upgrade.sh (≥ v3.0.1) refuse les releases plus
+anciennes que sa liste de manifest (écart « fichiers hors manifest ») —
+c'est l'abandon sûr attendu, rien n'est modifié.
+
+---
+
+## Intégrité du framework (C3)
+
+Les agents tournent en bypass-permissions : une mise à jour altérée
+propagerait du code injecté. Deux protections dans `upgrade.sh` :
+
+1. **Manifest de checksums** — `patch/checksums.sha256` est généré par
+   `hub-release.sh` à chaque release (sha256 de tous les fichiers framework
+   trackés git). `upgrade.sh` recalcule les checksums du framework téléchargé
+   et **abandonne** en cas d'écart ou de fichier hors manifest.
+2. **Signature GPG du tag** — si `user.signingkey` est configurée sur le hub,
+   `hub-release.sh` signe le tag (`git tag -s`). `upgrade.sh` tente
+   `git verify-tag` quand la cible est un tag.
+
+Mode strict (recommandé en production) :
+
+```bash
+MA_UPGRADE_STRICT=1 ./patch/upgrade.sh v2.13.0
+```
+
+En strict, le manifest **et** la signature de tag sont obligatoires (la clé
+publique de release doit être importée : `gpg --import release-key.asc`).
+Par défaut (non strict), le manifest est vérifié s'il est présent (échec =
+abandon) et l'absence de signature ne produit qu'un avertissement.
+
+Avant le remplacement des répertoires framework, l'état courant est archivé
+dans `removed/<horodatage>_upgrade_backup/` — aucune suppression définitive.
+
+---
+
+## Mise à jour de Keycloak (cadence)
+
+L'image Keycloak est **épinglée par tag complet + digest** (C2) dans trois
+fichiers qui doivent rester identiques :
+
+- `scripts/infra.sh` (variable `KEYCLOAK_IMAGE`)
+- `web/docker-compose.yml` (clé `image:`)
+- `setup/install_keycloak.sh` (variable `KEYCLOAK_IMAGE`)
+
+Cadence recommandée :
+
+1. **Mensuel** : vérifier les annonces de sécurité Keycloak
+   (https://www.keycloak.org/security) et les nouveaux tags sur
+   https://quay.io/repository/keycloak/keycloak?tab=tags.
+2. **Patch de la même ligne majeure** (ex. 23.0.x → 23.0.y) : traiter la mise à
+   jour Keycloak dans une fenêtre de maintenance distincte. Ne pas la redémarrer
+   dans la procédure d'upgrade du framework ; conserver les services arrêtés et
+   confier le démarrage à l'opérateur.
+3. **Montée majeure** (ex. 23 → 26) : traiter comme une migration dédiée —
+   les variables d'admin et le mode de démarrage changent entre lignes
+   majeures ; tester l'import du realm sur une machine de test d'abord.
+
+Pour récupérer le digest d'un tag :
+
+```bash
+docker pull quay.io/keycloak/keycloak:<TAG>
+docker inspect quay.io/keycloak/keycloak:<TAG> --format '{{index .RepoDigests 0}}'
+```
+
+---
+
+## Historique des versions
+
+| Version | Date | Changements majeurs |
+|---------|------|---------------------|
+| v3.2.7 | 2026-07 | Contradictor centré sur la demande utilisateur, distinction prompts agents/échanges/preuves, verdict exécution-développement-validation-livraison et plan de reprise |
+| v3.2.X | 2026-07 | Prompts résultat-first 70/20/10, créateurs 150/160/170, migration automatique et récupérable des prompts projet via upgrade.sh |
+| v3.2.0 | 2026-07 | Gates x45, anti-spécialisation R4, coût mesuré, banc scellé, méthodologies delta/Pareto, ablation, compétences partagées, topologies variables, observateurs paramétriques NNN-2XX/NNN-8XX |
+| v3.0.4–v3.0.7 | 2026-07 | redis.sh mot de passe env-only, `.github/` dans les manifests, scroll tmux (DISABLE_MOUSE dans les profils), défaut opus-4-8, dashboard résilient aux rebuilds frontend, triangle auto-resolve par vivacité (send.sh/done.sh), sessions Keycloak 7 j — les instances existantes appliquent les durées via kcadm (`docs/AUTH.md`) |
+| v3.0 | 2026-07 | Boucle verify au bridge (C1), WAL/budgets/stall (C2), banc bench/ (C0), migrations upgrade.sh |
+| v3.1.2 | 2026-07 | Agent Architecte `000` visible dans la grille et les mises à jour temps réel, contrôles toujours protégés |
+| v3.1.1 | 2026-07 | Slots neutres `login1a…login4b`, migration des liens Claude, modèle comme unique sélecteur |
+| v3.1.0 | 2026-07 | Codex CLI interactif, profils ChatGPT, marqueurs TUI multi-moteurs |
+| v2.5 | 2026-03 | Effort selector, usage bars, agents 310/311/312, keepalive panel, Keycloak proxy-edge |
+| v2.4 | 2026-02 | Format mono/x45/z21, Chrome Bridge extension, agent 150, patch/ dir |
+| v2.3 | 2026-02 | Dashboard web React+FastAPI, Keycloak auth, proxy.sh |
+| v2.2 | 2026-01 | x45 auto-amélioration, satellites, crontab-scheduler |
+| v2.1 | 2026-01 | Bridge Redis Streams, healthcheck, tmux batching |
+| v2.0 | 2026-01 | Version initiale |
+
+---
+
+*Issues: https://github.com/OlesVanHermann/multi-agent/issues*
