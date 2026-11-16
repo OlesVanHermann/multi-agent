@@ -1,0 +1,28 @@
+name: x45-cycle-__TRIANGLE__
+defaults:
+  from_agent: __TRIANGLE__-100
+  timeout: 900
+variants:
+  no-curator:
+    disable: [curate]
+    depends_on: {develop: []}
+  coach-batched:
+    disable: [coach]
+steps:
+  - name: curate
+    agent: __TRIANGLE__-700
+    prompt: "Prépare un contexte borné."
+    verify: "python3 scripts/agent-bridge/verifier.py contract memory __MEMORY__"
+  - name: develop
+    agent: __TRIANGLE__-300
+    depends_on: [curate]
+    prompt: "Exécute la tâche avec ce contexte : {curate:2000}"
+    verify: "__VERIFY__"
+  - name: observe
+    agent: __TRIANGLE__-500
+    depends_on: [develop]
+    prompt: "Produis ECHEC, PREUVE, CAUSE_PROBABLE et CONTRE_EXEMPLE."
+  - name: coach
+    agent: __TRIANGLE__-800
+    depends_on: [observe]
+    prompt: "Produis uniquement une methodology candidate par delta : {observe}"

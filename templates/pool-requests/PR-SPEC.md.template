@@ -1,0 +1,42 @@
+# PR-SPEC-{AGENT}-{Classe}_{Methode}
+
+## Source
+{chemin/vers/documentation} (depuis PR-DOC)
+
+## Fonction MCP
+{function_prefix}_{classe}_{methode}
+
+## API
+{Classe}.{Methode}()
+
+## Description
+{Description détaillée de la fonctionnalité}
+
+## Paramètres
+
+| Param | Type | Requis | Description |
+|-------|------|--------|-------------|
+| file_path | string | Oui | Chemin du fichier |
+| {param1} | {type} | {Oui/Non} | {description} |
+
+## Code exemple
+
+```javascript
+// Exemple d'implémentation
+{code_exemple}
+```
+
+## Retour
+
+```json
+{
+  "success": true,
+  "result": { ... }
+}
+```
+
+## Créé par
+200 (Explorer)
+
+## Date
+{YYYY-MM-DD}

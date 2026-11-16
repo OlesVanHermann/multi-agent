@@ -1,0 +1,45 @@
+# E3 — CI frontend : lockfile strict + audit de vulnérabilités + build.
+#
+# Politique :
+# - `npm ci` : installation reproductible depuis package-lock.json (échoue
+#   si le lockfile est absent ou désynchronisé de package.json).
+# - `npm audit --audit-level=high` : la CI échoue sur toute vulnérabilité
+#   high/critical. Les moderate sont tolérées (ex. esbuild GHSA-67mh-4wv8-2f99,
+#   dev-server uniquement, corrigée seulement par vite 8 — breaking).
+# - Mise à jour : `npm audit fix` (non-breaking) puis committer
+#   package-lock.json ; jamais `npm audit fix --force` sans validation.
+name: frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/frontend/**'
+      - '.github/workflows/frontend.yml'
+  pull_request:
+    paths:
+      - 'web/frontend/**'
+      - '.github/workflows/frontend.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit-and-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/frontend/package-lock.json
+      - name: Install (lockfile strict)
+        run: npm ci
+      - name: Audit (échec si high/critical)
+        run: npm audit --audit-level=high
+      - name: Build
+        run: npm run build

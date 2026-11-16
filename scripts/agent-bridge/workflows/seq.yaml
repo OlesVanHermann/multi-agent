@@ -1,0 +1,28 @@
+# F1 — Équivalent YAML de l'ancien workflow_sequential :
+# Explorer (200) -> Developer (300) -> Tester (500)
+name: seq
+defaults:
+  from_agent: 100
+  timeout: 120
+steps:
+  - name: analyse
+    agent: 200
+    prompt: "Liste tous les fichiers .py dans le dossier courant"
+
+  - name: code
+    agent: 300
+    depends_on: [analyse]
+    prompt: |-
+      Base sur cette liste:
+      {analyse:500}
+
+      Cree un fichier index.py qui importe tous ces modules
+
+  - name: test
+    agent: 500
+    depends_on: [code]
+    prompt: |-
+      Verifie ce code:
+      {code:500}
+
+      Y a-t-il des erreurs?

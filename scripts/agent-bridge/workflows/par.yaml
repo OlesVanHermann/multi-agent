@@ -1,0 +1,18 @@
+# F1 — Équivalent YAML de l'ancien workflow_parallel :
+# trois developers (300/301/302) en parallèle (aucune dépendance entre étapes).
+name: par
+defaults:
+  from_agent: 100
+  timeout: 120
+steps:
+  - name: add
+    agent: 300
+    prompt: "Cree une fonction add(a, b) qui additionne deux nombres"
+
+  - name: multiply
+    agent: 301
+    prompt: "Cree une fonction multiply(a, b) qui multiplie deux nombres"
+
+  - name: divide
+    agent: 302
+    prompt: "Cree une fonction divide(a, b) qui divise deux nombres avec gestion d'erreur"

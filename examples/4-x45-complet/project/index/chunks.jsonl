@@ -1,0 +1,10 @@
+{"id":"uno-01","source":"clean/uno-api.md#CellProperties","tags":["uno","cell","color","property"],"content":"CellBackColor: long (int32), couleur RGB. -1=transparent. IsCellBackgroundTransparent: boolean."}
+{"id":"uno-02","source":"clean/uno-api.md#AccesCellule","tags":["uno","cell","access"],"content":"getCellByPosition(col,row) 0-indexed. getCellRangeByName('A1') string address."}
+{"id":"uno-03","source":"clean/uno-api.md#Couleur","tags":["uno","color","conversion"],"content":"Hex→int: int('FF0000',16). int→RGB: r=(c>>16)&0xFF. RGB→int: (r<<16)+(g<<8)+b."}
+{"id":"uno-04","source":"clean/uno-api.md#Connexion","tags":["uno","bridge","connect"],"content":"UnoUrlResolver, socket localhost:2002, urp, Desktop.getCurrentComponent()"}
+{"id":"uno-05","source":"clean/uno-api.md#Navigation","tags":["uno","sheet","document"],"content":"doc.getSheets().getByName('Sheet1'), getByIndex(0)"}
+{"id":"mcp-01","source":"clean/mcp-spec.md#ToolSchema","tags":["mcp","tool","schema"],"content":"Tool: name, description, inputSchema {type:object, properties, required}"}
+{"id":"mcp-02","source":"clean/mcp-spec.md#ServerSDK","tags":["mcp","server","python"],"content":"Server('name'), @list_tools→list[Tool], @call_tool→list[TextContent], stdio_server()"}
+{"id":"mcp-03","source":"clean/mcp-spec.md#Conventions","tags":["mcp","naming","error"],"content":"snake_case, verb_noun. Erreurs via TextContent pas exception. Transport stdio."}
+{"id":"ex-01","source":"clean/example-server.md#Pattern","tags":["mcp","pattern","example"],"content":"Pattern: Server→list_tools→call_tool match/case→stdio_server→asyncio.run"}
+{"id":"ex-02","source":"clean/example-server.md#ErrorHandling","tags":["mcp","error","example"],"content":"Validation in call_tool. Soft errors via TextContent. match/case dispatch."}

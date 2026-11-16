@@ -1,0 +1,17 @@
+# 500 — Memory
+
+## Agent observé
+- 341 (Analyste CSV)
+- Output attendu : `project/pipeline/341-output/rapport-ventes.md`
+
+## Critères de 341 (extraits de son system.md)
+- Résumé exécutif avec chiffres clés
+- Top produits par volume et revenu
+- Tendances par région
+- Recommandations actionnables
+
+## Format bilan
+- Chemin : `project/bilans/341-cycle{N}.md`
+- Score global sur 100%
+- Score par métrique (complétude, exactitude, structure, actionnabilité)
+- Liste des problèmes trouvés avec exemples

@@ -1,0 +1,36 @@
+# F1 — Équivalent YAML de l'ancien workflow_pipeline :
+# Explorer (200) -> Master (100) -> attente devs -> Merge (400) -> Test (500).
+# En cas d'échec du merge, le pipeline s'arrête (on_failure: abort par défaut).
+name: pipeline
+defaults:
+  from_agent: 100
+  timeout: 120
+steps:
+  - name: spec
+    agent: 200
+    timeout: 180
+    prompt: "Analyse le dossier project/ et cree une spec pour ajouter une fonction de validation d'email"
+
+  - name: dispatch
+    agent: 100
+    from_agent: 0
+    timeout: 60
+    depends_on: [spec]
+    prompt: |-
+      Dispatch cette spec aux developers:
+      {spec:1000}
+
+  - name: attente-devs
+    wait: 30
+    depends_on: [dispatch]
+
+  - name: merge
+    agent: 400
+    depends_on: [attente-devs]
+    prompt: "Cherry-pick toutes les branches dev-* vers la branche dev"
+
+  - name: test
+    agent: 500
+    timeout: 180
+    depends_on: [merge]
+    prompt: "Execute tous les tests et rapport le resultat"

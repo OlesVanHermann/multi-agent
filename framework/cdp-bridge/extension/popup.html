@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { width: 360px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 16px; }
+    h1 { font-size: 16px; color: #00d4ff; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+    h1 .dot { width: 8px; height: 8px; border-radius: 50%; background: #ff4444; }
+    h1 .dot.ok { background: #44ff44; }
+    .section { margin-bottom: 12px; }
+    .section-title { font-size: 11px; text-transform: uppercase; color: #888; letter-spacing: 1px; margin-bottom: 6px; }
+    .row { display: flex; gap: 6px; margin-bottom: 6px; }
+    input, select { flex: 1; padding: 6px 8px; background: #16213e; border: 1px solid #333; color: #e0e0e0; border-radius: 4px; font-size: 12px; outline: none; }
+    input:focus { border-color: #00d4ff; }
+    button { padding: 6px 12px; background: #0f3460; border: 1px solid #00d4ff33; color: #00d4ff; border-radius: 4px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+    button:hover { background: #1a4a7a; }
+    button:active { background: #00d4ff; color: #000; }
+    button.danger { border-color: #ff444433; color: #ff6666; }
+    button.danger:hover { background: #4a1a1a; }
+    #log { background: #0a0a1a; border: 1px solid #222; border-radius: 4px; padding: 8px; font-family: 'SF Mono', Monaco, monospace; font-size: 11px; max-height: 180px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; color: #aaa; }
+    #log .ok { color: #44ff44; }
+    #log .err { color: #ff4444; }
+    #log .info { color: #00d4ff; }
+    #status { font-size: 11px; color: #666; margin-top: 8px; text-align: center; }
+  </style>
+</head>
+<body>
+  <h1><span class="dot" id="statusDot"></span> CDP Bridge</h1>
+
+  <div class="section">
+    <div class="section-title">Navigation</div>
+    <div class="row">
+      <input type="text" id="urlInput" placeholder="https://example.com" value="https://www.google.com">
+      <button id="btnNavigate">Go</button>
+      <button id="btnNewTab">New Tab</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Actions</div>
+    <div class="row">
+      <button id="btnScreenshot">📸 Screenshot</button>
+      <button id="btnPdf">📄 PDF</button>
+      <button id="btnHtml">📝 HTML</button>
+    </div>
+    <div class="row">
+      <button id="btnListTabs">📋 List Tabs</button>
+      <button id="btnStatus">🔍 Status</button>
+      <button id="btnPing">🏓 Ping</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Evaluate JS</div>
+    <div class="row">
+      <input type="text" id="evalInput" placeholder="document.title">
+      <button id="btnEval">Run</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Log</div>
+    <div id="log"></div>
+  </div>
+
+  <div id="status">Port 9222 • Chrome Extension CDP Bridge v1.0</div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
